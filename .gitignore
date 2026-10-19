@@ -8,3 +8,14 @@ mav.parm
 *.csv
 *.netxml
 *.pyc
+__pycache__/
+.cargo-target/
+build_logs/
+.antoine-runtime/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
+.beads/proxieddb/
+*.gate.lock*
