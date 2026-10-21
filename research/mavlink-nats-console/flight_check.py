@@ -216,7 +216,10 @@ class FlightCheck:
             json.dumps(envelope).encode(),
             timeout=2,
         )
-        return json.loads(reply.data)
+        response = json.loads(reply.data)
+        response["requestIdMatched"] = response.get("requestId") == request_id
+        assert response["requestIdMatched"], response
+        return response
 
     def long(self, command: int, p1=0.0, p2=0.0, p7=0.0):
         return self.encode(76, struct.pack("<7fHBBB", p1, p2, 0, 0, 0, 0, p7, command, 1, 1, 0))
@@ -403,16 +406,21 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
             identity=f"{callsign}-spoofed",
         )
         assert wrong_identity["accepted"] is False, wrong_identity
-        direct_rtl = await check.direct_control(
+        unsigned_stale_run_rtl = await check.direct_control(
+            {"type": "rtl"},
+            request_id="direct-rtl-unsigned-wrong-run",
+            extra_fields={"runId": "stale-run-without-authority"},
+        )
+        assert unsigned_stale_run_rtl["accepted"] is True, unsigned_stale_run_rtl
+        assert unsigned_stale_run_rtl["mode"] == "RTL", unsigned_stale_run_rtl
+        unsigned_target_override = await check.direct_control(
             {
                 "type": "rtl",
                 "payload": {"north_m": 2.0, "east_m": 2.0, "down_m": -2.0},
             },
-            request_id="direct-rtl-unsigned-wrong-run",
-            extra_fields={"runId": "stale-run-without-authority"},
+            request_id="direct-rtl-unsigned-target-override",
         )
-        assert direct_rtl["accepted"] is True, direct_rtl
-        assert direct_rtl["mode"] == "RTL", direct_rtl
+        assert unsigned_target_override["accepted"] is True, unsigned_target_override
 
         def horizontal_distance_from_home(telemetry: dict) -> float:
             return math.hypot(
@@ -467,18 +475,35 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
                         "LOCAL_NED movement",
                         "mission upload, readback, and protocol ACKs",
                         "mission execution",
-                        "direct unsigned NATS RTL, wrong-identity rejection, and landing",
+                        "wrong-identity rejection, unsigned stale-run RTL, unsigned target override, and landing",
                         "JetStream MAVLink command audit",
                     ],
                     "directNatsRtlBoundary": {
-                        "wrongIdentityRejected": wrong_identity["accepted"] is False,
-                        "signaturePresent": False,
-                        "staleRunIdPresent": True,
-                        "accepted": direct_rtl["accepted"],
-                        "requestedTargetOverride": {
-                            "north_m": 2.0,
-                            "east_m": 2.0,
-                            "down_m": -2.0,
+                        "wrongIdentityAttempt": {
+                            "requestIdMatched": wrong_identity["requestIdMatched"],
+                            "rejected": wrong_identity["accepted"] is False,
+                            "reason": wrong_identity.get("reason"),
+                        },
+                        "unsignedStaleRunAttempt": {
+                            "requestIdMatched": unsigned_stale_run_rtl["requestIdMatched"],
+                            "signaturePresent": False,
+                            "staleRunIdPresent": True,
+                            "accepted": unsigned_stale_run_rtl["accepted"],
+                        },
+                        "unsignedTargetOverrideAttempt": {
+                            "requestIdMatched": unsigned_target_override["requestIdMatched"],
+                            "signaturePresent": False,
+                            "staleRunIdPresent": False,
+                            "accepted": unsigned_target_override["accepted"],
+                            "requestedTarget": {
+                                "north_m": 2.0,
+                                "east_m": 2.0,
+                                "down_m": -2.0,
+                            },
+                        },
+                        "staleGrantAttempt": {
+                            "tested": False,
+                            "reason": "the native MAVLink control request has no grant field or grant verifier",
                         },
                         "positionBefore": {
                             "lat_deg": offset.get("lat_deg"),
