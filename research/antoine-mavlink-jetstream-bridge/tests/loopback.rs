@@ -574,7 +574,22 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         "wrong-vehicle RTL must not reach the NATS control subject"
     );
 
-    // A valid frame from another local UDP client must not redirect telemetry.
+    // A different loopback client must not issue control commands or redirect telemetry.
+    let probe_arm = v2_frame(76, 15, 255, &arm_payload[..32], 152);
+    probe.send_to(&probe_arm, qgc_bind).await?;
+    assert!(
+        timeout(Duration::from_millis(150), reply_rx.recv())
+            .await
+            .is_err(),
+        "an unconfigured loopback peer must not publish operator control"
+    );
+    assert!(
+        timeout(Duration::from_millis(150), probe.recv_from(&mut buffer))
+            .await
+            .is_err(),
+        "an unconfigured loopback peer must not receive a command ACK"
+    );
+
     let probe_heartbeat = v2_frame(0, 11, 255, &[0, 0, 0, 0, 0, 2, 3], 50);
     probe.send_to(&probe_heartbeat, qgc_bind).await?;
 
@@ -816,22 +831,11 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
     );
     probe.send_to(&matching_component_item, qgc_bind).await?;
-    let (length, _) = timeout(Duration::from_secs(2), probe.recv_from(&mut buffer))
-        .await
-        .context("foreign mission-item rejection timeout")??;
-    assert_eq!(buffer[7], 47, "foreign UDP source must not complete upload");
-    let (_, foreign_item_response) =
-        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
-            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
-        )?;
-    let mavlink::dialects::common::MavMessage::MISSION_ACK(foreign_item_ack) =
-        foreign_item_response
-    else {
-        anyhow::bail!("expected MISSION_ACK for foreign mission item");
-    };
-    assert_eq!(
-        foreign_item_ack.mavtype,
-        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    assert!(
+        timeout(Duration::from_millis(150), probe.recv_from(&mut buffer))
+            .await
+            .is_err(),
+        "mission data from an unconfigured UDP source must be dropped without a response"
     );
     gcs.send_to(&matching_component_item, qgc_bind).await?;
     let mut mission_ack_seen = false;

@@ -857,6 +857,10 @@ async fn qgc_to_antoine_nats(
             tracing::warn!(%source, "QGC datagram rejected from non-loopback peer");
             continue;
         }
+        if source != config.qgc_peer {
+            tracing::warn!(%source, expected=%config.qgc_peer, "QGC control datagram rejected from an unconfigured loopback peer");
+            continue;
+        }
         let raw = &buffer[..length];
         let frame = match validate_frame(raw) {
             Ok(frame) => frame,
