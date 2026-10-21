@@ -165,16 +165,35 @@ a complete flight-health claim. Status validates the configured TCP/UDP port
 values and requires all three configured listeners; an invalid value or failed
 port probe leaves the profile partial.
 
-QGC's model pre-arm indication comes from the bridge's `SYS_STATUS`
-`PREARM_CHECK` bit. It reflects the local simulation gate (ground/safe-hold,
-altitude, velocity, thrust where available, and model battery level). Antoine
-does not provide parameter-backed vehicle setup or physical sensor health;
-this bit must not be read as hardware readiness. The bridge accepts a Gazebo
-observation only when its `observedAtUnixMs` is no more than 1,000 ms old and
-no more than 250 ms in the future; older/future observations are dropped, so
-they cannot produce a `SYS_STATUS` pre-arm-ready frame.
-The exact GUI Not Ready label also remains unreproduced in a controlled fresh
-desktop session.
+QGC's toolbar `Ready`/`Not Ready` label is computed in
+`src/Toolbar/MainStatusIndicator.qml`. For an unarmed vehicle, QGC first checks
+whether the operator's pre-flight checklist blocks arming. Otherwise, if a
+health-and-arming report is supported, it uses that report's `canArm` value.
+If not, it uses `Vehicle.readyToFly` when the vehicle advertises that signal;
+QGC derives this from the `MAV_SYS_STATUS_PREARM_CHECK` enabled and health
+bits in `SYS_STATUS`. If neither readiness report is available, QGC falls back
+to all-enabled-sensors-healthy plus `autopilotPlugin.setupComplete`. An armed
+vehicle follows the separate Armed/Flying/Landing status path.
+
+The Antoine bridge does not publish a health-and-arming report or
+parameter-backed setup state. It advertises only the model `PREARM_CHECK` bit.
+For native Antoine SITL, the bit's health value requires reported ground
+contact, non-degraded GNSS, battery at least 20%, absolute altitude at most
+0.1 m, each velocity component at most 0.15 m/s, and reported thrust at most
+0.05. Gazebo telemetry has no thrust or ground-contact field: the bridge uses
+zero thrust for this model-only calculation and permits `safe-hold` plus
+absolute altitude at most 0.15 m as a ground proxy; it also accepts the
+Gazebo-specific missing GNSS-degraded field. Battery, the 0.1 m readiness
+altitude bound, and velocity bounds still apply. These assumptions do not
+establish contact, physical GNSS, battery voltage, thrust, or hardware
+readiness.
+
+Gazebo telemetry must also be no more than 1,000 ms old or 250 ms in the
+future; stale and future observations are dropped before they can produce a
+pre-arm-ready frame. Source inspection identifies QGC's possible label inputs,
+but the exact branch responsible for the previously observed `Not Ready`
+label has not been reproduced in a controlled fresh desktop session. Do not
+infer hardware readiness from the label or the bridge's model gate.
 
 The QGC checkout is expected at `~/Work/antoine-qgroundcontrol`. The MAVLink ↔
 NATS bridge source and lockfile are versioned in
