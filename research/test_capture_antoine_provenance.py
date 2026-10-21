@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from capture_antoine_provenance import (
+    battery_fix_present,
     changed_input_names,
     changed_source_tree_names,
     source_tree,
@@ -47,6 +48,22 @@ class GazeboAssetProvenanceTests(unittest.TestCase):
         self.assertEqual(before["sourceContentSha256"], after["sourceContentSha256"])
         self.assertEqual(before["qualificationStatusSha256"], after["qualificationStatusSha256"])
         self.assertFalse(source_tree_changed(before, after))
+
+    def test_battery_patch_is_recognized_after_source_evolution(self) -> None:
+        source = self.repo / "antoine_sitl_nats.rs"
+        source.write_text(
+            "\n".join(
+                (
+                    "fn battery_after_drain(remaining_pct: f64, drain_pct_per_s: f64, elapsed_s: f64) {",
+                    "battery_pct = battery_after_drain(battery_pct, battery_drain_pct_per_s, dt)",
+                    "fn gazebo_plant_honors_configured_battery_drain_rate() {",
+                )
+            ),
+            encoding="utf-8",
+        )
+        self.assertTrue(battery_fix_present(source))
+        source.write_text("fn battery_after_drain() {}", encoding="utf-8")
+        self.assertFalse(battery_fix_present(source))
 
     def test_tracked_source_content_change_is_detected_even_if_status_is_same(self) -> None:
         source = self.repo / "worlds" / "test.sdf"

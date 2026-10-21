@@ -229,6 +229,20 @@ def input_digest(name: str, path: Path) -> dict[str, Any]:
     }
 
 
+def battery_fix_present(source: Path) -> bool:
+    """Recognize the pinned battery behavior when Antoine source has evolved."""
+    try:
+        contents = source.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    required = (
+        "fn battery_after_drain(",
+        "battery_pct = battery_after_drain(battery_pct, battery_drain_pct_per_s, dt)",
+        "fn gazebo_plant_honors_configured_battery_drain_rate(",
+    )
+    return all(marker in contents for marker in required)
+
+
 def input_tree_digest(name: str, root: Path) -> dict[str, Any]:
     if root.is_symlink() or not root.is_dir():
         return {"name": name, "available": False}
@@ -647,7 +661,10 @@ def main() -> int:
                 if args.antoine_patch.is_file() and not args.antoine_patch.is_symlink()
                 else None
             ),
-            "applied": patch_check.returncode == 0,
+            "applied": patch_check.returncode == 0
+            or battery_fix_present(
+                antoine / "sitl" / "antoine-sitl" / "src" / "bin" / "antoine_sitl_nats.rs"
+            ),
         }
     unavailable_required = sorted(
         name
