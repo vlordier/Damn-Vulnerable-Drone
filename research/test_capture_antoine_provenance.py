@@ -99,6 +99,13 @@ class GazeboAssetProvenanceTests(unittest.TestCase):
         after_inputs = {"c2_gazebo_bridge": {"available": True, "sha256": "script-b"}}
         self.assertEqual(changed_input_names(before_inputs, after_inputs), ["c2_gazebo_bridge"])
 
+    def test_interactive_receipt_is_context_when_launch_adds_process_identities(self) -> None:
+        before_inputs = {"interactive_profile_receipt": {"available": True, "sha256": "initial"}}
+        after_inputs = {
+            "interactive_profile_receipt": {"available": True, "sha256": "with-processes"}
+        }
+        self.assertEqual(changed_input_names(before_inputs, after_inputs), [])
+
     def test_gazebo_checkout_is_context_when_run_owned_assets_are_bound(self) -> None:
         before_trees = {
             "gazebo_sim_assets": {

@@ -212,9 +212,12 @@ def changed_input_names(
     return sorted(
         name
         for name in set(before) | set(after)
-        if before.get(name, {}).get("available") is not True
-        or after.get(name, {}).get("available") is not True
-        or before.get(name, {}).get("sha256") != after.get(name, {}).get("sha256")
+        if name != "interactive_profile_receipt"
+        and (
+            before.get(name, {}).get("available") is not True
+            or after.get(name, {}).get("available") is not True
+            or before.get(name, {}).get("sha256") != after.get(name, {}).get("sha256")
+        )
     )
 
 
@@ -732,6 +735,7 @@ def main() -> int:
                 "changedSourceTrees": changed_trees,
                 "contextOnlySourceTrees": ["c2_bridge_source"],
                 "changedInputs": changed_inputs,
+                "contextOnlyInputs": ["interactive_profile_receipt"],
                 "stable": not changed_trees
                 and not changed_inputs
                 and pre.get("phase") == "pre"
