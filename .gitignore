@@ -24,3 +24,7 @@ research/.process-supervisor*
 .beads-credential-key
 .beads/proxieddb/
 *.gate.lock*
+
+# Machine-local editor and Codex settings
+/.codex/config.toml
+/.vscode/settings.json
