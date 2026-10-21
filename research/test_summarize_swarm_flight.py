@@ -958,6 +958,26 @@ class SummaryTests(unittest.TestCase):
         self.assertIn("transition-stop-recovery-missing-or-ambiguous", safe_stop["invalidReasons"])
         self.assertFalse(result["baselineGates"]["transitionSafeStopsBoundAndRecovered"])
 
+    def test_unconditional_actuator_neutralization_is_a_supported_safe_stop_decision(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-test"
+            build_run(run_dir, "lanes")
+            evidence_path = run_dir / "flight-evidence-drone-1.json"
+            evidence = json.loads(evidence_path.read_text())
+            evidence["stopEvents"][0]["controllerDecision"] = (
+                "publish-unconditional-actuator-neutralization"
+            )
+            write_json(evidence_path, evidence)
+            result = run_summary(run_dir)
+        safe_stop = result["vehicles"]["drone-1"]["safeStopEvidence"]
+        self.assertEqual(safe_stop["status"], "measured")
+        self.assertEqual(
+            result["vehicles"]["drone-1"]["safeStopEvidence"]["transitionStops"][0][
+                "controllerDecision"
+            ],
+            "publish-unconditional-actuator-neutralization",
+        )
+
     def test_transition_without_safe_stop_is_qualified_by_correlated_mission_progress(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "antoine-swarm-flight-test"

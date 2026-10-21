@@ -713,9 +713,12 @@ def stop_event_status(
         if not isinstance(binding["stopCommandId"], str) or not binding["stopCommandId"]:
             binding["status"] = "invalid"
             invalid_reasons.append("transition-stop-command-id-missing")
-        if binding["controllerDecision"] != "publish-fail-closed-safe-stop":
+        if binding["controllerDecision"] not in {
+            "publish-fail-closed-safe-stop",
+            "publish-unconditional-actuator-neutralization",
+        }:
             binding["status"] = "invalid"
-            invalid_reasons.append("transition-stop-controller-decision-missing")
+            invalid_reasons.append("transition-stop-controller-decision-unsupported")
         recoveries = [
             event
             for event in recovery_events
