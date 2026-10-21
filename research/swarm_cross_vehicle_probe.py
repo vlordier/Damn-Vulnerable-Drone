@@ -155,7 +155,12 @@ def target_plan(run_dir: Path, callsign: str) -> tuple[str, list[float]]:
         not isinstance(model, str)
         or not isinstance(target, list)
         or len(target) != 3
-        or any(not isinstance(value, (int, float)) or isinstance(value, bool) for value in target)
+        or any(
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+            for value in target
+        )
     ):
         raise ValueError("target final waypoint is malformed")
     return model, [float(value) for value in target]

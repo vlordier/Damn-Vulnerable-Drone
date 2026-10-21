@@ -19,6 +19,7 @@ from swarm_cross_vehicle_probe import (
     mutate_setpoint,
     pose_simulation_time,
     pose_window_at_target,
+    target_plan,
     validate_vehicle_callsigns,
     vehicle_effect_snapshot,
     write_report,
@@ -236,6 +237,26 @@ class MutationTests(unittest.TestCase):
 
 
 class PoseTruthTests(unittest.TestCase):
+    def test_target_plan_rejects_nonfinite_waypoint_coordinates(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            (run_dir / "research-swarm-config.json").write_text(
+                json.dumps(
+                    {
+                        "vehicles": [
+                            {
+                                "callsign": "drone-1",
+                                "model": "fpv-a",
+                                "waypointsEnuM": [[1.0, float("nan"), 3.0]],
+                            }
+                        ]
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "final waypoint is malformed"):
+                target_plan(run_dir, "drone-1")
+
     def test_probe_rejects_evidence_symlink_that_escapes_the_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
