@@ -335,9 +335,21 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         if name.lower().startswith("qgc"):
             results[name] = "preserved-user-owned"
             continue
+        if not isinstance(process, dict):
+            results[name] = "invalid-process-identity-not-signalled"
+            continue
         pid = process.get("pid")
         expected = process.get("identity")
-        actual = process_identity(pid) if isinstance(pid, int) and pid > 1 else None
+        if (
+            not isinstance(pid, int)
+            or isinstance(pid, bool)
+            or pid <= 1
+            or not isinstance(expected, str)
+            or not expected
+        ):
+            results[name] = "invalid-process-identity-not-signalled"
+            continue
+        actual = process_identity(pid)
         if actual is None:
             results[name] = "already-stopped"
         elif actual != expected:

@@ -317,6 +317,23 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["results"]["processes"], "no-run-owned-processes-recorded")
 
+    def test_stop_rejects_run_owned_process_record_without_pid_or_identity(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["processes"] = {"mavlinkBridge": {"pid": None, "identity": ""}}
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with (
+            patch("interactive_profile.process_identity") as process_identity,
+            patch("interactive_profile.os.kill") as kill,
+        ):
+            result = interactive_profile.stop_owned(self.receipt)
+
+        process_identity.assert_not_called()
+        kill.assert_not_called()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(
+            result["results"]["mavlinkBridge"], "invalid-process-identity-not-signalled"
+        )
+
     @patch("interactive_profile.process_identity")
     @patch("interactive_profile.os.kill")
     def test_stop_rejects_receipt_with_mismatched_run_identity(
