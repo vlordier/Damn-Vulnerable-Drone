@@ -195,14 +195,23 @@ static int stop_command(const char *identity) {
   snprintf(expected_fifo, expected_len, "%s.control", identity);
   bool expected_path = strcmp(fifo, expected_fifo) == 0;
   free(expected_fifo);
-  struct stat st;
-  if (!expected_path || !fifo[0] || lstat(fifo, &st) < 0 || !S_ISFIFO(st.st_mode) ||
-      st.st_uid != getuid() || (st.st_mode & 077) != 0) {
+  struct stat path_stat;
+  if (!expected_path || !fifo[0] || lstat(fifo, &path_stat) < 0 ||
+      !S_ISFIFO(path_stat.st_mode) || path_stat.st_uid != getuid() ||
+      (path_stat.st_mode & 077) != 0) {
     fprintf(stderr, "supervisor: refusing stale or unsafe process identity\n");
     return 1;
   }
-  int fd = open(fifo, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+  int fd = open(fifo, O_WRONLY | O_NONBLOCK | O_NOFOLLOW | O_CLOEXEC);
   if (fd < 0) { perror("supervisor control"); return 1; }
+  struct stat opened_stat;
+  if (fstat(fd, &opened_stat) < 0 || !S_ISFIFO(opened_stat.st_mode) ||
+      opened_stat.st_uid != getuid() || (opened_stat.st_mode & 077) != 0 ||
+      opened_stat.st_dev != path_stat.st_dev || opened_stat.st_ino != path_stat.st_ino) {
+    close(fd);
+    fprintf(stderr, "supervisor: control FIFO changed during open\n");
+    return 1;
+  }
   ssize_t written = write(fd, "TERM", 4);
   close(fd);
   return written == 4 ? 0 : 1;

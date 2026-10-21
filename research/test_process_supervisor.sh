@@ -86,6 +86,16 @@ fi
 owned_child_pid="$(awk -F= '$1 == "child_pid" { print $2; exit }' "${identity}")"
 kill -0 "${owned_child_pid}"
 rm "${TEMP_ROOT}/linked.identity"
+mv "${identity}.control" "${TEMP_ROOT}/owned.control"
+mkfifo "${TEMP_ROOT}/foreign.control"
+ln -s "${TEMP_ROOT}/foreign.control" "${identity}.control"
+if "${SUPERVISOR}" stop "${identity}" >/dev/null 2>&1; then
+  echo "supervisor accepted a symlinked control FIFO" >&2
+  exit 1
+fi
+kill -0 "${owned_child_pid}"
+rm "${identity}.control" "${TEMP_ROOT}/foreign.control"
+mv "${TEMP_ROOT}/owned.control" "${identity}.control"
 kill -0 "${unrelated_pid}"
 "${SUPERVISOR}" stop "${identity}"
 wait "${owned_pid}" || true
