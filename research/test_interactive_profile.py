@@ -219,6 +219,29 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["qgcPeerRouting"]["status"], "unverified")
         self.assertEqual(result["gazeboPoseRecorder"]["status"], "unverified")
 
+    def test_sample_telemetry_rejects_native_antoine_protocol_for_gazebo_profile(self) -> None:
+        native_samples = [
+            {
+                "schema": "furia.telemetry",
+                "version": "1.0.0",
+                "protocol": "antoine",
+                "identity": "drone-1",
+                "time_s": simulation_time,
+                "armed": False,
+            }
+            for simulation_time in (1.0, 1.1)
+        ]
+        with patch(
+            "interactive_profile.read_nats_messages", return_value=(native_samples, None)
+        ) as read_messages:
+            result = interactive_profile.sample_telemetry(
+                json.loads(self.receipt.read_text(encoding="utf-8"))
+            )
+
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("Gazebo protocol", result["reason"])
+        read_messages.assert_called_once_with(14226, "furia.telemetry.drone-1")
+
     def test_stop_rejects_unsupported_receipt_before_process_inspection(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         receipt["version"] = "9.9.9"

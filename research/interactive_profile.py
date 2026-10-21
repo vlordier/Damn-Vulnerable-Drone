@@ -174,11 +174,11 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
             message.get("schema") != "furia.telemetry"
             or message.get("version") != "1.0.0"
             or message.get("identity") != callsign
-            or message.get("protocol") not in {"antoine", "antoine-gz"}
+            or message.get("protocol") != "antoine-gz"
         ):
             return {
                 "status": "invalid",
-                "reason": "telemetry schema, protocol, or callsign does not match this profile",
+                "reason": "telemetry schema, Gazebo protocol, or callsign does not match this profile",
             }
     times = [message.get("time_s") for message in messages[-2:]]
     if all(
