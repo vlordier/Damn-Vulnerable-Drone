@@ -1209,6 +1209,23 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["results"]["natsPort"], "open")
 
+    def test_stop_succeeds_with_preserved_qgc_listener_still_open(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        self.add_supervisor_process(receipt)
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        self.port_status_mock.return_value = {
+            "natsPort": "closed",
+            "bridgeUdpBindPort": "closed",
+            "qgcUdpListenPort": "open",
+        }
+        identities = {9001: None, 9003: None, 9002: "qgc-process"}
+        with patch("interactive_profile.process_identity", side_effect=identities.get):
+            result = interactive_profile.stop_owned(self.receipt)
+
+        self.assertEqual(result["status"], "stopped")
+        self.assertEqual(result["results"]["qgcUdpListenPort"], "open")
+        self.assertEqual(result["results"]["qgcUserProcess"], "preserved-user-owned")
+
     @patch(
         "interactive_profile.process_identity",
         return_value="owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",

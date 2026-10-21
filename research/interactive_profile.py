@@ -1149,6 +1149,9 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
     if missing_required_processes:
         results["requiredProcessRecords"] = "missing:" + ",".join(missing_required_processes)
     results.update(_run_owned_port_statuses(receipt))
+    # The QGC listener is an external peer and is deliberately preserved. Its
+    # port state remains visible in the receipt, but only run-owned NATS and
+    # bridge ports determine whether this profile has fully stopped.
     complete = all(
         status
         in {
@@ -1162,7 +1165,8 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
             "invalid-user-process-identity-preserved",
             "closed",
         }
-        for status in results.values()
+        for name, status in results.items()
+        if name != "qgcUdpListenPort"
     )
     return _persist_stop_result(
         receipt_path,
