@@ -7,6 +7,8 @@ DVD_PROCESS_SUPERVISOR="$(dvd_process_supervisor "${PROJECT_ROOT}")"
 export DVD_PROCESS_SUPERVISOR
 ANTOINE_ROOT="${ANTOINE_ROOT:-${HOME}/Work/antoine}"
 SIM_ROOT="${AGR_SIM:-${HOME}/Work/durandal-gz-swarm-sim}"
+C2_SCRIPTS="${AGR_C2_SCRIPTS:-${HOME}/Work/furia-c2/scripts}"
+C2_BRIDGE_ROOT="${AGR_C2_ROOT:-${C2_SCRIPTS%/scripts}}"
 RUN_ID="antoine-gz-mavlink-$(date -u +%Y%m%dT%H%M%SZ)-$(uuidgen | tr '[:upper:]' '[:lower:]')"
 RUN_DIR="${ANTOINE_GZ_MAVLINK_RUN_DIR:-/tmp/${RUN_ID}}"
 mkdir -p "$(dirname "${RUN_DIR}")"
@@ -92,7 +94,9 @@ capture_provenance() {
     required_inputs+=(--require-input qgroundcontrol_runtime_config --require-input qgroundcontrol_binary)
     qgc_provenance_args=(--qgc-source "${ANTOINE_QGC_DIR}" --qgc-binary "${QGC_BINARY}" --qgc-config "${RUNTIME_CONFIG}")
   fi
-  ANTOINE_GZ_PREBUILT_BIN_DIR="${ANTOINE_RUN_BIN_DIR}" uv run --no-project python "${PROJECT_ROOT}/research/capture_antoine_provenance.py" \
+  AGR_C2_SCRIPTS="${GAZEBO_SOURCE_SNAPSHOT}/c2-bridge/scripts" \
+    ANTOINE_GZ_PREBUILT_BIN_DIR="${ANTOINE_RUN_BIN_DIR}" \
+    uv run --no-project python "${PROJECT_ROOT}/research/capture_antoine_provenance.py" \
     "${RUN_DIR}" \
     --phase "${phase}" \
     --source-sim "${SIM_ROOT}" \
@@ -200,7 +204,7 @@ uv run --no-project python "${PROJECT_ROOT}/research/snapshot_antoine_build_inpu
   --boundary-lockfile "${PROJECT_ROOT}/research/locks/antoine-boundary.Cargo.lock" \
   --source-patch "${PROJECT_ROOT}/research/patches/antoine-gazebo-battery-drain.patch"
 uv run --no-project python "${PROJECT_ROOT}/research/snapshot_gazebo_inputs.py" \
-  "${SIM_ROOT}" "${GAZEBO_SOURCE_SNAPSHOT}"
+  "${SIM_ROOT}" "${GAZEBO_SOURCE_SNAPSHOT}" --c2-bridge-root "${C2_BRIDGE_ROOT}"
 RECEIPT_TOOL="${ANTOINE_ROOT}/scripts/antoine_sitl_build_receipt.py"
 if ! PYTHONPATH="${ANTOINE_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
   RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.99.1}" uv run --no-project --script \
@@ -298,6 +302,7 @@ echo "Starting the isolated Antoine/Gazebo profile at ${NATS_URL}..."
   cd "${ANTOINE_ROOT}"
   dvd_run_owned_child "${PROJECT_ROOT}" "${PROFILE_IDENTITY}" env ANTOINE_GZ_INTERACTIVE_CONTROL=1 \
     AGR_SIM="${GAZEBO_SOURCE_SNAPSHOT}" \
+    AGR_C2_SCRIPTS="${GAZEBO_SOURCE_SNAPSHOT}/c2-bridge/scripts" \
     ANTOINE_GZ_FLIGHT_GUI=0 \
     ANTOINE_GZ_BUILD_DONE=1 ANTOINE_SITL_BUILD_RECEIPT="${ANTOINE_RUN_BUILD_RECEIPT}" \
     ANTOINE_GZ_PREBUILT_BIN_DIR="${ANTOINE_RUN_BIN_DIR}" \

@@ -33,7 +33,7 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def source_files(source_root: Path) -> list[tuple[Path, Path]]:
+def source_files(source_root: Path, c2_bridge_root: Path | None = None) -> list[tuple[Path, Path]]:
     files: list[tuple[Path, Path]] = []
     for relative in INPUTS:
         source = source_root / relative
@@ -58,17 +58,44 @@ def source_files(source_root: Path) -> list[tuple[Path, Path]]:
             if source.is_symlink() or not source.is_file():
                 raise ValueError(f"Required Gazebo flight input is missing or unsafe: {source}")
             files.append((source, relative))
+    if c2_bridge_root is None and (source_root / "c2-bridge").is_dir():
+        c2_bridge_root = source_root / "c2-bridge"
+    if c2_bridge_root is not None:
+        if c2_bridge_root.is_symlink() or not c2_bridge_root.is_dir():
+            raise ValueError(f"C2 bridge source directory is missing or unsafe: {c2_bridge_root}")
+        c2_bridge_root = c2_bridge_root.resolve(strict=True)
+        scripts_dir = c2_bridge_root / "scripts"
+        requirements = c2_bridge_root / "requirements-gz-sitl.txt"
+        required = (
+            c2_bridge_root / "scripts" / "c2-gz-sitl-bridge.py",
+            requirements,
+        )
+        if (
+            scripts_dir.is_symlink()
+            or not scripts_dir.is_dir()
+            or any(path.is_symlink() or not path.is_file() for path in required)
+        ):
+            raise ValueError("C2 bridge script and pinned requirements must be regular files")
+        c2_files = list(scripts_dir.rglob("*")) + [requirements]
+        for candidate in c2_files:
+            relative = candidate.relative_to(c2_bridge_root)
+            if {".git", "__pycache__"}.intersection(relative.parts):
+                continue
+            if candidate.is_symlink():
+                raise ValueError(f"Symlink in C2 bridge source is not snapshot-safe: {candidate}")
+            if candidate.is_file():
+                files.append((candidate, Path("c2-bridge") / relative))
     return sorted(files, key=lambda item: item[1].as_posix())
 
 
-def file_manifest(source_root: Path) -> list[dict[str, object]]:
+def file_manifest(source_root: Path, c2_bridge_root: Path | None = None) -> list[dict[str, object]]:
     return [
         {
             "path": relative.as_posix(),
             "sizeBytes": source.stat().st_size,
             "sha256": sha256_file(source),
         }
-        for source, relative in source_files(source_root)
+        for source, relative in source_files(source_root, c2_bridge_root)
     ]
 
 
@@ -189,16 +216,19 @@ def build_applier(source_root: Path, staging: Path, patch_path: Path) -> dict[st
 
 
 def create_snapshot(
-    source_root: Path, destination: Path, applier_patch: Path | None = None
+    source_root: Path,
+    destination: Path,
+    applier_patch: Path | None = None,
+    c2_bridge_root: Path | None = None,
 ) -> dict[str, object]:
     source_root = source_root.resolve(strict=True)
     if destination.exists() or destination.is_symlink():
         raise ValueError(f"Refusing to overwrite Gazebo snapshot destination: {destination}")
-    before = file_manifest(source_root)
+    before = file_manifest(source_root, c2_bridge_root)
     destination.parent.mkdir(parents=True, exist_ok=True)
     staging = Path(tempfile.mkdtemp(prefix=f".{destination.name}.", dir=destination.parent))
     try:
-        for source, relative in source_files(source_root):
+        for source, relative in source_files(source_root, c2_bridge_root):
             target = staging / relative
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(source, target)
@@ -211,7 +241,7 @@ def create_snapshot(
             }
             for item in before
         ]
-        after = file_manifest(source_root)
+        after = file_manifest(source_root, c2_bridge_root)
         if before != copied or before != after:
             raise RuntimeError(
                 "Gazebo inputs changed while the run-owned snapshot was being created"
@@ -245,9 +275,12 @@ def main() -> int:
     parser.add_argument("source", type=Path)
     parser.add_argument("destination", type=Path)
     parser.add_argument("--applier-patch", type=Path)
+    parser.add_argument("--c2-bridge-root", type=Path)
     args = parser.parse_args()
     try:
-        receipt = create_snapshot(args.source, args.destination, args.applier_patch)
+        receipt = create_snapshot(
+            args.source, args.destination, args.applier_patch, args.c2_bridge_root
+        )
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Gazebo source snapshot failed: {error}", file=sys.stderr)
         return 2

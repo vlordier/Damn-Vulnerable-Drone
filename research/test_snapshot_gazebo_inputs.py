@@ -27,6 +27,26 @@ def build_source(root: Path) -> None:
 
 
 class GazeboSnapshotTests(unittest.TestCase):
+    def test_bundles_c2_bridge_modules_and_its_pinned_python_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, c2_root, target = root / "source", root / "furia-c2", root / "run"
+            build_source(source)
+            (c2_root / "scripts").mkdir(parents=True)
+            (c2_root / "scripts/c2-gz-sitl-bridge.py").write_text("import helper\n")
+            (c2_root / "scripts/helper.py").write_text("VALUE = 1\n")
+            (c2_root / "requirements-gz-sitl.txt").write_text("nats-py==2.16.0\n")
+            (c2_root / "profiles").symlink_to(root, target_is_directory=True)
+
+            receipt = snapshot.create_snapshot(source, target, c2_bridge_root=c2_root)
+
+            paths = {item["path"] for item in receipt["files"]}
+            self.assertIn("c2-bridge/scripts/c2-gz-sitl-bridge.py", paths)
+            self.assertIn("c2-bridge/scripts/helper.py", paths)
+            self.assertIn("c2-bridge/requirements-gz-sitl.txt", paths)
+            self.assertNotIn("c2-bridge/profiles", paths)
+            self.assertEqual(receipt["files"], snapshot.file_manifest(target))
+
     def test_builds_patched_applier_inside_snapshot_with_source_and_binary_receipts(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

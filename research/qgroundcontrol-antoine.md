@@ -341,7 +341,8 @@ files; it does not attest which executable the OS loaded.
 Each profile run also retains verified `antoine-source-snapshot/` and
 `gazebo-source-snapshot/` bundles. The Antoine bundle includes its local Cargo
 path dependencies, versioned lockfiles, and battery-drain patch receipt. The
-Gazebo bundle includes the world, models, applier sources, and build scripts;
+Gazebo bundle includes the world, models, applier sources, build scripts, and
+the C2 Gazebo-to-NATS bridge with its pinned Python requirements;
 the profile launches against this run-owned Gazebo bundle. Their manifest
 digests and receipt hashes are included in the profile receipt and pre/post
 provenance. These bundles make the source inputs available for a clean rebuild;
