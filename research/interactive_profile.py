@@ -21,6 +21,8 @@ STOP_TIMEOUT_SECONDS = 5.0
 STOP_POLL_SECONDS = 0.1
 TELEMETRY_TIMEOUT_SECONDS = 1.5
 PORT_PROBE_TIMEOUT_SECONDS = 2.0
+PROCESS_IDENTITY_TIMEOUT_SECONDS = 2.0
+SUPERVISOR_REQUEST_TIMEOUT_SECONDS = 2.0
 POSE_RECORDER_MAX_AGE_SECONDS = 1.5
 POSE_RECORDER_MAX_FUTURE_SECONDS = 0.25
 MAVLINK_HEARTBEAT_MAX_AGE_SECONDS = 2.0
@@ -62,12 +64,16 @@ def _run_directory_error(receipt_path: Path, receipt: dict[str, Any]) -> str | N
 
 
 def process_identity(pid: int) -> str | None:
-    result = subprocess.run(
-        ["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=PROCESS_IDENTITY_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise OSError(f"process identity probe timed out for {pid}") from error
     value = result.stdout.strip()
     if result.returncode > 1:
         detail = result.stderr.strip() or f"ps exited with status {result.returncode}"
@@ -1029,8 +1035,11 @@ def _stop_supervised_process(pid: int, expected: str, identity_path: Path) -> st
             [str(supervisor), "stop", str(identity_path)],
             capture_output=True,
             text=True,
+            timeout=SUPERVISOR_REQUEST_TIMEOUT_SECONDS,
             check=False,
         )
+    except subprocess.TimeoutExpired:
+        return "supervisor-stop-timeout"
     except OSError:
         return "process-supervisor-unavailable"
     if request.returncode != 0:

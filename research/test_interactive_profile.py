@@ -182,6 +182,20 @@ class InteractiveProfileTests(unittest.TestCase):
             with self.assertRaisesRegex(OSError, "ps error"):
                 interactive_profile.process_identity(9001)
 
+    def test_process_identity_bounds_ps_probe(self) -> None:
+        with patch(
+            "interactive_profile.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(
+                "ps", interactive_profile.PROCESS_IDENTITY_TIMEOUT_SECONDS
+            ),
+        ) as run:
+            with self.assertRaisesRegex(OSError, "timed out"):
+                interactive_profile.process_identity(9001)
+
+        self.assertEqual(
+            run.call_args.kwargs["timeout"], interactive_profile.PROCESS_IDENTITY_TIMEOUT_SECONDS
+        )
+
     def test_status_rejects_boolean_port_without_probing_it(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         receipt["ports"]["nats"] = True
@@ -1018,6 +1032,25 @@ class InteractiveProfileTests(unittest.TestCase):
 
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["results"]["mavlinkBridge"], "supervisor-stop-rejected")
+
+    @patch(
+        "interactive_profile.process_identity",
+        return_value="owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+    )
+    def test_supervisor_stop_request_is_bounded(self, _identity):
+        with patch(
+            "interactive_profile.subprocess.run",
+            side_effect=subprocess.TimeoutExpired(
+                "process-supervisor", interactive_profile.SUPERVISOR_REQUEST_TIMEOUT_SECONDS
+            ),
+        ) as run:
+            result = interactive_profile.stop_owned(self.receipt)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["results"]["mavlinkBridge"], "supervisor-stop-timeout")
+        self.assertEqual(
+            run.call_args.kwargs["timeout"], interactive_profile.SUPERVISOR_REQUEST_TIMEOUT_SECONDS
+        )
 
 
 if __name__ == "__main__":
