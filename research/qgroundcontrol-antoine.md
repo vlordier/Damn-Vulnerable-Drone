@@ -384,6 +384,28 @@ Do not describe this path as GCS control of the Gazebo flight.
 
 ## Verification status
 
+### Current configured environment (2026-10-21)
+
+The configured Antoine-patched executable is absent at
+`~/Work/antoine-qgroundcontrol/build/Debug/QGroundControl.app`; the source
+checkout is modified and has no current build directory/CMake cache. A
+previous Debug build attempt was interrupted before producing an executable.
+The separate signed QGroundControl 5.1 app at `/Applications/QGroundControl.app`
+has SHA-256 `a5a323a409d5b42446a15b1e3b75d8e05b1262d49f0656bcaa866711f2d49aa3`,
+but its source revision and inclusion of the Antoine control patch are
+unverified, so it is not counted as the configured patched app.
+
+Headless test-client acceptance remains current and has passed the supported
+flight path against independent Gazebo poses. The latest run is
+`/private/tmp/antoine-gz-mavlink-20261021T213141Z-6c36c76e-e212-48f7-a196-87cdb6959e83/gazebo-mavlink-acceptance.json`;
+it ended disarmed on the ground with stable provenance. This test-client result
+does not establish QGC GUI behavior. No QGC GUI-originated mode, arm, position,
+or mission action has been verified, and the current configured QGC `Not Ready`
+branch remains unobserved. The remaining paragraphs in this section document
+earlier build and flight evidence rather than the current configured GUI state.
+
+### Historical QGC build and flight evidence
+
 The local QGC source compiled successfully with the Antoine-specific control,
 including the Fly view mode, takeoff, goto, mission-start, RTL, Land, and
 Antoine-labeled arm/disarm integration. Its Debug app completed the QGC
