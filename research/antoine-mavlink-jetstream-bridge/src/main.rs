@@ -1096,6 +1096,15 @@ async fn qgc_to_antoine_nats(
                     ),
                 );
                 gcs.send_to(&response, source).await?;
+            } else {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    13,
+                );
+                gcs.send_to(&ack, source).await?;
             }
             continue;
         }

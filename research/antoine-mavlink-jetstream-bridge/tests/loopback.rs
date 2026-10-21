@@ -817,6 +817,28 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         mission_ack_seen,
         "mission upload should finish with MISSION_ACK"
     );
+    let invalid_item_request = v2_frame(51, 16, 255, &[1, 0, 1, 1, 0], 196);
+    gcs.send_to(&invalid_item_request, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("invalid mission-item request response timeout")??;
+    assert_eq!(
+        buffer[7], 47,
+        "out-of-range item request should be rejected"
+    );
+    let (_, invalid_item_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(invalid_item_ack) =
+        invalid_item_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for out-of-range item request");
+    };
+    assert_eq!(
+        invalid_item_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_INVALID_SEQUENCE
+    );
     let mut uploaded = None;
     while let Ok(Some(command)) = timeout(Duration::from_secs(2), reply_rx.recv()).await {
         if command["command"]["type"] == "mission_upload" {
