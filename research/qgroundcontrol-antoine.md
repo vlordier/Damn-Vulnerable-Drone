@@ -420,7 +420,7 @@ Do not describe this path as GCS control of the Gazebo flight.
 
 ## Verification status
 
-### Current configured environment (2026-10-21)
+### Current configured environment (2026-10-22)
 
 The configured Antoine-patched executable is absent at
 `~/Work/antoine-qgroundcontrol/build/Debug/QGroundControl.app`; the source
@@ -431,14 +431,25 @@ has SHA-256 `a5a323a409d5b42446a15b1e3b75d8e05b1262d49f0656bcaa866711f2d49aa3`,
 but its source revision and inclusion of the Antoine control patch are
 unverified, so it is not counted as the configured patched app.
 
-Headless test-client acceptance remains current and has passed the supported
-flight path against independent Gazebo poses. The latest run is
-`/private/tmp/antoine-gz-mavlink-20261021T213141Z-6c36c76e-e212-48f7-a196-87cdb6959e83/gazebo-mavlink-acceptance.json`;
-it ended disarmed on the ground with stable provenance. This test-client result
-does not establish QGC GUI behavior. No QGC GUI-originated mode, arm, position,
-or mission action has been verified, and the current configured QGC `Not Ready`
-branch remains unobserved. The remaining paragraphs in this section document
-earlier build and flight evidence rather than the current configured GUI state.
+The default headless launcher now captures, verifies, seals, builds, and launches
+Antoine from a run-owned source snapshot. Fresh committed-tree acceptance at
+`/private/tmp/dvd-antoine-committed-sealed-acceptance-20261022/gazebo-mavlink-acceptance.json`
+passed with stable pre/post provenance, 71 audited MAVLink frames, independent
+Gazebo/MAVLink altitude delta of 0.024 m, and final `armed=false`. The same
+profile implementation passed two-cycle lifecycle acceptance at
+`/tmp/dvd-antoine-headless-lifecycle-20261021T224449Z.json`: both runs reported
+fresh telemetry and disarmed state; stale identity metadata could not signal
+the live second bridge; both stops confirmed all run-owned processes and ports
+closed. These test-client/headless results do not establish QGC GUI behavior.
+
+The configured patched QGC executable remains absent. The separate signed app
+at `/Applications/QGroundControl.app` still has SHA-256
+`a5a323a409d5b42446a15b1e3b75d8e05b1262d49f0656bcaa866711f2d49aa3`, but its
+source revision and Antoine patch state remain unverified. No QGC GUI-originated
+mode, arm, position, or mission action has been verified, and the current
+configured QGC `Not Ready` branch remains unobserved. The remaining paragraphs
+in this section document earlier build and flight evidence rather than the
+current configured GUI state.
 
 ### Historical QGC build and flight evidence
 
