@@ -217,11 +217,25 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         command = ["lsof", "-nP", selector]
         if protocol == "TCP":
             command.extend(["-sTCP:LISTEN"])
-        probe = subprocess.run(command, capture_output=True, text=True, check=False)
+        try:
+            probe = subprocess.run(command, capture_output=True, text=True, check=False)
+        except OSError:
+            checks[f"{name}Port"] = {
+                "port": port,
+                "protocol": protocol,
+                "listening": None,
+                "error": "port-probe-unavailable",
+            }
+            continue
         checks[f"{name}Port"] = {
             "port": port,
             "protocol": protocol,
-            "listening": probe.returncode == 0,
+            "listening": True
+            if probe.returncode == 0
+            else False
+            if probe.returncode == 1
+            else None,
+            **({"error": "port-probe-failed"} if probe.returncode > 1 else {}),
         }
     run_id = receipt.get("runId")
     run_directory = receipt.get("runDirectory")
@@ -259,6 +273,11 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         if isinstance(item, dict) and "pid" in item and not name.lower().startswith("qgc")
     ]
     run_owned_ports = [checks.get("natsPort"), checks.get("bridgeUdpBindPort")]
+    active_ports = [
+        checks.get("natsPort"),
+        checks.get("qgcUdpListenPort"),
+        checks.get("bridgeUdpBindPort"),
+    ]
     stopped = (
         ports_valid
         and bool(owned_processes)
@@ -271,6 +290,8 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
     if stopped:
         overall_status = "stopped"
     elif not ports_valid:
+        overall_status = "partial"
+    elif not all(isinstance(item, dict) and item.get("listening") is True for item in active_ports):
         overall_status = "partial"
     elif telemetry.get("status") != "fresh":
         overall_status = "stale" if stale else "partial"

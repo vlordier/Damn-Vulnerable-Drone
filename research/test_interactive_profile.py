@@ -77,6 +77,27 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertIsNone(result["processes"]["natsPort"]["listening"])
         self.assertNotIn("-iTCP:True", str([call.args[0] for call in run.call_args_list]))
 
+    def test_status_marks_lsof_errors_unavailable_and_partial(self) -> None:
+        with (
+            patch("interactive_profile.process_identity", return_value=None),
+            patch("interactive_profile.read_nats_messages") as read_messages,
+            patch("interactive_profile.subprocess.run") as run,
+        ):
+            read_messages.return_value = (
+                [],
+                {"status": "unavailable", "reason": "no fresh telemetry"},
+            )
+            run.side_effect = [
+                type("Result", (), {"returncode": 2})(),
+                type("Result", (), {"returncode": 0})(),
+                type("Result", (), {"returncode": 0})(),
+            ]
+            result = interactive_profile.inspect(self.receipt)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertIsNone(result["processes"]["natsPort"]["listening"])
+        self.assertEqual(result["processes"]["natsPort"]["error"], "port-probe-failed")
+
     def test_profile_ports_reject_duplicate_udp_bindings(self) -> None:
         valid, errors = interactive_profile._validate_profile_ports(
             {"nats": 14226, "qgcUdpListen": 14651, "bridgeUdpBind": 14651}

@@ -138,7 +138,9 @@ non-advancing telemetry leaves armed state unknown and the profile partial.
 `qgcPeerRouting` distinguishes the bridge's identity-pinned peer
 configuration from an observed QGC heartbeat; status does not claim that a
 configured peer has actually sent traffic. Neither a receipt nor a live PID is
-a complete flight-health claim.
+a complete flight-health claim. Status validates the configured TCP/UDP port
+values and requires all three configured listeners; an invalid value or failed
+port probe leaves the profile partial.
 
 QGC's model pre-arm indication comes from the bridge's `SYS_STATUS`
 `PREARM_CHECK` bit. It reflects the local simulation gate (ground/safe-hold,
