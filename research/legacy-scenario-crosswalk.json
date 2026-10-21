@@ -213,8 +213,8 @@
       "title": "Return to Home Point Override",
       "status": "partial",
       "nativeScenarioIds": [],
-      "adaptation": "Attempt to replace the approved local return/mission target",
-      "gap": "depends on a native RTL behavior and approved task contract"
+      "adaptation": "Probe the opt-in native Antoine NATS RTL control with an irrelevant caller-supplied target payload",
+      "gap": "the isolated native flight check shows unsigned direct RTL is accepted without run/task authority and its target payload is ignored in favor of fixed home; independent Gazebo trajectory and actuator evidence are still absent, and this result does not describe the separate Gazebo controller"
     },
     {
       "source": "injection/ros2-rogue-publisher-injection.yaml",
