@@ -2,6 +2,9 @@
 set -euo pipefail
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "${PROJECT_ROOT}/research/owned_process.sh"
+DVD_PROCESS_SUPERVISOR="$(dvd_process_supervisor "${PROJECT_ROOT}")"
+export DVD_PROCESS_SUPERVISOR
 ANTOINE_ROOT="${ANTOINE_ROOT:-${HOME}/Work/antoine}"
 SIM_ROOT="${AGR_SIM:-${HOME}/Work/durandal-gz-swarm-sim}"
 RUN_ID="antoine-gz-mavlink-$(date -u +%Y%m%dT%H%M%SZ)-$(uuidgen | tr '[:upper:]' '[:lower:]')"
