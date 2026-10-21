@@ -501,6 +501,12 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
             },
         )
 
+    required_process_names = ("antoineGazeboSupervisor", "mavlinkBridge")
+    missing_required_processes = [
+        name
+        for name in required_process_names
+        if name not in processes or not isinstance(processes.get(name), dict)
+    ]
     results = {}
     for name, process in processes.items():
         if name.lower().startswith("qgc"):
@@ -546,6 +552,8 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
                     if stop_result == "timeout":
                         stop_result = "term-sent-stop-unconfirmed"
             results[name] = stop_result
+    if missing_required_processes:
+        results["requiredProcessRecords"] = "missing:" + ",".join(missing_required_processes)
     results.update(_run_owned_port_statuses(receipt))
     complete = all(
         status

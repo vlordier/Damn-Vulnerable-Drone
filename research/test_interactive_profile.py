@@ -446,6 +446,12 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(persisted_report["status"], stdout_report["status"])
 
     def test_later_partial_stop_replaces_previous_success_report(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["processes"]["antoineGazeboSupervisor"] = {
+            "pid": 9003,
+            "identity": "supervisor-process",
+        }
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
         report_path = Path(self.temp.name) / "interactive-profile-stop-result.json"
         with patch("interactive_profile.process_identity", return_value=None):
             first = interactive_profile.stop_owned(self.receipt)
@@ -569,10 +575,17 @@ class InteractiveProfileTests(unittest.TestCase):
         side_effect=[
             "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
             None,
+            None,
         ],
     )
     @patch("interactive_profile.os.kill")
     def test_stop_interrupts_only_identity_matched_owned_child(self, kill, _identity) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["processes"]["antoineGazeboSupervisor"] = {
+            "pid": 9003,
+            "identity": "supervisor-process",
+        }
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
         result = interactive_profile.stop_owned(self.receipt)
         kill.assert_called_once()
         self.assertEqual(result["status"], "stopped")
@@ -588,13 +601,44 @@ class InteractiveProfileTests(unittest.TestCase):
 
     @patch(
         "interactive_profile.process_identity",
-        return_value="owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+        side_effect=[
+            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+            None,
+        ],
+    )
+    @patch("interactive_profile.os.kill")
+    def test_stop_cleans_known_child_but_stays_partial_without_supervisor_record(
+        self, kill, _identity
+    ) -> None:
+        result = interactive_profile.stop_owned(self.receipt)
+
+        kill.assert_called_once_with(9001, interactive_profile.signal.SIGINT)
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["results"]["mavlinkBridge"], "stopped")
+        self.assertEqual(
+            result["results"]["requiredProcessRecords"],
+            "missing:antoineGazeboSupervisor",
+        )
+
+    @patch(
+        "interactive_profile.process_identity",
+        side_effect=[
+            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+            None,
+        ],
     )
     @patch("interactive_profile._wait_for_owned_exit", side_effect=["timeout", "stopped"])
     @patch("interactive_profile.os.kill")
     def test_stop_escalates_to_term_after_interrupt_timeout(
         self, kill, _wait_for_exit, _identity
     ) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["processes"]["antoineGazeboSupervisor"] = {
+            "pid": 9003,
+            "identity": "supervisor-process",
+        }
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
         result = interactive_profile.stop_owned(self.receipt)
         self.assertEqual(result["status"], "stopped")
         self.assertEqual(kill.call_args_list[0].args, (9001, interactive_profile.signal.SIGINT))
