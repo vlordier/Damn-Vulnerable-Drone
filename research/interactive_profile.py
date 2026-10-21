@@ -67,6 +67,16 @@ def process_identity(pid: int) -> str | None:
     return value if result.returncode == 0 and value else None
 
 
+def _callsign_error(callsign: Any) -> str | None:
+    if not isinstance(callsign, str) or not callsign:
+        return "callsign must be a non-empty string"
+    if any(
+        ord(character) < 33 or ord(character) == 127 or character in ".*>" for character in callsign
+    ):
+        return "callsign must be a single NATS subject token"
+    return None
+
+
 def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
     """Read one newly published state from this run's loopback NATS broker."""
     callsign = receipt.get("callsign")
@@ -74,9 +84,9 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
     port = ports.get("nats") if isinstance(ports, dict) else None
     run_directory = receipt.get("runDirectory")
     run_id = receipt.get("runId")
+    callsign_error = _callsign_error(callsign)
     if (
-        not isinstance(callsign, str)
-        or not callsign
+        callsign_error
         or not isinstance(port, int)
         or isinstance(port, bool)
         or not 1 <= port <= 65535
@@ -85,7 +95,7 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
     ):
         return {
             "status": "unavailable",
-            "reason": "receipt lacks valid run, callsign, or NATS port",
+            "reason": callsign_error or "receipt lacks valid run or NATS port",
         }
     run_path = Path(run_directory)
     if run_path.name != run_id or not run_path.is_dir():
@@ -249,6 +259,32 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
             },
             "armed": None,
             "armedReason": "run identity failed; armed state is unknown",
+        }
+    callsign_error = _callsign_error(receipt.get("callsign"))
+    if callsign_error:
+        return {
+            "contract": "damn-vulnerable-drone.interactive-profile-status",
+            "version": "1.0.0",
+            "observedAtUtc": datetime.now(UTC).isoformat(),
+            "runId": receipt.get("runId"),
+            "runDirectory": receipt.get("runDirectory"),
+            "callsign": receipt.get("callsign"),
+            "ports": receipt.get("ports"),
+            "runIdentityValidation": {"status": "valid", "reason": None},
+            "portValidation": {"status": "not-checked", "errors": []},
+            "processValidation": {
+                "status": "not-checked",
+                "reason": "callsign is invalid; process probes were skipped",
+            },
+            "processes": {},
+            "status": "partial",
+            "telemetry": {"status": "invalid", "reason": callsign_error},
+            "qgcPeerRouting": {
+                "status": "unverified",
+                "reason": "callsign is invalid; routing was not inspected",
+            },
+            "armed": None,
+            "armedReason": "callsign is invalid; armed state is unknown",
         }
     checks: dict[str, Any] = {}
     processes = receipt.get("processes")

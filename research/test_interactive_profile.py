@@ -79,6 +79,22 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["runIdentityValidation"]["status"], "invalid")
         self.assertEqual(result["processValidation"]["status"], "not-checked")
 
+    def test_status_rejects_invalid_callsign_before_probes(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["callsign"] = "drone.one"
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with (
+            patch("interactive_profile.process_identity") as process_identity,
+            patch("interactive_profile.subprocess.run") as run,
+        ):
+            result = interactive_profile.inspect(self.receipt)
+
+        process_identity.assert_not_called()
+        run.assert_not_called()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["telemetry"]["status"], "invalid")
+        self.assertIn("single NATS subject token", result["telemetry"]["reason"])
+
     def test_stop_rejects_unsupported_receipt_before_process_inspection(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         receipt["version"] = "9.9.9"
