@@ -4,8 +4,9 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANTOINE_ROOT="${ANTOINE_ROOT:-${HOME}/Work/antoine}"
 SIM_ROOT="${AGR_SIM:-${HOME}/Work/durandal-gz-swarm-sim}"
-RUN_ID="antoine-gz-mavlink-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+RUN_ID="antoine-gz-mavlink-$(date -u +%Y%m%dT%H%M%SZ)-$(uuidgen | tr '[:upper:]' '[:lower:]')"
 RUN_DIR="${ANTOINE_GZ_MAVLINK_RUN_DIR:-/tmp/${RUN_ID}}"
+FLIGHT_RUN_DIR="${RUN_DIR}/flight-proof"
 NATS_PORT="${ANTOINE_GZ_MAVLINK_NATS_PORT:-14226}"
 NATS_URL="nats://127.0.0.1:${NATS_PORT}"
 BRIDGE_TARGET="${ANTOINE_BRIDGE_TARGET_DIR:-/tmp/dvd-antoine-bridge-target}"
@@ -148,13 +149,18 @@ GZ_BINARY="${GZ_BIN:-${HOME}/Work/gz-macOS/ws/install/bin/gz}"
   exit 1
 }
 
+VISIBLE_WORLD="${RUN_DIR}.visible.sdf"
+if [[ -e "${RUN_DIR}" || -e "${VISIBLE_WORLD}" ]]; then
+  echo "Run output already exists; refusing to overwrite evidence: ${RUN_DIR}" >&2
+  exit 1
+fi
+
 echo "Building the versioned MAVLink/NATS bridge..."
 RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.99.1}" \
   CARGO_TARGET_DIR="${BRIDGE_TARGET}" cargo build --locked \
   --manifest-path "${PROJECT_ROOT}/research/antoine-mavlink-jetstream-bridge/Cargo.toml"
 
 mkdir -p "$(dirname "${RUN_DIR}")" "${RUN_DIR}"
-VISIBLE_WORLD="${RUN_DIR}.visible.sdf"
 awk '/    <gravity>/{
   print "    <scene>"
   print "      <ambient>0.75 0.75 0.75 1</ambient>"
@@ -227,19 +233,19 @@ env ANTOINE_GZ_INTERACTIVE_CONTROL=1 \
   ANTOINE_GZ_FLIGHT_NATS_PORT="${NATS_PORT}" \
   ANTOINE_GZ_CARGO_TARGET_DIR="${ANTOINE_TARGET}" \
   GZ_BIN="${HOME}/Work/gz-macOS/ws/install/bin/gz" \
-  "${ANTOINE_ROOT}/scripts/gz_flight_proof.sh" --run-dir "${RUN_DIR}" --keep &
+  "${ANTOINE_ROOT}/scripts/gz_flight_proof.sh" --run-dir "${FLIGHT_RUN_DIR}" --keep &
 PROFILE_PID=$!
 
 ready=0
 for _ in $(seq 1 180); do
   if ! kill -0 "${PROFILE_PID}" 2>/dev/null; then
     wait "${PROFILE_PID}" || true
-    echo "Antoine/Gazebo profile exited before NATS became ready; inspect ${RUN_DIR}/logs" >&2
+    echo "Antoine/Gazebo profile exited before NATS became ready; inspect ${FLIGHT_RUN_DIR}/logs" >&2
     exit 1
   fi
   if nats --server "${NATS_URL}" rtt >/dev/null 2>&1 \
-    && grep -q 'interactive_control=true' "${RUN_DIR}/logs/local-authority.log" 2>/dev/null \
-    && grep -q "ANTOINE_GZ_STATE_RECEIVED callsign=${CALLSIGN}" "${RUN_DIR}/logs/antoine-controller.log" 2>/dev/null; then
+    && grep -q 'interactive_control=true' "${FLIGHT_RUN_DIR}/logs/local-authority.log" 2>/dev/null \
+    && grep -q "ANTOINE_GZ_STATE_RECEIVED callsign=${CALLSIGN}" "${FLIGHT_RUN_DIR}/logs/antoine-controller.log" 2>/dev/null; then
     ready=1
     break
   fi
@@ -323,6 +329,7 @@ fi
 
 echo "Interactive Antoine/Gazebo MAVLink bench is ready."
 echo "NATS: ${NATS_URL}; callsign: ${CALLSIGN}; QGC target: 127.0.0.1:${QGC_BIND_PORT}"
+echo "Flight evidence: ${FLIGHT_RUN_DIR}"
 echo "In another terminal run: make qgc-antoine-check MAVLINK_NATS_URL=${NATS_URL} MAVLINK_CALLSIGN=${CALLSIGN}"
 echo "Ctrl-C stops only this run's bridge, Antoine, and Gazebo processes."
 wait "${PROFILE_PID}"
