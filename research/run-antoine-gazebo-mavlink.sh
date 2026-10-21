@@ -86,17 +86,8 @@ stop_child() {
 
 record_process() {
   local name="$1" pid="$2"
-  uv run --no-project python - "${PROFILE_RECEIPT}" "${name}" "${pid}" <<'PY'
-import json, pathlib, subprocess, sys
-path = pathlib.Path(sys.argv[1])
-name, pid = sys.argv[2], int(sys.argv[3])
-identity = subprocess.run(["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="], capture_output=True, text=True).stdout.strip()
-if not identity:
-    raise SystemExit(f"cannot record process identity for {name}")
-receipt = json.loads(path.read_text())
-receipt["processes"][name] = {"pid": pid, "identity": identity}
-path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-PY
+  uv run --no-project python "${PROJECT_ROOT}/research/record_interactive_process.py" \
+    "${PROFILE_RECEIPT}" "${name}" "${pid}"
 }
 
 cleanup() {
@@ -253,18 +244,9 @@ for _ in $(seq 1 180); do
 done
 [[ "${ready}" == "1" ]] || { echo "Timed out waiting for run-owned NATS at ${NATS_URL}" >&2; exit 1; }
 
-uv run --no-project python - "${PROFILE_RECEIPT}" "${PROFILE_PID}" "${RUN_DIR}" <<'PY'
-import json, pathlib, subprocess, sys
-path = pathlib.Path(sys.argv[1])
-receipt = json.loads(path.read_text())
-receipt["status"] = "ready"
-receipt["runDirectory"] = str(pathlib.Path(sys.argv[3]).resolve())
-receipt["processes"]["antoineGazeboSupervisor"] = {
-    "pid": int(sys.argv[2]),
-    "identity": subprocess.run(["ps", "-p", sys.argv[2], "-o", "lstart=", "-o", "command="], capture_output=True, text=True).stdout.strip(),
-}
-path.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
-PY
+uv run --no-project python "${PROJECT_ROOT}/research/record_interactive_process.py" \
+  "${PROFILE_RECEIPT}" antoineGazeboSupervisor "${PROFILE_PID}" \
+  --status ready --run-directory "${RUN_DIR}"
 
 echo "Recording pre-interaction source, build, world, and configuration provenance..."
 capture_provenance pre
