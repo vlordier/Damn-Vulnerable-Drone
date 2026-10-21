@@ -526,13 +526,20 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         ):
             results[name] = "invalid-process-identity-not-signalled"
             continue
-        actual = process_identity(pid)
+        try:
+            actual = process_identity(pid)
+        except OSError:
+            results[name] = "identity-probe-unavailable"
+            continue
         if actual is None:
             results[name] = "already-stopped"
         elif actual != expected:
             results[name] = "identity-mismatch-not-signalled"
         else:
-            results[name] = _stop_owned_process(pid, expected)
+            try:
+                results[name] = _stop_owned_process(pid, expected)
+            except OSError:
+                results[name] = "identity-probe-unavailable"
     if missing_required_processes:
         results["requiredProcessRecords"] = "missing:" + ",".join(missing_required_processes)
     results.update(_run_owned_port_statuses(receipt))

@@ -573,6 +573,19 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "stopped")
         self.assertEqual(result["results"]["mavlinkBridge"], "already-stopped")
 
+    @patch("interactive_profile.process_identity", side_effect=OSError("ps unavailable"))
+    def test_stop_persists_partial_when_process_identity_probe_fails(self, _identity) -> None:
+        result = interactive_profile.stop_owned(self.receipt)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["results"]["mavlinkBridge"], "identity-probe-unavailable")
+        persisted = json.loads(
+            (Path(self.temp.name) / "interactive-profile-stop-result.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(persisted["status"], "partial")
+
     def test_run_owned_port_probe_excludes_qgc_and_distinguishes_open_ports(self) -> None:
         with patch("interactive_profile.subprocess.run") as run:
             run.side_effect = [
