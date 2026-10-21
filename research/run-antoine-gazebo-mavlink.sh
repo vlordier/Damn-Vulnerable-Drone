@@ -177,13 +177,15 @@ fi
   echo "Missing source-built Gazebo at ~/Work/gz-macOS/ws/install/bin/gz" >&2
   exit 1
 }
-[[ -x "${ANTOINE_TARGET}/debug/antoine_sitl_nats" \
-  && -x "${ANTOINE_TARGET}/debug/antoine_gz_local_authority" \
-  && -x "${ANTOINE_TARGET}/debug/antoine-boundary-service" \
-  && -f "${ANTOINE_BUILD_RECEIPT}" ]] || {
-  echo "Missing verified Antoine build inputs; run 'make antoine-gz-battery-test' first." >&2
-  exit 1
-}
+if [[ "${HEADLESS_ACCEPTANCE}" != "1" ]]; then
+  [[ -x "${ANTOINE_TARGET}/debug/antoine_sitl_nats" \
+    && -x "${ANTOINE_TARGET}/debug/antoine_gz_local_authority" \
+    && -x "${ANTOINE_TARGET}/debug/antoine-boundary-service" \
+    && -f "${ANTOINE_BUILD_RECEIPT}" ]] || {
+    echo "Missing verified Antoine build inputs; run 'make antoine-gz-battery-test' first." >&2
+    exit 1
+  }
+fi
 
 VISIBLE_WORLD="${RUN_DIR}.visible.sdf"
 if [[ -e "${RUN_DIR}" || -e "${VISIBLE_WORLD}" ]]; then

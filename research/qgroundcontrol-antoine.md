@@ -299,6 +299,20 @@ receipt identifies the profile as headless and records no QGC source or binary
 as a runtime input. This acceptance proves the MAVLink test-client path; it is
 not QGC UI evidence.
 
+To rebuild a saved profile's archived inputs from a fresh sealed checkout,
+run `make antoine-gz-rebuild-check PROFILE_RUN_DIR=/path/to/profile-run
+REBUILD_DIR=/path/to/new-rebuild-dir`. The command verifies the profile and
+snapshot receipts, requires matching Cargo, Rust, and Gazebo versions, rebuilds
+the three Antoine executables offline into a new target directory, verifies the
+native Antoine receipt, and runs bounded headless acceptance against that
+rebuilt checkout and the archived Gazebo/C2 bundle. It does not require or
+launch QGC. Both output directories are non-overwriting; use a new
+`REBUILD_DIR` for each attempt. Cargo registry sources and the installed
+Gazebo toolchain must already be available locally. Rebuilt executable hashes
+can differ from the original run because the sealed checkout has a new commit
+and filesystem path; the rebuild receipt binds the actual source snapshot,
+toolchain, and resulting binaries.
+
 The bridge always sends telemetry to QGC's configured UDP peer. It can also
 send a fixed copy to the local flight-check observer at `127.0.0.1:14574`.
 This observer is configured at bridge startup; a valid frame from an arbitrary
@@ -346,8 +360,9 @@ the C2 Gazebo-to-NATS bridge with its pinned Python requirements;
 the profile launches against this run-owned Gazebo bundle. Their manifest
 digests and receipt hashes are included in the profile receipt and pre/post
 provenance. These bundles make the source inputs available for a clean rebuild;
-they do not include the installed Gazebo toolchain or prove a rebuild by
-themselves.
+the installed Gazebo toolchain remains a local prerequisite. The rebuild
+command above proves that the archived Antoine inputs compile and pass headless
+acceptance when combined with the archived Gazebo/C2 bundle.
 
 Create a non-overwriting candidate from a stable run with
 `make qgc-gazebo-pin-candidate PROFILE_RECEIPT=... PROFILE_COMPARISON=... PROFILE_PIN_CANDIDATE=...`.

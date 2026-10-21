@@ -24,7 +24,7 @@ MAVLINK_AUDIT_STREAM ?= ANTOINE_MAVLINK
 QGC_UDP_LISTEN_PORT ?= 14550
 QGC_BRIDGE_PORT ?= 14651
 
-.PHONY: help doctor antoine-gz-battery-patch antoine-gz-battery-test console-start console-status console-stop baseline attack-waypoint attack-replay observe-nats probe-gps observe-camera early-revoke state-timing swarm-smoke swarm-baseline swarm-flight swarm-live swarm-vee swarm-rendezvous swarm-split swarm-bridge swarm-3 swarm-5 swarm-blackhole swarm-rate swarm-auth-isolation test-swarm test-research test-process-supervisor bridge-test bridge-build mavlink-console mavlink-console-start mavlink-console-stop mavlink-control mavlink-arm mavlink-disarm mavlink-check mavlink-flight-check mavlink-gazebo-headless-check mavlink-gazebo-headless-lifecycle-check mavlink-gazebo-flight-check mavlink-full-check qgc-antoine-patch qgc-antoine-build qgc-antoine-run qgc-antoine-check qgc-gazebo-preflight qgc-gazebo qgc-gazebo-status qgc-gazebo-stop qgc-gazebo-verify qgc-gazebo-pin-candidate qgc-gazebo-check lint validate
+.PHONY: help doctor antoine-gz-battery-patch antoine-gz-battery-test antoine-gz-rebuild-check console-start console-status console-stop baseline attack-waypoint attack-replay observe-nats probe-gps observe-camera early-revoke state-timing swarm-smoke swarm-baseline swarm-flight swarm-live swarm-vee swarm-rendezvous swarm-split swarm-bridge swarm-3 swarm-5 swarm-blackhole swarm-rate swarm-auth-isolation test-swarm test-research test-process-supervisor bridge-test bridge-build mavlink-console mavlink-console-start mavlink-console-stop mavlink-control mavlink-arm mavlink-disarm mavlink-check mavlink-flight-check mavlink-gazebo-headless-check mavlink-gazebo-headless-lifecycle-check mavlink-gazebo-flight-check mavlink-full-check qgc-antoine-patch qgc-antoine-build qgc-antoine-run qgc-antoine-check qgc-gazebo-preflight qgc-gazebo qgc-gazebo-status qgc-gazebo-stop qgc-gazebo-verify qgc-gazebo-pin-candidate qgc-gazebo-check lint validate
 
 help: ## Show common commands
 	@printf '%s\n' \
@@ -32,6 +32,7 @@ help: ## Show common commands
 	  '  make doctor           Check local Antoine/Gazebo prerequisites' \
 	  '  make antoine-gz-battery-patch Apply the versioned Antoine SITL battery fix' \
 	  '  make antoine-gz-battery-test Test, build, and record the patched SITL binary' \
+	  '  make antoine-gz-rebuild-check PROFILE_RUN_DIR=... REBUILD_DIR=... Rebuild and accept a saved source snapshot' \
 	  '  make console-start     Start the local research console' \
 	  '  make console-status    Show console and native launcher status' \
 	  '  make console-stop      Stop the checkout-owned console' \
@@ -107,6 +108,22 @@ antoine-gz-battery-test: antoine-gz-battery-patch ## Test, build and record the 
 	RUSTUP_TOOLCHAIN=$(RUSTUP_TOOLCHAIN) CARGO_TARGET_DIR="$(ANTOINE_GZ_CARGO_TARGET_DIR)" cargo build --locked --manifest-path "$$antoine_root/runtime/antoine-boundary/Cargo.toml" --features service --bin antoine-boundary-service; \
 	uv run --no-project python research/record_antoine_build.py --source "$$source" --patch "$(CURDIR)/research/patches/antoine-gazebo-battery-drain.patch" --binary "$(ANTOINE_GZ_CARGO_TARGET_DIR)/debug/antoine_sitl_nats" --additional-binary "$(ANTOINE_GZ_CARGO_TARGET_DIR)/debug/antoine_gz_local_authority" --additional-binary "$(ANTOINE_GZ_CARGO_TARGET_DIR)/debug/antoine-boundary-service" --output "$(ANTOINE_GZ_CARGO_TARGET_DIR)/antoine-gz-battery-build.json" --toolchain "$(RUSTUP_TOOLCHAIN)"; \
 	echo "Battery-fix build receipt: $(ANTOINE_GZ_CARGO_TARGET_DIR)/antoine-gz-battery-build.json"
+
+antoine-gz-rebuild-check: ## Rebuild archived Antoine inputs from a profile receipt and run headless Gazebo acceptance
+	@test -n "$(PROFILE_RUN_DIR)" || { echo 'Set PROFILE_RUN_DIR to a completed run directory.' >&2; exit 2; }
+	@test -n "$(REBUILD_DIR)" || { echo 'Set REBUILD_DIR to a new, non-existing output directory.' >&2; exit 2; }
+	@test -d "$(PROFILE_RUN_DIR)/antoine-source-snapshot" -a -d "$(PROFILE_RUN_DIR)/gazebo-source-snapshot" || { echo 'Profile run must retain verified Antoine and Gazebo source bundles.' >&2; exit 2; }
+	$(RESEARCH_PYTHON) python research/rebuild_antoine_snapshot.py --run-dir "$(PROFILE_RUN_DIR)" --output-dir "$(REBUILD_DIR)" --rustup-toolchain "$(RUSTUP_TOOLCHAIN)"
+	ANTOINE_GZ_OPEN_QGC=0 ANTOINE_GZ_HEADLESS_ACCEPTANCE=1 ANTOINE_GZ_FLIGHT_GUI=0 \
+	  ANTOINE_ROOT="$(REBUILD_DIR)/source-snapshot/antoine" \
+	  ANTOINE_SOURCE_BUILD_RECEIPT="$(REBUILD_DIR)/source-snapshot/antoine-source-build-receipt.json" \
+	  ANTOINE_GZ_CARGO_TARGET_DIR="$(REBUILD_DIR)/cargo-target" \
+	  ANTOINE_GZ_MAVLINK_RUN_DIR="$(REBUILD_DIR)/acceptance-run" \
+	  AGR_SIM="$(PROFILE_RUN_DIR)/gazebo-source-snapshot" \
+	  AGR_C2_ROOT="$(PROFILE_RUN_DIR)/gazebo-source-snapshot/c2-bridge" \
+	  ANTOINE_BRIDGE_TARGET_DIR="$(ANTOINE_BRIDGE_TARGET_DIR)" \
+	  RUSTUP_TOOLCHAIN="$(RUSTUP_TOOLCHAIN)" CARGO_NET_OFFLINE=true \
+	  bash research/run-antoine-gazebo-mavlink.sh
 
 doctor: ## Check the local Antoine/Gazebo prerequisites without starting a run
 	@set -eu; \
