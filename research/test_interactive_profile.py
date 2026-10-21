@@ -295,6 +295,28 @@ class InteractiveProfileTests(unittest.TestCase):
             persisted_report["results"]["mavlinkBridge"], "identity-mismatch-not-signalled"
         )
 
+    def test_stop_does_not_report_success_when_no_run_owned_processes_are_recorded(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["processes"] = {"qgcUserProcess": {"pid": 9002, "identity": "qgc-process"}}
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with patch("interactive_profile.process_identity") as process_identity:
+            result = interactive_profile.stop_owned(self.receipt)
+
+        process_identity.assert_not_called()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["results"]["processes"], "no-run-owned-processes-recorded")
+
+    def test_stop_does_not_report_success_for_empty_process_records(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["processes"] = {}
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with patch("interactive_profile.process_identity") as process_identity:
+            result = interactive_profile.stop_owned(self.receipt)
+
+        process_identity.assert_not_called()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["results"]["processes"], "no-run-owned-processes-recorded")
+
     @patch("interactive_profile.process_identity")
     @patch("interactive_profile.os.kill")
     def test_stop_rejects_receipt_with_mismatched_run_identity(

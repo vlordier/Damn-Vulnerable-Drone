@@ -310,8 +310,28 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
             },
         )
 
+    processes = receipt.get("processes")
+    if not isinstance(processes, dict):
+        return _persist_stop_result(
+            receipt_path,
+            {
+                "runId": run_id,
+                "status": "partial",
+                "results": {"processes": "invalid-process-records-not-signalled"},
+            },
+        )
+    if not any(not name.lower().startswith("qgc") for name in processes):
+        return _persist_stop_result(
+            receipt_path,
+            {
+                "runId": run_id,
+                "status": "partial",
+                "results": {"processes": "no-run-owned-processes-recorded"},
+            },
+        )
+
     results = {}
-    for name, process in receipt.get("processes", {}).items():
+    for name, process in processes.items():
         if name.lower().startswith("qgc"):
             results[name] = "preserved-user-owned"
             continue
