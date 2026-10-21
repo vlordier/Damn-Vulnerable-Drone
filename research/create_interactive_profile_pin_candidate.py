@@ -98,6 +98,7 @@ def validate_run_evidence(receipt: dict[str, Any], run_directory: Path) -> None:
         if (
             report.get("schema") != "dvd.gazebo-mavlink-flight-check.v1"
             or report.get("passed") is not True
+            or report.get("validGazeboTelemetryReceived") is not True
             or report.get("callsign") != receipt.get("callsign")
             or not isinstance(final_state, dict)
             or final_state.get("armed") is not False

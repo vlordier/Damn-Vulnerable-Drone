@@ -145,6 +145,7 @@ class InteractiveProfilePinCandidateTests(unittest.TestCase):
                     {
                         "schema": "dvd.gazebo-mavlink-flight-check.v1",
                         "passed": True,
+                        "validGazeboTelemetryReceived": True,
                         "callsign": "drone-1",
                         "finalMavlinkState": {"armed": False},
                         "finalGazeboPose": [0.0, 0.0, 0.15],
@@ -159,6 +160,32 @@ class InteractiveProfilePinCandidateTests(unittest.TestCase):
                     {
                         "schema": "dvd.gazebo-mavlink-flight-check.v1",
                         "passed": False,
+                        "validGazeboTelemetryReceived": True,
+                        "callsign": "drone-1",
+                        "finalMavlinkState": {"armed": False},
+                        "finalGazeboPose": [0.0, 0.0, 0.15],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "passing disarmed Gazebo acceptance"):
+                validate_run_evidence(receipt, run_directory)
+
+    def test_headless_candidate_requires_valid_gazebo_telemetry_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_directory = Path(temporary)
+            receipt = {
+                "runId": run_directory.name,
+                "runDirectory": str(run_directory),
+                "profile": "headless-antoine-gazebo-mavlink",
+                "callsign": "drone-1",
+            }
+            report_path = run_directory / "gazebo-mavlink-acceptance.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "dvd.gazebo-mavlink-flight-check.v1",
+                        "passed": True,
                         "callsign": "drone-1",
                         "finalMavlinkState": {"armed": False},
                         "finalGazeboPose": [0.0, 0.0, 0.15],

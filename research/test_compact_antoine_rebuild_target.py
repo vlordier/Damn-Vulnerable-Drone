@@ -73,6 +73,7 @@ def fixture(root: Path) -> dict[str, str]:
         {
             "schema": "dvd.gazebo-mavlink-flight-check.v1",
             "passed": True,
+            "validGazeboTelemetryReceived": True,
             "finalMavlinkState": {"armed": False},
         },
     )
@@ -120,6 +121,21 @@ class CompactAntoineRebuildTargetTests(unittest.TestCase):
             acceptance_path = root / "acceptance-run/gazebo-mavlink-acceptance.json"
             acceptance = json.loads(acceptance_path.read_text())
             acceptance["passed"] = False
+            write_json(acceptance_path, acceptance)
+
+            with self.assertRaisesRegex(ValueError, "passing, finally disarmed"):
+                compact.compact(root)
+
+            self.assertTrue((root / "cargo-target/debug/deps/large-intermediate").is_file())
+
+    def test_acceptance_without_gazebo_telemetry_preserves_original_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "rebuild"
+            root.mkdir()
+            fixture(root)
+            acceptance_path = root / "acceptance-run/gazebo-mavlink-acceptance.json"
+            acceptance = json.loads(acceptance_path.read_text())
+            del acceptance["validGazeboTelemetryReceived"]
             write_json(acceptance_path, acceptance)
 
             with self.assertRaisesRegex(ValueError, "passing, finally disarmed"):

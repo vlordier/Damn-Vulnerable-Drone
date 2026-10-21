@@ -71,6 +71,7 @@ def write_profile_run(run_dir: Path) -> None:
             {
                 "schema": "dvd.gazebo-mavlink-flight-check.v1",
                 "passed": True,
+                "validGazeboTelemetryReceived": True,
                 "prearmReadyBeforeFlight": True,
                 "finalMavlinkState": {"armed": False},
             }
@@ -137,6 +138,18 @@ class AntoineSnapshotRebuildTests(unittest.TestCase):
             acceptance_path = run_dir / "gazebo-mavlink-acceptance.json"
             acceptance = json.loads(acceptance_path.read_text())
             acceptance["passed"] = False
+            acceptance_path.write_text(json.dumps(acceptance) + "\n")
+            with self.assertRaisesRegex(ValueError, "passing headless acceptance"):
+                rebuild.verify_profile_inputs(run_dir)
+
+    def test_acceptance_without_gazebo_nats_telemetry_cannot_be_rebuilt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "profile-run"
+            run_dir.mkdir()
+            write_profile_run(run_dir)
+            acceptance_path = run_dir / "gazebo-mavlink-acceptance.json"
+            acceptance = json.loads(acceptance_path.read_text())
+            del acceptance["validGazeboTelemetryReceived"]
             acceptance_path.write_text(json.dumps(acceptance) + "\n")
             with self.assertRaisesRegex(ValueError, "passing headless acceptance"):
                 rebuild.verify_profile_inputs(run_dir)

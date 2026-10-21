@@ -55,6 +55,7 @@ def compact(rebuild_dir: Path) -> dict[str, Any]:
     if (
         acceptance.get("schema") != "dvd.gazebo-mavlink-flight-check.v1"
         or acceptance.get("passed") is not True
+        or acceptance.get("validGazeboTelemetryReceived") is not True
         or acceptance.get("finalMavlinkState", {}).get("armed") is not False
     ):
         raise ValueError("compaction requires passing, finally disarmed Gazebo acceptance")

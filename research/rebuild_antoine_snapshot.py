@@ -59,6 +59,7 @@ def verify_profile_inputs(run_dir: Path) -> dict[str, Any]:
     if (
         acceptance.get("schema") != "dvd.gazebo-mavlink-flight-check.v1"
         or acceptance.get("passed") is not True
+        or acceptance.get("validGazeboTelemetryReceived") is not True
         or not isinstance(final_state, dict)
         or final_state.get("armed") is not False
         or acceptance.get("prearmReadyBeforeFlight") is not True
