@@ -268,6 +268,16 @@ launcher fails before starting SITL if the expected local QGC binary or
 verified Antoine build artifacts are missing. Provenance identifies inspected
 files; it does not attest which executable the OS loaded.
 
+Compare a captured interactive receipt with a separately reviewed runtime pin
+file using `make qgc-gazebo-verify PROFILE_RECEIPT=... PROFILE_PINS=...`.
+The pin file uses contract `damn-vulnerable-drone.interactive-profile-pins`
+version `1.0.0`, and contains `profile`, `source`, `artifacts`, and `toolchain`
+sections copied only after a reviewer accepts those values. Dirty source pins
+must include the exact worktree-status, tracked-diff, and dirty-file digests.
+The verifier reports `verified`, `dirty-unreviewed`, `incompatible`, or
+`missing`; it never creates or updates pins. Pinning dirty digests identifies
+the reviewed checkout state but does not establish that its changes are safe.
+
 Run `make qgc-gazebo-check` to send a GCS-style heartbeat and stream request
 through the UDP bridge and confirm JetStream audit. That probe is not a QGC GUI
 action. Run `make mavlink-gazebo-flight-check` to exercise the live command path
