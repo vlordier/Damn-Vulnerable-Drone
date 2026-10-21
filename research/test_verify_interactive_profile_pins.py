@@ -9,6 +9,7 @@ class InteractiveProfilePinTests(unittest.TestCase):
     def setUp(self) -> None:
         self.receipt = {
             "contract": "damn-vulnerable-drone.interactive-profile",
+            "version": "1.0.0",
             "profile": "interactive-antoine-gazebo",
             "source": {
                 "antoine": {
@@ -69,6 +70,16 @@ class InteractiveProfilePinTests(unittest.TestCase):
 
     def test_wrong_contract_fails_closed(self) -> None:
         self.receipt["contract"] = "other"
+        result = verify(self.receipt, self.pins)
+        self.assertEqual(result["status"], "missing")
+
+    def test_unsupported_receipt_version_fails_closed(self) -> None:
+        self.receipt["version"] = "2.0.0"
+        result = verify(self.receipt, self.pins)
+        self.assertEqual(result["status"], "missing")
+
+    def test_unavailable_source_classification_fails_closed(self) -> None:
+        self.receipt["source"]["antoine"]["classification"] = "unavailable"
         result = verify(self.receipt, self.pins)
         self.assertEqual(result["status"], "missing")
 

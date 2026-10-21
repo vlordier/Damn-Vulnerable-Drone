@@ -34,6 +34,8 @@ def verify(receipt: Any, pins: Any) -> dict[str, Any]:
 
     if pins.get("version") != PIN_VERSION:
         missing.append("pin version is missing or unsupported")
+    if receipt.get("version") != "1.0.0":
+        missing.append("receipt version is missing or unsupported")
     profile = receipt.get("profile")
     expected_profile = pins.get("profile")
     if not isinstance(profile, str) or not profile:
@@ -116,6 +118,11 @@ def _compare_mapping(
         if not isinstance(actual_record, dict) or not isinstance(expected_record, dict):
             missing.append(f"{label}.{name} record is malformed")
             continue
+        if check_dirty and actual_record.get("classification") not in {
+            "clean",
+            "dirty-unreviewed",
+        }:
+            missing.append(f"source.{name} classification is missing or unavailable")
         fields = (
             set(actual_record)
             if label != "source"
