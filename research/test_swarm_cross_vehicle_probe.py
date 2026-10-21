@@ -6,6 +6,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from swarm_cross_vehicle_probe import (
     actuator_numeric_vector,
@@ -13,6 +14,7 @@ from swarm_cross_vehicle_probe import (
     mutate_setpoint,
     pose_window_at_target,
     vehicle_effect_snapshot,
+    write_report,
 )
 
 
@@ -179,6 +181,18 @@ class MutationTests(unittest.TestCase):
 
 
 class PoseTruthTests(unittest.TestCase):
+    def test_report_replacement_failure_preserves_previous_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            report_path = Path(directory) / "report.json"
+            report_path.write_text('{"status":"previous"}\n', encoding="utf-8")
+
+            with patch("swarm_cross_vehicle_probe.os.replace", side_effect=OSError("disk error")):
+                with self.assertRaisesRegex(OSError, "disk error"):
+                    write_report(report_path, {"status": "new"})
+
+            self.assertEqual(report_path.read_text(encoding="utf-8"), '{"status":"previous"}\n')
+            self.assertEqual(list(Path(directory).glob(".report.json.*.tmp")), [])
+
     def test_non_object_actuator_rows_are_skipped_and_reported_missing(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory)

@@ -7,7 +7,9 @@ import argparse
 import hashlib
 import json
 import math
+import os
 import subprocess
+import tempfile
 import time
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -476,6 +478,27 @@ def publish_json(server: str, subject: str, payload: dict) -> None:
     )
 
 
+def write_report(path: Path, report: dict) -> None:
+    """Replace the final probe report atomically, preserving any prior file on failure."""
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            json.dump(report, temporary, indent=2, sort_keys=True)
+            temporary.write("\n")
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--server", required=True)
@@ -632,7 +655,7 @@ def main() -> int:
     except (OSError, ValueError, subprocess.SubprocessError, TimeoutError, KeyError) as error:
         report.update({"status": "inconclusive", "error": str(error)})
     output = run_dir / "research-cross-vehicle-authorization.json"
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_report(output, report)
     print(output)
     return 0 if report.get("status") == "passed" else 2
 
