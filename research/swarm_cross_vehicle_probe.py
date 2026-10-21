@@ -285,7 +285,12 @@ def compare_effect_snapshots(
         identity_valid = all(
             actuator.get(key) == expected
             for actuator in (first_actuator, last_actuator)
-            for key, expected in (("runId", run_id), ("vehicleId", callsign))
+            for key, expected in (
+                ("runId", run_id),
+                ("vehicleId", callsign),
+                ("executionGrantRunId", run_id),
+                ("executionGrantVehicleId", callsign),
+            )
         )
         first_vector = actuator_numeric_vector(first_actuator.get("values"))
         last_vector = actuator_numeric_vector(last_actuator.get("values"))

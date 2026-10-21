@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from swarm_cross_vehicle_probe import (
     actuator_numeric_vector,
+    compare_effect_snapshots,
     controller_decision,
     mutate_setpoint,
     pose_window_at_target,
@@ -60,6 +61,42 @@ class MutationTests(unittest.TestCase):
         self.assertIsNone(actuator_numeric_vector({"left": 0.2, "right": "unknown"}))
         self.assertIsNone(actuator_numeric_vector({"left": [0.2, float("nan")]}))
         self.assertEqual(actuator_numeric_vector({"left": [0.2, 0.3]}), [0.2, 0.3])
+
+    def test_effect_measurement_requires_run_and_vehicle_bound_grants(self) -> None:
+        def snapshot(simulation_time: float, sequence: int, grant_run: str) -> dict:
+            return {
+                "missing": [],
+                "poseByVehicle": {
+                    "fpv-a": {
+                        "simulationTimeSeconds": simulation_time,
+                        "positionEnuM": [1.0, 2.0, 3.0],
+                    }
+                },
+                "actuatorByVehicle": {
+                    "drone-1": {
+                        "runId": "run-1",
+                        "vehicleId": "drone-1",
+                        "executionGrantRunId": grant_run,
+                        "executionGrantVehicleId": "drone-1",
+                        "sequence": sequence,
+                        "values": {"motor": [0.1, 0.2]},
+                    }
+                },
+            }
+
+        valid = compare_effect_snapshots(
+            snapshot(1.0, 10, "run-1"), snapshot(2.0, 11, "run-1"), {"drone-1": "fpv-a"}, "run-1"
+        )
+        foreign_grant = compare_effect_snapshots(
+            snapshot(1.0, 10, "run-1"),
+            snapshot(2.0, 11, "other-run"),
+            {"drone-1": "fpv-a"},
+            "run-1",
+        )
+
+        self.assertEqual(valid["status"], "measured")
+        self.assertEqual(foreign_grant["status"], "failed")
+        self.assertFalse(foreign_grant["vehicles"]["drone-1"]["actuatorIdentityValid"])
 
     def test_wrong_callsign_changes_only_vehicle_binding_and_freshness_sequence(self) -> None:
         original = valid_live_setpoint()
