@@ -74,8 +74,9 @@ class InteractiveProfileTests(unittest.TestCase):
             ),
             encoding="utf-8",
         )
-        (Path(self.temp.name) / "logs").mkdir()
-        (Path(self.temp.name) / "logs" / "nats.log").write_text(
+        flight_directory = Path(self.temp.name) / "flight-proof"
+        (flight_directory / "logs").mkdir(parents=True, exist_ok=True)
+        (flight_directory / "logs" / "nats.log").write_text(
             "Listening for client connections on 127.0.0.1:14226\nServer is ready\n",
             encoding="utf-8",
         )
@@ -432,7 +433,7 @@ class InteractiveProfileTests(unittest.TestCase):
     def test_status_reports_fresh_callsign_bound_armed_state(self, _identity) -> None:
         run_directory = Path(self.temp.name)
         flight_directory = run_directory / "flight-proof"
-        (flight_directory / "logs").mkdir(parents=True)
+        (flight_directory / "logs").mkdir(parents=True, exist_ok=True)
         (flight_directory / "logs" / "nats.log").write_text(
             "Listening for client connections on 127.0.0.1:14226\nServer is ready\n",
             encoding="utf-8",
@@ -647,7 +648,7 @@ class InteractiveProfileTests(unittest.TestCase):
 
     def test_pose_recorder_rejects_nonadvancing_simulation_time(self) -> None:
         flight_directory = Path(self.temp.name) / "flight-proof"
-        flight_directory.mkdir()
+        flight_directory.mkdir(exist_ok=True)
         pose_path = flight_directory / "gazebo-pose.jsonl"
         sample = {
             "header": {"stamp": {"sec": 5, "nsec": 0}},
@@ -662,9 +663,33 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "stale")
         self.assertIn("two advancing", result["reason"])
 
+    def test_pose_recorder_rejects_alternate_in_run_evidence_directory(self) -> None:
+        flight_directory = Path(self.temp.name) / "unrelated-evidence"
+        flight_directory.mkdir()
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["flightRunDirectory"] = str(flight_directory)
+
+        result = interactive_profile.sample_gazebo_pose_recorder(receipt)
+
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("does not match the run-owned path", result["reason"])
+
+    def test_pose_recorder_rejects_symlink_alias_for_flight_directory(self) -> None:
+        flight_directory = Path(self.temp.name) / "flight-proof"
+        flight_directory.mkdir(exist_ok=True)
+        alias = Path(self.temp.name) / "flight-proof-alias"
+        alias.symlink_to(flight_directory, target_is_directory=True)
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["flightRunDirectory"] = str(alias)
+
+        result = interactive_profile.sample_gazebo_pose_recorder(receipt)
+
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("does not match the run-owned path", result["reason"])
+
     def test_pose_recorder_accepts_advancing_protobuf_json_timestamp_strings(self) -> None:
         flight_directory = Path(self.temp.name) / "flight-proof"
-        flight_directory.mkdir()
+        flight_directory.mkdir(exist_ok=True)
         pose_path = flight_directory / "gazebo-pose.jsonl"
         samples = [
             {
@@ -687,7 +712,7 @@ class InteractiveProfileTests(unittest.TestCase):
 
     def test_pose_recorder_rejects_missing_position_coordinate(self) -> None:
         flight_directory = Path(self.temp.name) / "flight-proof"
-        flight_directory.mkdir()
+        flight_directory.mkdir(exist_ok=True)
         pose_path = flight_directory / "gazebo-pose.jsonl"
         samples = [
             {

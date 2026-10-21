@@ -122,11 +122,27 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
             "reason": "run directory is missing or does not match runId",
         }
     flight_directory = receipt.get("flightRunDirectory")
+    expected_flight_path = (run_path / "flight-proof").resolve()
     if isinstance(flight_directory, str) and flight_directory:
-        flight_path = Path(flight_directory).resolve()
+        declared_flight_path = Path(flight_directory)
+        try:
+            flight_path = declared_flight_path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return {
+                "status": "unavailable",
+                "reason": "flight evidence directory cannot be resolved",
+            }
+        if (
+            declared_flight_path != run_path / "flight-proof"
+            or declared_flight_path.is_symlink()
+            or flight_path != expected_flight_path
+        ):
+            return {
+                "status": "invalid",
+                "reason": "flight evidence directory does not match the run-owned path",
+            }
     else:
-        nested = run_path / "flight-proof"
-        flight_path = (nested if nested.is_dir() else run_path).resolve()
+        flight_path = expected_flight_path
     resolved_run = run_path.resolve()
     if flight_path != resolved_run and not flight_path.is_relative_to(resolved_run):
         return {
@@ -498,10 +514,27 @@ def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
     run_path = Path(run_directory)
     if run_path.name != run_id or not run_path.is_dir():
         return {"status": "unavailable", "reason": "run directory is missing or mismatched"}
+    expected_flight_path = (run_path / "flight-proof").resolve()
     if isinstance(flight_directory, str) and flight_directory:
-        flight_path = Path(flight_directory).resolve()
+        declared_flight_path = Path(flight_directory)
+        try:
+            flight_path = declared_flight_path.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return {
+                "status": "unavailable",
+                "reason": "flight evidence directory cannot be resolved",
+            }
+        if (
+            declared_flight_path != run_path / "flight-proof"
+            or declared_flight_path.is_symlink()
+            or flight_path != expected_flight_path
+        ):
+            return {
+                "status": "invalid",
+                "reason": "flight evidence directory does not match the run-owned path",
+            }
     else:
-        flight_path = (run_path / "flight-proof").resolve()
+        flight_path = expected_flight_path
     resolved_run = run_path.resolve()
     if flight_path != resolved_run and not flight_path.is_relative_to(resolved_run):
         return {"status": "invalid", "reason": "flight evidence directory is outside the run"}
