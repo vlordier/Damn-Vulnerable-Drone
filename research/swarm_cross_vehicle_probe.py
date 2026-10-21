@@ -220,14 +220,17 @@ def vehicle_effect_snapshot(run_dir: Path, models: dict[str, str]) -> dict:
         callsign = row.get("vehicleId")
         if callsign not in wanted_callsigns or callsign in result["actuatorByVehicle"]:
             continue
+        grant = row.get("executionGrant")
+        if not isinstance(grant, dict):
+            continue
         result["actuatorByVehicle"][callsign] = {
             "runId": row.get("runId"),
             "vehicleId": callsign,
             "sequence": row.get("sequence"),
             "stage": row.get("stage"),
             "recordedAtUnixMs": row.get("recordedAtUnixMs"),
-            "executionGrantRunId": (row.get("executionGrant") or {}).get("runId"),
-            "executionGrantVehicleId": (row.get("executionGrant") or {}).get("vehicleId"),
+            "executionGrantRunId": grant.get("runId"),
+            "executionGrantVehicleId": grant.get("vehicleId"),
             "authority": row.get("authority"),
             "actuatorKind": row.get("actuatorKind"),
             "neutral": row.get("neutral"),
