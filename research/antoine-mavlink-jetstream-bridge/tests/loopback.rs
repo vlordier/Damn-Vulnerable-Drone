@@ -414,8 +414,8 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     let gcs = UdpSocket::bind("127.0.0.1:0").await?;
     let qgc_peer = gcs.local_addr()?;
     let probe = UdpSocket::bind("127.0.0.1:0").await?;
-    let telemetry_observer = UdpSocket::bind("127.0.0.1:0").await?;
-    let telemetry_observer_addr = telemetry_observer.local_addr()?.to_string();
+    let control_probe = UdpSocket::bind("127.0.0.1:0").await?;
+    let control_probe_addr = control_probe.local_addr()?.to_string();
     let qgc_bind = free_udp_addr()?;
     let callsign = "antoine-nats-test";
     let mut audit_subscription = client
@@ -433,8 +433,10 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
             &qgc_bind.to_string(),
             "--qgc-peer",
             &qgc_peer.to_string(),
+            "--qgc-control-peer",
+            &control_probe_addr,
             "--qgc-telemetry-peer",
-            &telemetry_observer_addr,
+            &control_probe_addr,
             "--system-id",
             "1",
         ])
@@ -611,12 +613,10 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         .await
         .context("heartbeat timeout")??;
     assert_eq!(buffer[7], 0, "QGC should receive HEARTBEAT");
-    let (observer_length, _) = timeout(
-        Duration::from_secs(2),
-        telemetry_observer.recv_from(&mut buffer),
-    )
-    .await
-    .context("configured telemetry observer did not receive HEARTBEAT")??;
+    let (observer_length, _) =
+        timeout(Duration::from_secs(2), control_probe.recv_from(&mut buffer))
+            .await
+            .context("configured control peer did not receive observed HEARTBEAT")??;
     assert!(observer_length >= 21);
     assert_eq!(buffer[7], 0);
     assert!(
@@ -624,6 +624,29 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
             .await
             .is_err(),
         "probe must not receive QGC telemetry"
+    );
+
+    let control_peer_heartbeat = v2_frame(0, 12, 255, &[0, 0, 0, 0, 0, 2, 3], 50);
+    control_probe
+        .send_to(&control_peer_heartbeat, qgc_bind)
+        .await?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
+    let mut control_peer_audited = false;
+    while tokio::time::Instant::now() < deadline {
+        let Ok(Some(raw)) = timeout(Duration::from_millis(100), audit_rx.recv()).await else {
+            continue;
+        };
+        let record: serde_json::Value = serde_json::from_slice(&raw)?;
+        if record["source"] == control_probe_addr {
+            assert_eq!(record["direction"], "gcs_to_antoine");
+            assert_eq!(record["message_id"], 0);
+            control_peer_audited = true;
+            break;
+        }
+    }
+    assert!(
+        control_peer_audited,
+        "explicitly configured control peer frame must be audited"
     );
     let (_, heartbeat) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
         &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),

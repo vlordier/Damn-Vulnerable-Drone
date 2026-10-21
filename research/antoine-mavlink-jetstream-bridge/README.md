@@ -13,6 +13,10 @@ MAVLink `HEARTBEAT`, `SYS_STATUS`, `GLOBAL_POSITION_INT`, `GPS_RAW_INT`, and
 control subject. `SYS_STATUS` advertises only the model pre-arm check; its
 health bit is true only when ground contact, GNSS, battery, altitude, velocity,
 and thrust meet the local readiness bounds.
+Inbound controls are pinned to `--qgc-peer` by default. The optional
+`--qgc-control-peer` explicitly allows a second loopback acceptance client;
+its frames are audited with their source address. The optional
+`--qgc-telemetry-peer` remains telemetry-only.
 
 The opt-in `gazebo-nats` mode uses the same MAVLink codec and telemetry
 projection, but sends operator requests to the run-owned Gazebo local-authority

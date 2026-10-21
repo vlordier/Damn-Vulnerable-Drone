@@ -386,6 +386,7 @@ dvd_run_owned_child "${PROJECT_ROOT}" "${BRIDGE_IDENTITY}" "${BRIDGE_BIN}" --mod
   --nats-url "${NATS_URL}" \
   --qgc-bind "127.0.0.1:${QGC_BIND_PORT}" \
   --qgc-peer "127.0.0.1:${QGC_LISTEN_PORT}" \
+  --qgc-control-peer "127.0.0.1:${GAZEBO_CHECK_PORT}" \
   --qgc-telemetry-peer "127.0.0.1:${GAZEBO_CHECK_PORT}" \
   --system-id 1 --home-alt-msl 82 &
 BRIDGE_PID=$!

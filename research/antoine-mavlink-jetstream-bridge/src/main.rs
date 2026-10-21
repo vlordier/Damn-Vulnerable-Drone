@@ -27,6 +27,7 @@ struct Config {
     vehicle_peer: SocketAddr,
     qgc_bind: SocketAddr,
     qgc_peer: SocketAddr,
+    qgc_control_peer: Option<SocketAddr>,
     qgc_telemetry_peer: Option<SocketAddr>,
     system_id: u8,
     home_alt_msl: f64,
@@ -131,6 +132,10 @@ fn config() -> Result<Config> {
         vehicle_peer: arg("--vehicle-peer", "127.0.0.1:14561").parse()?,
         qgc_bind: arg("--qgc-bind", "127.0.0.1:14562").parse()?,
         qgc_peer: arg("--qgc-peer", "127.0.0.1:14550").parse()?,
+        qgc_control_peer: {
+            let peer = arg("--qgc-control-peer", "");
+            (!peer.is_empty()).then(|| peer.parse()).transpose()?
+        },
         qgc_telemetry_peer: {
             let peer = arg("--qgc-telemetry-peer", "");
             (!peer.is_empty()).then(|| peer.parse()).transpose()?
@@ -146,6 +151,11 @@ fn config() -> Result<Config> {
     ] {
         if !address.ip().is_loopback() {
             bail!("{name} must use a loopback address (got {address})");
+        }
+    }
+    if let Some(peer) = config.qgc_control_peer {
+        if !peer.ip().is_loopback() || peer == config.qgc_peer {
+            bail!("--qgc-control-peer must be a distinct loopback UDP address");
         }
     }
     if let Some(peer) = config.qgc_telemetry_peer {
@@ -930,8 +940,8 @@ async fn qgc_to_antoine_nats(
             tracing::warn!(%source, "QGC datagram rejected from non-loopback peer");
             continue;
         }
-        if source != config.qgc_peer {
-            tracing::warn!(%source, expected=%config.qgc_peer, "QGC control datagram rejected from an unconfigured loopback peer");
+        if source != config.qgc_peer && Some(source) != config.qgc_control_peer {
+            tracing::warn!(%source, expected=%config.qgc_peer, control_peer=?config.qgc_control_peer, "QGC control datagram rejected from an unconfigured loopback peer");
             continue;
         }
         let raw = &buffer[..length];
@@ -1595,6 +1605,7 @@ async fn main() -> Result<()> {
         vehicle_peer: config.vehicle_peer,
         qgc_bind: config.qgc_bind,
         qgc_peer: config.qgc_peer,
+        qgc_control_peer: config.qgc_control_peer,
         qgc_telemetry_peer: config.qgc_telemetry_peer,
         system_id: config.system_id,
         control_subject: config.control_subject.clone(),
@@ -1610,6 +1621,7 @@ async fn main() -> Result<()> {
         vehicle_peer: config.vehicle_peer,
         qgc_bind: config.qgc_bind,
         qgc_peer: config.qgc_peer,
+        qgc_control_peer: config.qgc_control_peer,
         qgc_telemetry_peer: config.qgc_telemetry_peer,
         system_id: config.system_id,
         control_subject: config.control_subject.clone(),
@@ -1625,6 +1637,7 @@ async fn main() -> Result<()> {
         vehicle_peer: config.vehicle_peer,
         qgc_bind: config.qgc_bind,
         qgc_peer: config.qgc_peer,
+        qgc_control_peer: config.qgc_control_peer,
         qgc_telemetry_peer: config.qgc_telemetry_peer,
         system_id: config.system_id,
         control_subject: config.control_subject.clone(),
@@ -1669,6 +1682,7 @@ mod tests {
             vehicle_peer: "127.0.0.1:14561".parse().unwrap(),
             qgc_bind: "127.0.0.1:14562".parse().unwrap(),
             qgc_peer: "127.0.0.1:14550".parse().unwrap(),
+            qgc_control_peer: None,
             qgc_telemetry_peer: None,
             system_id: 1,
             home_alt_msl: 82.0,
