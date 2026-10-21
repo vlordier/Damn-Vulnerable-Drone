@@ -126,6 +126,7 @@ antoine-gz-rebuild-check: ## Rebuild archived Antoine inputs from a profile rece
 	  ANTOINE_BRIDGE_TARGET_DIR="$(ANTOINE_BRIDGE_TARGET_DIR)" \
 	  RUSTUP_TOOLCHAIN="$(RUSTUP_TOOLCHAIN)" CARGO_NET_OFFLINE=true \
 	  bash research/run-antoine-gazebo-mavlink.sh
+	$(RESEARCH_PYTHON) python research/interactive_profile.py stop "$(REBUILD_DIR)/acceptance-run/interactive-profile-receipt.json"
 	$(RESEARCH_PYTHON) python research/compact_antoine_rebuild_target.py "$(REBUILD_DIR)"
 
 doctor: ## Check the local Antoine/Gazebo prerequisites without starting a run

@@ -77,6 +77,19 @@ def fixture(root: Path) -> dict[str, str]:
         },
     )
     write_json(root / "acceptance-run/research-provenance-comparison.json", {"stable": True})
+    write_json(
+        root / "acceptance-run/interactive-profile-stop-result.json",
+        {
+            "status": "stopped",
+            "results": {
+                "antoineGazeboSupervisor": "already-stopped",
+                "mavlinkBridge": "already-stopped",
+                "natsPort": "closed",
+                "bridgeUdpBindPort": "closed",
+                "qgcUdpListenPort": "closed",
+            },
+        },
+    )
     copied = root / "acceptance-run/flight-proof/antoine-binaries"
     copied.mkdir(parents=True)
     for name in BINARIES:
@@ -122,6 +135,24 @@ class CompactAntoineRebuildTargetTests(unittest.TestCase):
             (root / "cargo-target/debug" / BINARIES[0]).write_bytes(b"changed")
 
             with self.assertRaisesRegex(ValueError, "does not match receipt"):
+                compact.compact(root)
+
+            self.assertTrue((root / "cargo-target/debug/deps/large-intermediate").is_file())
+
+    def test_incomplete_profile_stop_preserves_original_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "rebuild"
+            root.mkdir()
+            fixture(root)
+            write_json(
+                root / "acceptance-run/interactive-profile-stop-result.json",
+                {
+                    "status": "partial",
+                    "results": {"mavlinkBridge": "identity-mismatch-not-signalled"},
+                },
+            )
+
+            with self.assertRaisesRegex(ValueError, "completed identity-checked profile stop"):
                 compact.compact(root)
 
             self.assertTrue((root / "cargo-target/debug/deps/large-intermediate").is_file())

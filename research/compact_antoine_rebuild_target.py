@@ -35,10 +35,12 @@ def compact(rebuild_dir: Path) -> dict[str, Any]:
     native_receipt_path = rebuild_dir / "source-snapshot/antoine-source-build-receipt.json"
     acceptance_path = rebuild_dir / "acceptance-run/gazebo-mavlink-acceptance.json"
     provenance_path = rebuild_dir / "acceptance-run/research-provenance-comparison.json"
+    stop_path = rebuild_dir / "acceptance-run/interactive-profile-stop-result.json"
     rebuild_receipt = read_object(rebuild_receipt_path)
     run_build = read_object(run_build_path)
     acceptance = read_object(acceptance_path)
     provenance = read_object(provenance_path)
+    stop_result = read_object(stop_path)
 
     if rebuild_receipt.get("contract") != "damn-vulnerable-drone.antoine-snapshot-rebuild":
         raise ValueError("unsupported rebuild receipt")
@@ -58,6 +60,21 @@ def compact(rebuild_dir: Path) -> dict[str, Any]:
         raise ValueError("compaction requires passing, finally disarmed Gazebo acceptance")
     if provenance.get("stable") is not True:
         raise ValueError("compaction requires stable source provenance")
+    if stop_result.get("status") != "stopped":
+        raise ValueError("compaction requires a completed identity-checked profile stop")
+    stop_checks = stop_result.get("results")
+    if not isinstance(stop_checks, dict) or any(
+        value
+        not in {
+            "stopped",
+            "already-stopped",
+            "already-stopped-stale-marker-cleaned",
+            "closed",
+            "preserved-user-owned",
+        }
+        for value in stop_checks.values()
+    ):
+        raise ValueError("compaction requires all run-owned processes stopped and ports closed")
 
     native = read_object(native_receipt_path)
     build = native.get("build")
