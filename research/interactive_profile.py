@@ -380,7 +380,6 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         status
         in {
             "stopped",
-            "stopped-after-identity-change",
             "already-stopped",
             "preserved-user-owned",
             "closed",

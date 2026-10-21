@@ -450,12 +450,12 @@ class InteractiveProfileTests(unittest.TestCase):
         ],
     )
     @patch("interactive_profile.os.kill")
-    def test_stop_waits_for_exit_after_interrupt_identity_change_without_resignalling(
+    def test_stop_reports_partial_after_interrupt_identity_change_without_resignalling(
         self, kill, _identity
     ) -> None:
         result = interactive_profile.stop_owned(self.receipt)
         kill.assert_called_once_with(9001, interactive_profile.signal.SIGINT)
-        self.assertEqual(result["status"], "stopped")
+        self.assertEqual(result["status"], "partial")
         self.assertEqual(result["results"]["mavlinkBridge"], "stopped-after-identity-change")
 
 
