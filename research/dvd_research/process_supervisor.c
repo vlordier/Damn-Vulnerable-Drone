@@ -6,6 +6,9 @@
  * check and a process-group signal. Control is through a private FIFO named
  * by an owner-only identity file; callers never supply a PID to signal.
  */
+#if defined(__linux__)
+#define _GNU_SOURCE
+#endif
 #define _DARWIN_C_SOURCE
 #include <errno.h>
 #include <fcntl.h>

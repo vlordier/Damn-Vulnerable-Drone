@@ -56,8 +56,12 @@ requires the checkout-owned `DVD_PROCESS_SUPERVISOR` path.
   removal of run identity/control files. The external Antoine bounded-wait
   regression also passes with the native supervisor and confirms timed-out
   probes and their pipeline descendants do not survive.
-- The full multi-service Antoine proof lifecycle has not been rerun under the
-  migrated launcher. Linux pidfd and no-pidfd checks also remain outstanding.
+- The full multi-service Antoine proof lifecycle has now passed under the
+  migrated launcher, including headless profile stop and port cleanup. Linux
+  pidfd integration and the native supervisor acceptance script also pass in a
+  Linux container. The no-pidfd fail-closed path is covered by mocked unit
+  tests; a kernel without pidfd support and a broader audit of every legacy
+  runner remain outstanding.
 - The legacy `process_identity` capture/match format remains for inspection and
   provenance; it is not a safe macOS signaling mechanism.
 
