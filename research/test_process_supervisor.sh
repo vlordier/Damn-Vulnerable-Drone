@@ -57,6 +57,25 @@ wait "${owned_pid}" || true
 kill -TERM "${unrelated_pid}"
 wait "${unrelated_pid}" || true
 
+# Escalation must stop an owned child that deliberately ignores TERM.
+identity="${TEMP_ROOT}/escalation.identity"
+"${SUPERVISOR}" run "${identity}" -- sh -c \
+  'trap "" TERM INT; echo $$ > "$1"; while :; do sleep 0.05; done' \
+  _ "${TEMP_ROOT}/ignores-term.pid" & escalation_pid=$!
+wait_for_file "${TEMP_ROOT}/ignores-term.pid"
+ignored_pid="$(cat "${TEMP_ROOT}/ignores-term.pid")"
+"${SUPERVISOR}" stop "${identity}"
+set +e
+wait "${escalation_pid}"
+escalation_status=$?
+set -e
+[[ "${escalation_status}" == 137 ]]
+if kill -0 "${ignored_pid}" 2>/dev/null; then
+  echo "TERM-ignoring owned process survived escalation" >&2
+  exit 1
+fi
+[[ ! -e "${identity}" && ! -e "${identity}.control" ]]
+
 # Stopping an owned process group also removes a direct descendant.
 identity="${TEMP_ROOT}/tree.identity"
 "${SUPERVISOR}" run "${identity}" -- sh -c \
