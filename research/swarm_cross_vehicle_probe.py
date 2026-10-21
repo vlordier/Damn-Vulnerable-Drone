@@ -38,6 +38,21 @@ def validate_server(server: str) -> None:
         raise ValueError("refusing any NATS endpoint except explicit IPv4 loopback")
 
 
+def validate_vehicle_callsigns(source: str, target: str) -> None:
+    for label, callsign in (("source", source), ("target", target)):
+        if (
+            not isinstance(callsign, str)
+            or not callsign
+            or any(
+                ord(character) < 33 or ord(character) == 127 or character in ".*>"
+                for character in callsign
+            )
+        ):
+            raise ValueError(f"{label} callsign must be a single NATS subject token")
+    if source == target:
+        raise ValueError("probe requires distinct vehicles")
+
+
 def read_one_json(output: str) -> dict:
     for line in output.splitlines():
         try:
@@ -549,8 +564,12 @@ def main() -> int:
     parser.add_argument("--wait-timeout-seconds", type=float, default=90.0)
     args = parser.parse_args()
     validate_server(args.server)
-    if args.source == args.target or args.max_messages != MAX_PROBE_MESSAGES:
-        raise SystemExit("probe requires distinct vehicles and exactly one bounded message")
+    try:
+        validate_vehicle_callsigns(args.source, args.target)
+    except ValueError as error:
+        raise SystemExit(str(error)) from error
+    if args.max_messages != MAX_PROBE_MESSAGES:
+        raise SystemExit("probe requires exactly one bounded message")
     if not 1 <= args.wait_timeout_seconds <= 300:
         raise SystemExit("pose wait timeout must be in 1..300 seconds")
 

@@ -15,6 +15,7 @@ from swarm_cross_vehicle_probe import (
     mutate_setpoint,
     pose_simulation_time,
     pose_window_at_target,
+    validate_vehicle_callsigns,
     vehicle_effect_snapshot,
     write_report,
 )
@@ -57,6 +58,18 @@ def valid_live_setpoint() -> dict:
 
 class MutationTests(unittest.TestCase):
     PROBE_HASH = "a" * 64
+
+    def test_probe_callsigns_must_be_single_nats_subject_tokens(self) -> None:
+        validate_vehicle_callsigns("drone-1", "drone-2")
+        for source, target in (
+            ("drone.one", "drone-2"),
+            ("drone-1", "drone.*"),
+            ("drone-1", "drone.2>"),
+            ("drone-1", "drone 2"),
+            ("same", "same"),
+        ):
+            with self.subTest(source=source, target=target), self.assertRaises(ValueError):
+                validate_vehicle_callsigns(source, target)
 
     def test_actuator_vector_rejects_partial_or_nonfinite_values(self) -> None:
         self.assertIsNone(actuator_numeric_vector({"left": 0.2, "right": "unknown"}))
