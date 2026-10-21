@@ -89,25 +89,28 @@ class AntoineNativeReceiptVerificationTests(unittest.TestCase):
                     "--receipt",
                     str(self.receipt),
                     "--exec-command",
-                    "--",
                     "/bin/true",
+                    "--argument",
+                    "one",
                 ],
             ),
             patch(
                 "verify_antoine_native_receipt.subprocess.run",
-                side_effect=[
-                    subprocess.CompletedProcess([], 0),
-                    subprocess.CompletedProcess([], 0),
-                ],
+                return_value=subprocess.CompletedProcess([], 0),
             ) as run,
+            patch("verify_antoine_native_receipt.os.execvpe") as execvpe,
         ):
             self.assertEqual(main(), 0)
-        self.assertEqual(run.call_count, 2)
+        run.assert_called_once()
+        execvpe.assert_called_once_with(
+            "/bin/true",
+            ["/bin/true", "--argument", "one"],
+            run.call_args.kwargs["env"],
+        )
         self.assertEqual(
-            run.call_args.kwargs["env"]["CARGO_ENCODED_RUSTFLAGS"],
+            execvpe.call_args.args[2]["CARGO_ENCODED_RUSTFLAGS"],
             environment["CARGO_ENCODED_RUSTFLAGS"],
         )
-        self.assertEqual(run.call_args.args[0], ["/bin/true"])
 
     def test_symlinked_receipt_is_rejected(self) -> None:
         self.write_receipt("")

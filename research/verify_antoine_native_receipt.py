@@ -61,20 +61,21 @@ def main() -> int:
     parser.add_argument("--receipt", type=Path, required=True)
     parser.add_argument(
         "--exec-command",
-        action="store_true",
-        help="execute the remaining command under the verified build environment",
+        nargs=1,
+        metavar="PROGRAM",
+        help="execute PROGRAM and remaining arguments under the verified build environment",
     )
-    args, command = parser.parse_known_args()
+    args, remaining = parser.parse_known_args()
+    command = [*(args.exec_command or []), *remaining]
     if command and command[0] == "--":
         command = command[1:]
-    if command and not args.exec_command:
+    if remaining and not args.exec_command:
         parser.error(f"unrecognized arguments: {' '.join(command)}")
     try:
         environment = verify_native_receipt(args.root, args.snapshot_root, args.receipt)
         if args.exec_command and command:
-            completed = subprocess.run(command, cwd=args.root.resolve(), env=environment)
-            return completed.returncode
-        if args.exec_command:
+            os.execvpe(command[0], command, environment)
+        if args.exec_command and not command:
             parser.error("--exec-command requires a command")
     except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as error:
         print(f"Antoine native receipt verification failed: {error}", file=sys.stderr)

@@ -324,7 +324,7 @@ echo "Starting the isolated Antoine/Gazebo profile at ${NATS_URL}..."
       --root "${ANTOINE_RUN_ROOT}" \
       --snapshot-root "$(dirname "${ANTOINE_RUN_ROOT}")" \
       --receipt "${ANTOINE_RUN_BUILD_RECEIPT}" \
-      --exec-command -- "${ANTOINE_RUN_ROOT}/scripts/gz_flight_proof.sh" \
+      --exec-command "${ANTOINE_RUN_ROOT}/scripts/gz_flight_proof.sh" \
       --run-dir "${FLIGHT_RUN_DIR}" --keep
 ) &
 PROFILE_PID=$!
