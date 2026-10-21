@@ -238,6 +238,34 @@ fn unix_millis(value: &serde_json::Value, key: &str) -> Result<u64> {
     Ok(timestamp)
 }
 
+fn native_telemetry_time_s(
+    mode: &str,
+    value: &serde_json::Value,
+    previous: Option<f64>,
+) -> Result<Option<f64>> {
+    let protocol = value.get("protocol").and_then(serde_json::Value::as_str);
+    match mode {
+        "antoine-nats" if protocol != Some("antoine") => {
+            bail!("native Antoine bridge requires protocol=antoine telemetry");
+        }
+        "gazebo-nats" if protocol != Some("antoine-gz") => {
+            bail!("Gazebo bridge requires protocol=antoine-gz telemetry");
+        }
+        "antoine-nats" => {
+            let time_s = finite_number(value, "time_s")?;
+            if time_s < 0.0 {
+                bail!("native Antoine telemetry time_s must be nonnegative");
+            }
+            if previous.is_some_and(|last| time_s <= last) {
+                bail!("native Antoine telemetry time_s did not advance");
+            }
+            Ok(Some(time_s))
+        }
+        "gazebo-nats" => Ok(None),
+        _ => bail!("native telemetry freshness is unsupported in mode {mode}"),
+    }
+}
+
 fn telemetry_frames(
     value: &serde_json::Value,
     system_id: u8,
@@ -783,6 +811,7 @@ async fn antoine_nats_telemetry_to_gcs(
     let subject = format!("furia.telemetry.{}", config.callsign);
     let mut subscription = client.subscribe(subject).await?;
     let mut sequence = 0_u8;
+    let mut last_native_time_s = None;
     let mut last_telemetry = tokio::time::Instant::now() - std::time::Duration::from_secs(1);
     while let Some(message) = subscription.next().await {
         let value: serde_json::Value = match serde_json::from_slice(&message.payload) {
@@ -795,6 +824,14 @@ async fn antoine_nats_telemetry_to_gcs(
         if value.get("identity").and_then(serde_json::Value::as_str) != Some(&config.callsign) {
             continue;
         }
+        let native_time_s = match native_telemetry_time_s(&config.mode, &value, last_native_time_s)
+        {
+            Ok(time_s) => time_s,
+            Err(error) => {
+                tracing::warn!(%error, "stale or mismatched Antoine telemetry");
+                continue;
+            }
+        };
         let now = tokio::time::Instant::now();
         if now.duration_since(last_telemetry) < std::time::Duration::from_millis(100) {
             continue;
@@ -834,6 +871,9 @@ async fn antoine_nats_telemetry_to_gcs(
                 gcs.send_to(&raw, observer).await?;
             }
             sequence = sequence.wrapping_add(1);
+        }
+        if native_time_s.is_some() {
+            last_native_time_s = native_time_s;
         }
     }
     Ok(())
@@ -1619,6 +1659,27 @@ mod tests {
         );
         assert!(gazebo.get("type").is_none());
         assert_eq!(gazebo["request_id"], "gazebo-query");
+    }
+
+    #[test]
+    fn native_telemetry_requires_the_selected_protocol_and_advancing_clock() {
+        let sample = serde_json::json!({"protocol":"antoine","time_s":2.0});
+        assert_eq!(
+            native_telemetry_time_s("antoine-nats", &sample, Some(1.96)).unwrap(),
+            Some(2.0)
+        );
+        for time_s in [2.0, 1.9, -0.1] {
+            let sample = serde_json::json!({"protocol":"antoine","time_s":time_s});
+            assert!(native_telemetry_time_s("antoine-nats", &sample, Some(2.0)).is_err());
+        }
+
+        let gazebo = serde_json::json!({"protocol":"antoine-gz"});
+        assert_eq!(
+            native_telemetry_time_s("gazebo-nats", &gazebo, None).unwrap(),
+            None
+        );
+        assert!(native_telemetry_time_s("antoine-nats", &gazebo, None).is_err());
+        assert!(native_telemetry_time_s("gazebo-nats", &sample, None).is_err());
     }
 
     #[test]

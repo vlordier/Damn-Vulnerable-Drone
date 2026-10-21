@@ -593,18 +593,17 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     let probe_heartbeat = v2_frame(0, 11, 255, &[0, 0, 0, 0, 0, 2, 3], 50);
     probe.send_to(&probe_heartbeat, qgc_bind).await?;
 
+    let native_telemetry = serde_json::json!({
+        "schema":"furia.telemetry", "version":"1.0.0", "protocol":"antoine",
+        "identity":callsign, "time_s":1.25, "lat_deg":48.0002, "lon_deg":0.3564,
+        "alt_m":0.0, "vn_mps":0.1, "ve_mps":-0.1, "vd_mps":0.1,
+        "actuator_thrust":0.0, "ground_contact":true, "gnss_degraded":false,
+        "battery_pct":100, "battery_mv":12000
+    });
     client
         .publish(
             format!("furia.telemetry.{callsign}"),
-            serde_json::json!({
-                "schema":"furia.telemetry", "version":"1.0.0", "protocol":"antoine",
-                "identity":callsign, "time_s":1.25, "lat_deg":48.0002, "lon_deg":0.3564,
-                "alt_m":0.0, "vn_mps":0.1, "ve_mps":-0.1, "vd_mps":0.1,
-                "actuator_thrust":0.0, "ground_contact":true, "gnss_degraded":false,
-                "battery_pct":100, "battery_mv":12000
-            })
-            .to_string()
-            .into(),
+            native_telemetry.to_string().into(),
         )
         .await?;
     client.flush().await?;
@@ -688,6 +687,20 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     assert!(status
         .onboard_control_sensors_health
         .contains(mavlink::dialects::common::MavSysStatusSensor::MAV_SYS_STATUS_PREARM_CHECK));
+
+    client
+        .publish(
+            format!("furia.telemetry.{callsign}"),
+            native_telemetry.to_string().into(),
+        )
+        .await?;
+    client.flush().await?;
+    assert!(
+        timeout(Duration::from_millis(250), gcs.recv_from(&mut buffer))
+            .await
+            .is_err(),
+        "a duplicate native telemetry clock must not be projected as fresh MAVLink state"
+    );
 
     let mission_list_request = v2_frame(43, 11, 255, &[1, 1, 0], 132);
     gcs.send_to(&mission_list_request, qgc_bind).await?;
