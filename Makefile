@@ -76,10 +76,13 @@ help: ## Show common commands
 
 antoine-gz-battery-patch: ## Apply the versioned Gazebo battery-drain fix to the Antoine checkout
 	@antoine_root="$${ANTOINE_ROOT:-$(HOME)/Work/antoine}"; \
+	source="$$antoine_root/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs"; \
 	patch_file="$(CURDIR)/research/patches/antoine-gazebo-battery-drain.patch"; \
 	test -d "$$antoine_root/.git" || { echo "Missing Antoine Git checkout: $$antoine_root" >&2; exit 1; }; \
-	if git -C "$$antoine_root" apply --reverse --check "$$patch_file" >/dev/null 2>&1; then \
-	  echo 'Antoine Gazebo battery-drain fix is already applied'; \
+	if rg -q 'fn battery_after_drain\(' "$$source" \
+	  && rg -q 'battery_pct = battery_after_drain\(battery_pct, battery_drain_pct_per_s, dt\)' "$$source" \
+	  && rg -q 'fn gazebo_plant_honors_configured_battery_drain_rate\(' "$$source"; then \
+	  echo 'Antoine Gazebo battery-drain implementation and regression test are present'; \
 	elif git -C "$$antoine_root" apply --check "$$patch_file" >/dev/null 2>&1; then \
 	  git -C "$$antoine_root" apply "$$patch_file"; \
 	  echo 'Applied Antoine Gazebo battery-drain fix'; \
