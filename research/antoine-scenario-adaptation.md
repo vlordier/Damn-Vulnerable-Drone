@@ -53,7 +53,7 @@ manifests because Gazebo environment variables can contain host paths.
 | Denial-of-Takeoff | Withhold or corrupt local authority/setpoint before launch | Adapt as a bounded availability experiment |
 | Communication Link Flooding | 2–5 vehicle state-stream timing plus bounded wrong-callsign setpoint consumer-load sample | Partial: no packet loss/delay injection, broker rate limiting, or general DoS result |
 | Waypoint Injection | Publish unauthorized or mismatched NATS setpoints | Adapt; grant, run binding, and Vigie admission should gate execution |
-| Return to Home Point Override | Attempt to replace the approved local return/mission target | Partial: depends on a native RTL behavior and approved task contract |
+| Return to Home Point Override | Probe the opt-in native Antoine NATS RTL control with an irrelevant caller-supplied target payload | Partial: isolated native SITL accepts unsigned direct RTL without run/task authority and ignores the caller target in favor of fixed home; independent Gazebo trajectory and actuator evidence are missing, and this result does not describe the separate Gazebo controller |
 | MAVLink Injection Attack | Send malformed or unauthorized actuator/setpoint envelopes on NATS | Adapt at the transport-contract boundary; not a MAVLink injection |
 | Flight Mode Injection | Attempt to change an unsupported mode/task through NATS | Partial: map only to modes/tasks Antoine actually exposes |
 | Ground Control Station Spoofing | Impersonate an authority or mission producer without its signing key | Adapt as producer identity / grant binding test |
