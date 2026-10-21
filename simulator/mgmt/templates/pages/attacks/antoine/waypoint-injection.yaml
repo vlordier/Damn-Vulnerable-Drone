@@ -1,0 +1,31 @@
+title: Waypoint Injection (Antoine)
+status: active
+order: 2
+description: Test whether an unauthorised NATS setpoint can change Antoine's authorized Gazebo trajectory.
+breadcrumb:
+  - text: Attack Scenarios
+    link: /attacks
+  - text: Antoine / NATS
+  - text: Waypoint Injection
+sections:
+  - title: Description
+    content: |
+      The MAVLink version injects a mission item. Antoine's native proof receives typed setpoints on <code>furia.gzsitl.setpoint.&lt;callsign&gt;</code> and separately requires an execution grant and signed Vigie admission bound to the run, vehicle, task, plan, and sequence. The setpoint envelope itself is not visibly signed in the native local proof. This exercise copies one live setpoint, changes its target by two metres, keeps its task/admission fields, and checks the grant's exact target binding and independent pose evidence.
+
+      The attempt is limited to the loopback NATS endpoint and the `drone-1` subject in a current local run. It must not use captured production credentials or private keys.
+  - title: Resources
+    content:
+      - text: NATS CLI
+        link: https://github.com/nats-io/natscli
+  - title: Solution Guide
+    collapsible: true
+    steps:
+      - title: Run the bounded mutation experiment
+        description: |
+          From the project root, run <code>./research/run-antoine-scenario.sh waypoint-injection</code>. It starts a fresh loopback-only NATS/Gazebo run, captures one current setpoint, shifts its ENU east target by two metres, assigns one fresh sequence/lease, publishes one message, and stops after the run evidence window. It does not use private signing keys.
+      - title: Review the independent evidence
+        description: |
+          Start with <code>research-result.json</code>, the joined record for <code>research-waypoint-injection.json</code>, <code>flight-evidence.json</code>, <code>gz-flight-proof-report.json</code>, actuator output, and independent Gazebo pose. The baseline control must use the same configured physics engine. This profile uses a local test authority; a local demo result does not establish a Core or production vulnerability. A reject or stop log alone does not establish a controlled landing.
+  - title: Research Questions
+    content: |
+      Does the grant's exact <code>targetEnuMm</code> binding reject the changed coordinates even when the copied setpoint retains a valid run/task/admission context? Does accepting the unauthorised higher sequence cause legitimate updates to be ignored until the controller stops? What does the independent pose timeline show after neutral motor output?

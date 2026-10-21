@@ -5,13 +5,15 @@ from flask import Blueprint
 bp = Blueprint("main", __name__)
 
 # Import modules so their routes register on the blueprint
-from . import bridge   # noqa: E402,F401
-from . import stages        # noqa: E402,F401
-from . import gcs         # noqa: E402,F401
-from . import pages_attacks  # noqa: E402,F401
-from . import pages_guide    # noqa: E402,F401
-from . import pages_learning # noqa: E402,F401
-from . import errors         # noqa: E402,F401
+from . import (
+    bridge,  # noqa: F401
+    errors,  # noqa: F401
+    gcs,  # noqa: F401
+    pages_attacks,  # noqa: F401
+    pages_guide,  # noqa: F401
+    pages_learning,  # noqa: F401
+    stages,  # noqa: F401
+)
 
 # Expose as "main" for app.register_blueprint(main)
 main = bp

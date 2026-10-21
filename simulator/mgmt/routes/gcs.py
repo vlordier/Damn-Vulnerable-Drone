@@ -1,7 +1,9 @@
 # simulator/mgmt/routes/gcs.py
 import time
-from flask import make_response, request
+
 from docker.errors import NotFound
+from flask import make_response, request
+
 from . import bp
 from .utils import get_container
 
@@ -89,4 +91,4 @@ def open_qgc():
     except NotFound:
         return make_response(f"Container not found: {container_name}", 400)
     except Exception as e:
-        return make_response(f"Unexpected error: {str(e)}", 500)
+        return make_response(f"Unexpected error: {e!s}", 500)

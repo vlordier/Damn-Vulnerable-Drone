@@ -1,0 +1,32 @@
+title: NATS Traffic Disruption (Antoine)
+status: active
+order: 4
+description: Measure how bounded invalid traffic affects local control timing and fail-closed behavior.
+breadcrumb:
+  - text: Attack Scenarios
+    link: /attacks
+  - text: Antoine / NATS
+  - text: NATS Traffic Disruption
+sections:
+  - title: Description
+    content: |
+      A rate-capped, read-only vehicle state-stream timing observation is available through the swarm runner (`ANTOINE_SWARM_FAULT=state-stream-timing`). The active `state-stream-partition` mode inserts a run-local relay from the Gazebo state subject to a controller-only subject and drops one callsign's stream for a bounded interval. The local authority remains subscribed to the original subject. A separate opt-in `command-rate` probe sends a capped burst of wrong-callsign setpoint envelopes to one target subject; every candidate must be rejected and the report records controller decision timing plus independent pose and actuator windows. This is a bounded consumer-load sample, not packet loss, a broker rate-limit test, or a general DDoS claim. Only a run-owned loopback broker and local simulation are in scope; never target another demo, shared NATS, a remote service, or a physical aircraft.
+  - title: Resources
+    content:
+      - text: NATS CLI
+        link: https://github.com/nats-io/natscli
+  - title: Solution Guide
+    collapsible: true
+    steps:
+      - title: Establish a baseline
+        description: |
+          Run the local profile once without injected traffic. Save controller rates, state gaps, stop reasons, actuator audit, and the independent pose report.
+      - title: Apply a bounded input
+        description: |
+          Use `ANTOINE_SWARM_FAULT=state-stream-timing research/run-antoine-two-drone-flight.sh` for read-only timing, `make swarm-blackhole` for the bounded controller-only relay partition, or `ANTOINE_SWARM_FAULT=command-rate research/run-antoine-two-drone-flight.sh` for the wrong-callsign consumer-load sample. The rate sample defaults to 10 Hz for 4 seconds with a 40-message cap; hard limits are 20 Hz, 5 seconds, and 100 messages. It requires the exact target callsign and a distinct source callsign and publishes only malformed-for-target binding envelopes. It never publishes to actuator command subjects and does not exercise shared-network packet loss.
+      - title: Compare timing and safety response
+        description: |
+          Compare command/state rates, deadline or freshness diagnostics, actuator neutralization, and pose continuity with the baseline. Stop the experiment if the broker or controller becomes unresponsive.
+  - title: Research Questions
+    content: |
+      Can unauthenticated local publishing degrade availability even when forged commands cannot pass actuator checks? Does the controller stop or recover predictably, and how long until neutral output is observed?

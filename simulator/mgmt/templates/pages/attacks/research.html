@@ -1,0 +1,177 @@
+{% extends "pages/index.html" %}
+
+{% block content %}
+<style>
+  @media (max-width: 1199.98px) {
+    body.nav-fixed #layoutDrawer #layoutDrawer_nav { display: none; }
+    body.nav-fixed #layoutDrawer #layoutDrawer_content { padding-left: 0; }
+    .list-group-item .badge { white-space: normal; text-align: left; }
+  }
+</style>
+<main>
+  <div class="container-xl p-5">
+    <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-4">
+      <div>
+        <h2 class="mb-2">Vulnerability research console</h2>
+        <p class="mb-0">Reproduce bounded experiments from a terminal, then inspect the evidence below. This page never launches a simulator process.</p>
+      </div>
+      <a class="btn btn-outline-secondary" href="{{ url_for('main.attacks_index') }}">All scenarios</a>
+    </div>
+
+    <div class="alert alert-warning" role="alert">
+      Flight and NATS experiments use a run-owned loopback broker and an X500 vehicle in Gazebo. Camera observation runs separately in an isolated local Gazebo partition without NATS or the Antoine controller. Use test keys and isolated runs only; these results do not cover remote access or physical aircraft.
+    </div>
+
+    <section class="border rounded p-4 mb-5" aria-labelledby="swarm-viewing-title">
+      <h3 id="swarm-viewing-title" class="h4">Watch a swarm</h3>
+      <p class="mb-2"><strong>Live 3D:</strong> from a terminal in the repository root, run <code>make swarm-live</code>. Gazebo opens while two drones fly; keep that terminal open until the run finishes. For three or five drones use <code>make swarm-live ANTOINE_SWARM_SIZE=3</code> or <code>=5</code>.</p>
+      <p class="mb-2"><strong>Scripted behaviours:</strong> choose <code>lanes</code>, <code>column</code>, <code>vee</code>, <code>rendezvous</code>, or <code>split</code> with <code>ANTOINE_SWARM_BEHAVIOR</code>, or use <code>make swarm-vee</code>, <code>make swarm-rendezvous</code>, or <code>make swarm-split</code>. Each vehicle receives its own fixed waypoint list before launch; the page reports whether final Gazebo poses matched that plan. This is not live formation control or dynamic collision avoidance.</p>
+      <p class="mb-2"><strong>MAVLink telemetry:</strong> <code>make swarm-bridge</code> starts one local bridge per drone and checks per-vehicle MAVLink telemetry, checksums, and system-ID isolation. It is a read-only fan-out check: bridge commands do not steer the Gazebo swarm.</p>
+      <p class="mb-2"><strong>After the flight:</strong> this page lists saved runs below. Choose <em>View swarm trajectory</em> to inspect the measured top-down paths, or open the run's evidence manifest for integrity details.</p>
+      <p class="small text-muted mb-0">The live Gazebo view is 3D. The saved trajectory is a static X/Y plot and does not show altitude or animate the flight. On a headless machine, use <code>make swarm-flight</code> and inspect the saved plot here.</p>
+    </section>
+
+    <section class="mb-5">
+      <h3 class="h4">Reproduce a bounded experiment</h3>
+      <div class="row g-3">
+        {% for item in commands %}
+        <div class="col-lg-4">
+          <article class="border rounded p-3 h-100">
+            <h4 class="h6">{{ item.title }}</h4>
+            <code class="d-block text-break">{{ item.command }}</code>
+            <button class="btn btn-sm btn-outline-primary mt-3" type="button" data-copy="{{ item.command }}">Copy command</button>
+          </article>
+        </div>
+        {% endfor %}
+      </div>
+      <p class="small text-muted mt-2">Run from the repository root. Every runner creates a new evidence directory under <code>build_logs/research/antoine-scenarios/</code>.</p>
+    </section>
+
+    <section class="mb-5">
+      <h3 class="h4">What each runner measures</h3>
+      <div class="table-responsive">
+        <table class="table table-bordered align-middle">
+          <thead class="table-light"><tr><th>Experiment</th><th>Qualification criteria</th><th>Bound</th></tr></thead>
+          <tbody>
+            <tr><td>Authorized baseline</td><td>Establishes a clean flight control; all gates must pass</td><td>One finite local flight, same Gazebo physics profile</td></tr>
+            <tr><td><a class="link" href="{{ url_for('main.attack_scenario', tactic='antoine', filename='waypoint-injection.yaml') }}">Waypoint mutation</a></td><td>Requires same-run parser acceptance, grant-mismatch stop, neutral motor output, and independent no-takeoff evidence</td><td>One altered setpoint, fresh sequence</td></tr>
+            <tr><td><a class="link" href="{{ url_for('main.attack_scenario', tactic='antoine', filename='waypoint-replay.yaml') }}">Exact replay</a></td><td>Requires duplicate rejection plus independent pose, actuator, and completed-flight gates</td><td>One captured message, one replay</td></tr>
+            <tr><td><a class="link" href="{{ url_for('main.attack_scenario', tactic='antoine', filename='sensor-injection-replay.yaml') }}">Signed GPS tampering</a></td><td>Requires a retained-signature mutation rejection and all sensor-profile and flight gates</td><td>One live envelope, one field change, test-only signing key</td></tr>
+            <tr><td>Early authority revoke</td><td>Run-matched signed revoke, controller acceptance, same-run neutral actuator output, independent pose timeline</td><td>Partial until fresh provenance-qualified requalification; local test authority and stop latency only</td></tr>
+            <tr><td><a class="link" href="{{ url_for('main.attack_scenario', tactic='antoine', filename='camera-observation.yaml') }}">Camera topic observation</a></td><td>Counts only valid image messages in a camera-only rehearsal</td><td>One isolated partition, five-frame cap, image payload discarded</td></tr>
+            <tr><td><a class="link" href="{{ url_for('main.attack_scenario', tactic='antoine', filename='mission-extraction.yaml') }}">Read-only observation</a></td><td>Partial read-only subject visibility; no actuator-authority claim</td><td>Four subjects, one message each</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    {% if scenario_coverage %}
+    <section class="mb-5">
+      <h3 class="h4">Scenario coverage</h3>
+      <p class="small text-muted">Loaded from the checked-in scenario catalog. “Active” means a bounded runner exists; it does not imply that every variant of the legacy scenario is covered.</p>
+      <div class="table-responsive">
+        <table class="table table-sm table-bordered align-middle">
+          <thead class="table-light"><tr><th>Scenario</th><th>Status</th><th>Runner</th><th>Gap / limit</th></tr></thead>
+          <tbody>{% for item in scenario_coverage %}
+            <tr><td>{{ item.label or item.scenario }}</td><td>{{ item.status }}</td><td>{% if item.runner %}<code>./{{ item.runner }}{% for argument in item.runnerArguments or [] %} {{ argument }}{% endfor %}</code>{% else %}—{% endif %}</td><td>{{ item.gap or "Covered by the named bounded runner" }}</td></tr>
+          {% endfor %}</tbody>
+        </table>
+      </div>
+    </section>
+    {% endif %}
+
+    {% if legacy_crosswalk %}
+    <details class="mb-5">
+      <summary class="h4">Legacy ArduPilot/MAVLink coverage · {{ legacy_crosswalk|length }} guides</summary>
+      <p class="small text-muted mt-2">These are semantic adaptations to Antoine's actual NATS/Gazebo boundaries, not MAVLink payload translations. The original legacy guides remain available; “partial” and “unavailable” entries identify missing native components or evidence.</p>
+      <p><a class="btn btn-sm btn-outline-secondary" href="{{ legacy_crosswalk_url }}">Download machine-readable crosswalk</a></p>
+      <div class="table-responsive">
+        <table class="table table-sm table-bordered align-middle">
+          <thead class="table-light"><tr><th>Legacy guide</th><th>Native coverage</th><th>Antoine procedure</th><th>Remaining gap</th></tr></thead>
+          <tbody>{% for item in legacy_crosswalk %}
+            <tr>
+              <td><a href="{{ item.legacy_url }}">{{ item.title }}</a><br><code>{{ item.source }}</code></td>
+              <td>
+                {% if item.status == 'adapted' %}<span class="badge text-bg-success">Adapted</span>
+                {% elif item.status == 'partial' %}<span class="badge text-bg-warning">Partial</span>
+                {% else %}<span class="badge text-bg-secondary">Unavailable</span>{% endif %}
+                <div class="small mt-1">{{ item.adaptation }}</div>
+              </td>
+              <td>{% if item.native_scenarios %}{% for native in item.native_scenarios %}
+                {% if native.guide_url %}<a href="{{ native.guide_url }}">{{ native.label }}</a>{% else %}{{ native.label }}{% endif %}
+                <span class="badge text-bg-light">{{ native.status }}</span>{% if native.runner %}<br><code>{{ native.runner }}</code>{% endif %}{% if not loop.last %}<br>{% endif %}
+                {% endfor %}{% else %}<span class="text-muted">No native equivalent</span>{% endif %}</td>
+              <td>{{ item.gap or "No material gap recorded for this bounded adaptation." }}</td>
+            </tr>
+          {% endfor %}</tbody>
+        </table>
+      </div>
+    </details>
+    {% endif %}
+
+    <section class="mb-5">
+      <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+        <h3 class="h4 mb-0">Evidence found in this checkout</h3>
+        <span class="d-flex flex-wrap align-items-center gap-2"><a class="btn btn-sm btn-outline-primary" href="{{ evidence_csv_url }}">Download verified evidence CSV</a><code class="text-break">uv run --project research python research/export_research_csv.py</code><button class="btn btn-sm btn-outline-secondary" type="button" data-copy="uv run --project research python research/export_research_csv.py">Copy CSV command</button></span>
+      </div>
+      {% if evidence_runs %}
+      <ul class="list-group">
+        {% for run in evidence_runs %}
+        <li class="list-group-item">
+          <div class="d-flex flex-wrap justify-content-between gap-2">
+            <span><strong>{{ run.scenario }}</strong><br><code>{{ run.run_id }}</code></span>
+            <span class="d-flex flex-wrap align-items-start gap-2">
+              {% if run.outcome_variant == 'success' %}<span class="badge text-bg-success">{{ run.outcome }}</span>
+              {% elif run.outcome_variant == 'info' %}<span class="badge text-bg-info">{{ run.outcome }}</span>
+              {% elif run.outcome_variant == 'warning' %}<span class="badge text-bg-warning">{{ run.outcome }}</span>
+              {% else %}<span class="badge text-bg-secondary">{{ run.outcome }}</span>{% endif %}
+              {% if run.flight_passed is sameas true %}<span class="badge text-bg-light">Flight passed</span>{% endif %}
+              {% if run.baseline_comparable is sameas true %}<span class="badge text-bg-info">Baseline matched</span>
+              {% elif run.baseline_comparable is sameas false %}<span class="badge text-bg-warning">Baseline not comparable</span>{% endif %}
+              {% if run.messages is not none %}<span class="badge text-bg-light">{{ run.messages }} messages</span>{% endif %}
+              {% if run.camera_frames is not none %}<span class="badge text-bg-light">{{ run.camera_frames }} valid frames · topic {% if run.camera_topic_listed is sameas true %}listed{% elif run.camera_topic_listed is sameas false %}not listed{% else %}unknown{% endif %} · publisher {% if run.camera_publisher_present is sameas true %}present{% elif run.camera_publisher_present is sameas false %}absent{% else %}unknown{% endif %}</span>{% endif %}
+              {% if run.latency_ms is not none %}<span class="badge text-bg-light">{{ run.latency_ms }} ms to stop</span>{% endif %}
+            </span>
+          </div>
+          {% if run.interpretation %}<p class="small text-muted mt-2 mb-2">{{ run.interpretation }}</p>{% endif %}
+          <p class="small mb-2">Provenance: {% if run.provenance_stable %}<span class="text-success">stable across the run</span>{% else %}<span class="text-warning">not stable or incomplete; classification is inconclusive</span>{% endif %}</p>
+          <p class="small mb-2">Manifest signature: <span class="text-muted">{{ run.manifest_signature_status|replace('_', ' ') }}</span>{% if run.signature_url %} · <a href="{{ run.signature_url }}">download signature record</a>{% endif %}</p>
+          {% if run.provenance_changes.inputs or run.provenance_changes.sourceTrees %}<p class="small text-muted">Changed inputs: {{ run.provenance_changes.inputs|join(', ') or 'none' }}; changed source trees: {{ run.provenance_changes.sourceTrees|join(', ') or 'none' }}.</p>{% endif %}
+          <div class="d-flex gap-2">
+            {% if run.download_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ run.download_url }}">Download result</a>{% endif %}
+            {% if run.trajectory_url %}<a class="btn btn-sm btn-outline-primary" href="{{ run.trajectory_url }}" target="_blank" rel="noopener">View swarm trajectory</a>{% endif %}
+            {% if run.manifest_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ run.manifest_url }}">Evidence manifest</a>{% endif %}
+            {% if run.provenance_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ run.provenance_url }}">Source provenance</a>{% endif %}
+            {% if run.camera_world_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ run.camera_world_url }}">Camera world provenance</a>{% endif %}
+          </div>
+          {% if run.trajectory_url %}<figure class="mt-3 mb-0"><a href="{{ run.trajectory_url }}"><img class="img-fluid border rounded" loading="lazy" src="{{ run.trajectory_url }}" alt="Top-down Gazebo trajectories for {{ run.scenario }}"></a><figcaption class="small text-muted mt-1">Recorded Gazebo world poses; select the image to open it full size.</figcaption></figure>{% endif %}
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="text-muted">No generated run evidence is present in this checkout yet. The checked-in research report still records the prior measured runs.</p>
+      {% endif %}
+      {% if findings_available %}<p class="mt-2"><a class="link" href="{{ url_for('main.antoine_research_findings') }}">Download the full research findings report</a></p>{% endif %}
+    </section>
+
+    <section class="mb-4">
+      <h3 class="h4">Research report</h3>
+      <p>Each run manifest lists SHA-256 digests for public evidence artifacts. Verify one with <code>uv run --project research python research/verify_evidence_manifest.py RUN_DIR</code>. CSV export checks those digests and records a separate run classification. Classification also requires matching pre/post source, input, run ID, and profile snapshots. This detects evidence that changed after manifest creation; the local manifest is unsigned and does not attest who created the evidence or which binaries were loaded. Private test keys, actuation sequence files, and launcher logs are not served.</p>
+    </section>
+  </div>
+</main>
+<script>
+document.querySelectorAll('[data-copy]').forEach((button) => {
+  button.addEventListener('click', async () => {
+    try {
+      await navigator.clipboard.writeText(button.dataset.copy);
+      const original = button.textContent;
+      button.textContent = 'Copied';
+      setTimeout(() => { button.textContent = original; }, 1400);
+    } catch (_) {
+      button.textContent = 'Copy unavailable';
+    }
+  });
+});
+</script>
+{% endblock %}

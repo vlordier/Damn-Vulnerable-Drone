@@ -1,4 +1,4 @@
-from extensions import db
+from .extensions import db
 
 STATUS_CHOICES = ['Disabled', 'Enabled', 'Loading', 'Active']
 

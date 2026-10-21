@@ -416,7 +416,8 @@
 <!-- Optional origin guard -->
 <script>
   document.addEventListener("DOMContentLoaded", function() {
-    if (window.location.hostname !== 'localhost' && window.Swal) {
+    const localHosts = new Set(['localhost', '127.0.0.1', '[::1]']);
+    if (!localHosts.has(window.location.hostname) && window.Swal) {
       Swal.fire({
         title: "Access Alert",
         text: "You are not accessing the application from the standard 'localhost' origin. Would you like to redirect to the correct origin?",

@@ -1,0 +1,9 @@
+title: "Two-to-five vehicle all-pairs separation"
+description: "Run 2–5 independent Antoine controllers and measure every vehicle pair from time-aligned Gazebo poses. Qualification requires every vehicle flight gate and every pair to remain at least 1.0 m apart. The default is two vehicles on parallel lanes; this is a simulator threshold, not formation control or certified collision avoidance."
+order: 10
+runner: "research/run-antoine-two-drone-flight.sh"
+status: "active"
+evidence:
+  - "research-swarm-config.json"
+  - "research-swarm-flight.json"
+  - "gazebo-pose.jsonl"

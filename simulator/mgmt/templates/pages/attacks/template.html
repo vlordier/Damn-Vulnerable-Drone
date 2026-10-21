@@ -43,18 +43,18 @@
                                         <summary>{{ section.title }}</summary>
                                         {% for step in section.steps %}
                                         <h5>{{ step.title }}</h5>
-                                        <p>{{ step.description | safe }}</p>
+                                        <p>{{ step.description | scenario_markup }}</p>
                                         <br>
                                         {% endfor %}
                                     </details>
                                     {% else %}
                                     {% if section.content %}
                                     {% if section.content is string %}
-                                    <p>{{ section.content | safe }}</p>
+                                    <p>{{ section.content | scenario_markup }}</p>
                                     {% else %}
                                     <ul>
                                         {% for item in section.content %}
-                                        <li><a href="{{ item.link }}" class="link">{{ item.text }}</a></li>
+                                        <li><a href="{{ item.link | scenario_url }}" class="link">{{ item.text }}</a></li>
                                         {% endfor %}
                                     </ul>
                                     {% endif %}
@@ -76,18 +76,18 @@
                                         <summary>{{ section.title }}</summary>
                                         {% for step in section.steps %}
                                         <h5>{{ step.title }}</h5>
-                                        <p>{{ step.description | safe }}</p>
+                                        <p>{{ step.description | scenario_markup }}</p>
                                         <br>
                                         {% endfor %}
                                     </details>
                                     {% else %}
                                     {% if section.content %}
                                     {% if section.content is string %}
-                                    <p>{{ section.content | safe }}</p>
+                                    <p>{{ section.content | scenario_markup }}</p>
                                     {% else %}
                                     <ul>
                                         {% for item in section.content %}
-                                        <li><a href="{{ item.link }}" class="link">{{ item.text }}</a></li>
+                                        <li><a href="{{ item.link | scenario_url }}" class="link">{{ item.text }}</a></li>
                                         {% endfor %}
                                     </ul>
                                     {% endif %}
@@ -110,18 +110,18 @@
                                         <summary>Reveal Solution</summary>
                                         {% for step in section.steps %}
                                         <h5>{{ step.title }}</h5>
-                                        <p>{{ step.description | safe }}</p>
+                                        <p>{{ step.description | scenario_markup }}</p>
                                         <br>
                                         {% endfor %}
                                     </details>
                                     {% else %}
                                     {% if section.content %}
                                     {% if section.content is string %}
-                                    <p>{{ section.content | safe }}</p>
+                                    <p>{{ section.content | scenario_markup }}</p>
                                     {% else %}
                                     <ul>
                                         {% for item in section.content %}
-                                        <li><a href="{{ item.link }}" class="link">{{ item.text }}</a></li>
+                                        <li><a href="{{ item.link | scenario_url }}" class="link">{{ item.text }}</a></li>
                                         {% endfor %}
                                     </ul>
                                     {% endif %}

@@ -1,0 +1,32 @@
+title: Revocation and Actuator Neutralization (Antoine)
+status: partial
+order: 6
+description: Measure how Antoine responds to an authority revoke and distinguish neutral output from physical landing.
+breadcrumb:
+  - text: Attack Scenarios
+    link: /attacks
+  - text: Antoine / NATS
+  - text: Revocation and Neutralization
+sections:
+  - title: Description
+    content: |
+      The standard flight proof records nominal end-of-run authority revocation and neutral motor output. There is no dedicated early-revocation or adversarial termination runner yet, so this is partial lifecycle evidence rather than an active flight-termination attack. It does not claim a physical safe stop or controlled landing.
+  - title: Resources
+    content:
+      - text: Local Antoine flight proof
+        link: /attacks/antoine/waypoint-injection.yaml
+  - title: Solution Guide
+    collapsible: true
+    steps:
+      - title: Run the authorized local profile
+        description: |
+          Run `./research/run-antoine-baseline.sh` to capture the normal finite proof and its end-of-run revoke. Do not forge a revoke or use a production authority key.
+      - title: Measure software response
+        description: |
+          Use the run report, source-provenance record, and `applier-neutral/actuator-output.jsonl` to inspect nominal neutral output and the independent `gazebo-pose.jsonl` timeline. Early revoke timing is not measured by this runner.
+      - title: State the claim precisely
+        description: |
+          Report actuator neutralization and measured Gazebo motion as separate observations. Do not call either one a hardware stop, controlled landing, or safety qualification.
+  - title: Research Questions
+    content: |
+      Is revoke handling prompt and auditable under nominal load? Does neutral output correspond to bounded simulated drift, and what additional evidence would be required to claim a controlled landing?

@@ -8,7 +8,7 @@
                 <h2 class="mb-0">Attack Scenarios</h2>
                 <button class="btn btn-text-dark btn-icon btn-lg text-muted ms-2" type="button"><i class="material-icons">link</i></button>
             </div>
-            <p>Below is the full listing of all attack scenarios grouped by tactic. <span style="color: red">Note: Cells in red are only supported in Wifi-Mode (Full-Deploy)</span></p>
+            <p>The legacy scenarios below target the ArduPilot/MAVLink lab. Antoine adaptations are listed separately and are restricted to the local Gazebo/NATS profile.</p>
         </section>
 
         <div class="table-responsive-lg">
@@ -91,6 +91,32 @@
                 </tr>
             </table>
         </div>
+
+        <section class="mt-5">
+            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                <h3 class="mb-0">Antoine / NATS adaptations</h3>
+                <a class="btn btn-primary" href="{{ url_for('main.antoine_research_index') }}">Open research console</a>
+            </div>
+            <p>These guides describe the corresponding trust boundary and evidence to collect. They do not reuse MAVLink payloads or authorize tests against real aircraft or external brokers.</p>
+            <div class="row g-3">
+                {% for attack in categories['Antoine / NATS'] %}
+                <div class="col-md-6 col-xl-4">
+                    <a class="link d-block border rounded p-3 h-100" href="{{ attack.link }}">
+                        <span class="d-flex flex-wrap justify-content-between align-items-center gap-2">
+                            <strong>{{ attack.title }}</strong>
+                            {% if attack.status == 'active' %}<span class="badge text-bg-success">Runner-backed</span>
+                            {% elif attack.status == 'partial' %}<span class="badge text-bg-warning">Partial coverage</span>
+                            {% elif attack.status == 'planned' %}<span class="badge text-bg-secondary">Research plan</span>
+                            {% elif attack.status == 'unavailable' %}<span class="badge text-bg-danger">Runner unavailable</span>{% endif %}
+                        </span>
+                        <span class="d-block text-muted small mt-1">{{ attack.description }}</span>
+                    </a>
+                </div>
+                {% else %}
+                <div class="col-12 text-muted">No Antoine scenarios have been added yet.</div>
+                {% endfor %}
+            </div>
+        </section>
     </div>
 </main>
 {% endblock %}

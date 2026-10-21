@@ -1,12 +1,13 @@
 # simulator/mgmt/routes/core.py
 import logging
-import os
+
 from flask import render_template
-from models import Stage
-from extensions import db
+
+from ..extensions import db
+from ..models import Stage
 from . import bp
-from .utils import get_container, LITE
 from .bridge import start_companion_telemetry, stop_companion_telemetry
+from .utils import LITE, get_container
 
 logger = logging.getLogger(__name__)
 

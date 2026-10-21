@@ -1,0 +1,32 @@
+title: Mission and Telemetry Extraction (Antoine)
+status: partial
+order: 5
+description: Assess which mission and state data a client with local broker access can read.
+breadcrumb:
+  - text: Attack Scenarios
+    link: /attacks
+  - text: Antoine / NATS
+  - text: Mission and Telemetry Extraction
+sections:
+  - title: Description
+    content: |
+      This adapts mission extraction, parameter extraction, and packet sniffing to the native control plane. The current local proof uses NATS without TLS or client authentication on a loopback-only listener. This exercise records what an in-scope local client can observe and whether reports leak signing material.
+  - title: Resources
+    content:
+      - text: NATS CLI
+        link: https://github.com/nats-io/natscli
+  - title: Solution Guide
+    collapsible: true
+    steps:
+      - title: Subscribe during a local run
+        description: |
+          Run <code>./research/run-antoine-observation.sh</code> to capture four exact state, setpoint, grant, and admission subjects without NATS credentials. The observer is capped at twelve messages and writes a redacted <code>research-nats-observation.json</code> beside the flight evidence. Avoid broad captures of unrelated subjects.
+      - title: Classify the information
+        description: |
+          Separate public run metadata, mission targets, sensor state, grant fields, signatures, and secret signing seeds. Report whether a client can read each category and whether it can also cause accepted actuation.
+      - title: Protect evidence
+        description: |
+          Keep only the minimum redacted captures needed for analysis. Never publish or commit private seeds, credentials, or unrelated host data.
+  - title: Research Questions
+    content: |
+      Does loopback-only network exposure adequately constrain this profile? Which message contents should be hidden or minimized if the same topology is later deployed across a network?

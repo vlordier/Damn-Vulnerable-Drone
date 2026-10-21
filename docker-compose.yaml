@@ -79,9 +79,13 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./simulator/mgmt:/Simulator/mgmt
+      - ./research:/Simulator/research:ro
+      - ./build_logs/research/antoine-scenarios:/Simulator/build_logs/research/antoine-scenarios:ro
     environment:
       - WIFI_ENABLED
       - LITE=false
+      - RESEARCH_DIR=/Simulator/research
+      - RESEARCH_EVIDENCE_DIR=/Simulator/build_logs/research/antoine-scenarios
       - ROS_DOMAIN_ID=42
       - RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
       - CYCLONEDDS_URI=file:///etc/cyclonedds.xml

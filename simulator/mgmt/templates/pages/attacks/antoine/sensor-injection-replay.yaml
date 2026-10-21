@@ -1,0 +1,32 @@
+title: Signed GPS Tampering (Antoine)
+status: partial
+order: 3
+description: Evaluate signature validation for one bounded GPS input mutation consumed by Antoine. Freshness and replay behavior remain untested.
+breadcrumb:
+  - text: Attack Scenarios
+    link: /attacks
+  - text: Antoine / NATS
+  - text: Signed GPS Tampering
+sections:
+  - title: Description
+    content: |
+      This bounded experiment starts Antoine with the source-verified Gazebo sensor forwarder and a run-local test signing key. It captures one live signed GPS envelope, changes latitude without changing its signature, stops the forwarder, then publishes exactly one altered message. The test checks Antoine's GPS acceptance trace and independent Gazebo flight evidence. The GPS source is idealized simulation data, not physical GNSS.
+  - title: Resources
+    content:
+      - text: NATS CLI
+        link: https://github.com/nats-io/natscli
+  - title: Solution Guide
+    collapsible: true
+    steps:
+      - title: Observe the current run
+        description: |
+          Run `./research/run-antoine-sensor-tampering.sh`. The runner checks the forwarder build receipt, starts its own loopback NATS broker, and preserves the source-profile digest and independent Gazebo evidence.
+      - title: Define one bounded fault
+        description: |
+          The runner changes only `lat_deg` in one live `brenta.sensor.gps.drone-1` envelope, keeps the original signature, stops the run-owned forwarder, and publishes the message once. Its deterministic signing key is a public test fixture and must not be reused outside this isolated lab.
+      - title: Check the result
+        description: |
+          Compare the controller's positive GPS acceptance trace before and after the mutation, the probe record, and independent Gazebo pose and actuator evidence. The experiment is inconclusive if it cannot capture an accepted signed sample or if the flight/profile gates fail. A broker-visible message is not proof that Antoine consumed it.
+  - title: Research Questions
+    content: |
+      Does Antoine reject a changed GPS payload whose original Ed25519 signature is retained? Does it continue the local mission after the rejected sample? This result covers only the configured callsign/frame, one message, and the public test key.

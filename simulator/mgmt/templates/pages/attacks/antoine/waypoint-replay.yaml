@@ -1,0 +1,28 @@
+title: Same-Run Waypoint Replay (Antoine)
+status: active
+order: 7
+description: Verify that replaying one live, identical setpoint is rejected without disrupting the authorized flight.
+breadcrumb:
+  - text: Attack Scenarios
+    link: /attacks
+  - text: Antoine / NATS
+  - text: Same-Run Waypoint Replay
+sections:
+  - title: Description
+    content: |
+      This adapts ROS 2 topic replay to the mission setpoint contract. The exercise captures one currently valid setpoint in a disposable local run and republishes the exact JSON once to the same subject. It changes no fields and uses no signing key.
+  - title: Scope
+    content: |
+      Use only the NATS loopback broker and `drone-1` instance started by the runner. The capture is capped at one message and the replay publishes exactly one message. No cross-run replay, high-rate publishing, external broker, or physical vehicle is in scope.
+  - title: Solution Guide
+    collapsible: true
+    steps:
+      - title: Run the bounded replay
+        description: |
+          From the project root, run <code>./research/run-antoine-replay.sh</code>. The runner waits until Antoine accepts a live setpoint and emits actuator commands, captures one setpoint, republishes it once, and then evaluates the complete flight.
+      - title: Review evidence
+        description: |
+          Review <code>research-waypoint-replay-summary.json</code>. It joins the replay sequence and rejection marker with the controller stop reasons and independent Gazebo flight report. A broker publish receipt alone is not evidence that the controller accepted the replay.
+  - title: Research Questions
+    content: |
+      Does Antoine reject the duplicate sequence while continuing the authorized mission? How do cross-run bindings, expiration, and sequence persistence behave under separate controlled experiments?

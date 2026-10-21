@@ -1,0 +1,8 @@
+title: "Second-vehicle state-stream timing observation"
+description: "Observe the second vehicle's run-local NATS state stream and report bounded receive intervals. This is read-only telemetry observation; it does not inject packet loss or delay and does not qualify controller fallback behavior."
+order: 20
+runner: "research/run-antoine-two-drone-flight.sh"
+status: "observation-only"
+evidence:
+  - "research-swarm-fault.json"
+  - "logs/antoine-controller-drone-2.log"

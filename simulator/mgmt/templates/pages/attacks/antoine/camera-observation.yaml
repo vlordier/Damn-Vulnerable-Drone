@@ -1,0 +1,25 @@
+title: Camera Feed Observation (Antoine)
+status: active
+order: 4
+description: Measure whether a local process can read the simulated X500 camera topic without retaining image payloads.
+breadcrumb:
+  - text: Attack Scenarios
+    link: /attacks
+  - text: Antoine / NATS
+  - text: Camera Feed Observation
+sections:
+  - title: Description
+    content: |
+      The X500 model declares a simulated 640x360 camera. A dedicated camera-only rehearsal enables Gazebo's sensor system and headless rendering, builds the compatible Ogre2 overlay under this checkout's runs/ directory, then probes the exact topic in an isolated Gazebo partition for at most five valid image messages. Only dimensions and payload sizes are retained; image bytes are discarded. This is same-host Gazebo Transport evidence and does not exercise ROS 2 forwarding, Wi-Fi, remote access, or GCS video. The Antoine controller is deliberately not started in this rehearsal because rendering reduces its flight tick rate.
+  - title: Solution Guide
+    collapsible: true
+    steps:
+      - title: Run the local sensor profile
+        description: |
+          Run `./research/run-antoine-camera-observation.sh`. This camera-only runner uses its own Gazebo partition and does not start the Antoine flight controller. Run `./research/run-antoine-sensor-tampering.sh` separately for GPS signature tampering and flight evidence.
+      - title: Check the camera evidence
+        description: |
+          Open `research-camera-observation.json` from the run evidence. Check `topicListed`, `publisherPresentAtProbe`, and `capturedMessages`. A positive result requires at least one image message and records only dimensions and payload sizes. A bounded timeout is inconclusive; it does not prove the camera topic is protected or absent.
+  - title: Research Questions
+    content: |
+      Can an unauthenticated same-host Gazebo Transport client read the simulated camera topic? This does not answer whether a remote client, Wi-Fi peer, ROS 2 node, or ground station can access video.

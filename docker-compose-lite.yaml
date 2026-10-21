@@ -73,11 +73,15 @@ services:
       dockerfile: ./simulator/lite/Dockerfile
     image: n1ckaleks/damn-vulnerable-drone-simulator-lite:latest
     privileged: true
-    environment:
-      - LITE=true
     volumes:
       - ./simulator/mgmt:/app/simulator/mgmt
+      - ./research:/app/research:ro
+      - ./build_logs/research/antoine-scenarios:/app/build_logs/research/antoine-scenarios:ro
       - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - LITE=true
+      - RESEARCH_DIR=/app/research
+      - RESEARCH_EVIDENCE_DIR=/app/build_logs/research/antoine-scenarios
     ports:
       - "8000:8000"
     networks:

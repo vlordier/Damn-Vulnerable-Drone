@@ -1,0 +1,33 @@
+title: NATS Reconnaissance
+status: active
+order: 1
+description: Map the local Antoine control and telemetry surface from a client on the isolated lab broker.
+breadcrumb:
+  - text: Attack Scenarios
+    link: /attacks
+  - text: Antoine / NATS
+  - text: NATS Reconnaissance
+sections:
+  - title: Description
+    content: |
+      The legacy discovery exercises enumerate MAVLink endpoints, Wi-Fi hosts, or ROS 2 graphs. Antoine's native profile uses a local NATS broker and Gazebo Transport. This exercise inventories the subjects visible to a client that can reach the current lab broker and compares that visibility with the intended trust boundary.
+
+      This is a read-only exercise. It does not scan beyond the loopback endpoint printed by the local `antoine` launcher.
+  - title: Resources
+    content:
+      - text: NATS CLI
+        link: https://github.com/nats-io/natscli
+      - text: Gazebo Transport CLI
+        link: https://gazebosim.org/api/transport/13/cli.html
+  - title: Solution Guide
+    collapsible: true
+    steps:
+      - title: Run the bounded observer
+        description: |
+          From the project root, run <code>./research/run-antoine-observation.sh</code>. It starts a fresh run, verifies the broker port against that run's NATS log, and captures at most twelve messages from four named subjects. Signature and secret-like fields are redacted before evidence is written.
+      - title: Record the boundary
+        description: |
+          Review <code>research-nats-observation.json</code> and its evidence manifest. Treat message visibility and actuator authority as separate properties; do not use broad subscriptions that could expose unredacted data.
+  - title: Research Questions
+    content: |
+      Does the local profile expose more mission or telemetry data than the exercise requires? Does knowledge of a subject grant authority to actuate, or does the independent grant/signature boundary still hold?

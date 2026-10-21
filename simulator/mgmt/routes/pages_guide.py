@@ -1,6 +1,8 @@
 # simulator/mgmt/routes/pages_guide.py
 from flask import render_template
+
 from . import bp
+
 
 @bp.route("/getting-started")
 def getting_started():

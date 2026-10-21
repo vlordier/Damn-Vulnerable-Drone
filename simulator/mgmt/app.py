@@ -1,11 +1,14 @@
 # simulator/mgmt/app.py
-import os
 import logging
+import os
+
 from flask import Flask
 from flask_cors import CORS
-from extensions import db
-from models import create_initial_stages
-from routes import main
+
+from .extensions import db
+from .models import create_initial_stages
+from .routes import main
+
 
 def create_app():
     app = Flask(__name__)
@@ -19,6 +22,9 @@ def create_app():
     # Lite mode flag used by templates to switch the viewer
     # (e.g., show Leaflet map instead of the old gzweb iframe)
     app.config['LITE'] = os.getenv('LITE', '').lower() in ('1', 'true', 'yes')
+    app.config['RESEARCH_DIR'] = os.getenv('RESEARCH_DIR', '')
+    app.config['RESEARCH_EVIDENCE_DIR'] = os.getenv('RESEARCH_EVIDENCE_DIR', '')
+    app.config['RESEARCH_TRUSTED_PUBLIC_KEY'] = os.getenv('DVD_RESEARCH_TRUSTED_PUBLIC_KEY', '')
 
     # Optional: keep around for future use / UI display
     app.config['MAV2REST_URL'] = os.getenv('MAV2REST_URL', '')
@@ -64,5 +70,7 @@ def create_app():
 app = create_app()
 
 if __name__ == '__main__':
-    # Dev run: python app.py
-    app.run(host='0.0.0.0', port=8000, debug=True)
+    # The lab UI is unauthenticated and may be reachable outside localhost in
+    # container modes. Keep Flask's interactive debugger disabled by default.
+    debug_enabled = os.getenv('FLASK_DEBUG', '').lower() in ('1', 'true', 'yes')
+    app.run(host='0.0.0.0', port=8000, debug=debug_enabled)

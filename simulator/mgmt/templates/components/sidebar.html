@@ -42,9 +42,13 @@
                         <a class="nav-link {% if current_page == 'troubleshooting' %}active{% endif %}" href="/guide/troubleshooting">Troubleshooting</a> -->
                     </nav>
                 </div>
-                <a class="nav-link {% if section == 'attacks' %}active{% endif %}" href="/attacks">
+                <a class="nav-link {% if section == 'attacks' and current_page != 'attacks-research' %}active{% endif %}" href="/attacks">
                     <div class="nav-link-icon"><i class="material-icons">warning</i></div>
                     Attack Scenarios
+                </a>
+                <a class="nav-link {% if current_page == 'attacks-research' %}active{% endif %}" href="/attacks/research">
+                    <div class="nav-link-icon"><i class="material-icons">science</i></div>
+                    Antoine Research
                 </a>
                 <a class="nav-link {% if section != 'learning' %}collapsed{% else %}active{% endif %}" href="javascript:void(0);" data-bs-toggle="collapse" data-bs-target="#collapseLearning" aria-expanded="false" aria-controls="collapseLearning">
                     <div class="nav-link-icon"><i class="material-icons">support</i></div>

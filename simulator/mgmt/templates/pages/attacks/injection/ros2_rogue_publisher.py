@@ -16,13 +16,11 @@ ROS_DOMAIN_ID=42 and Cyclone DDS configured to peer with 10.13.0.3 and
 
     python3 ros2_rogue_publisher.py
 """
-import struct
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
-
 
 WIDTH = 640
 HEIGHT = 480

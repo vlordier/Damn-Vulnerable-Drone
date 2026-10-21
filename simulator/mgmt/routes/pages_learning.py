@@ -1,6 +1,8 @@
 # simulator/mgmt/routes/pages_learning.py
 from flask import render_template
+
 from . import bp
+
 
 @bp.route("/learning/")
 def learning_index():
