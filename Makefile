@@ -24,7 +24,7 @@ MAVLINK_AUDIT_STREAM ?= ANTOINE_MAVLINK
 QGC_UDP_LISTEN_PORT ?= 14550
 QGC_BRIDGE_PORT ?= 14651
 
-.PHONY: help doctor antoine-gz-battery-patch antoine-gz-battery-test console-start console-status console-stop baseline attack-waypoint attack-replay observe-nats probe-gps observe-camera early-revoke state-timing swarm-smoke swarm-baseline swarm-flight swarm-live swarm-vee swarm-rendezvous swarm-split swarm-bridge swarm-3 swarm-5 swarm-blackhole swarm-rate swarm-auth-isolation test-swarm test-research test-process-supervisor bridge-test bridge-build mavlink-console mavlink-console-start mavlink-console-stop mavlink-control mavlink-arm mavlink-disarm mavlink-check mavlink-flight-check mavlink-gazebo-headless-check mavlink-gazebo-flight-check mavlink-full-check qgc-antoine-patch qgc-antoine-build qgc-antoine-run qgc-antoine-check qgc-gazebo-preflight qgc-gazebo qgc-gazebo-status qgc-gazebo-stop qgc-gazebo-verify qgc-gazebo-pin-candidate qgc-gazebo-check lint validate
+.PHONY: help doctor antoine-gz-battery-patch antoine-gz-battery-test console-start console-status console-stop baseline attack-waypoint attack-replay observe-nats probe-gps observe-camera early-revoke state-timing swarm-smoke swarm-baseline swarm-flight swarm-live swarm-vee swarm-rendezvous swarm-split swarm-bridge swarm-3 swarm-5 swarm-blackhole swarm-rate swarm-auth-isolation test-swarm test-research test-process-supervisor bridge-test bridge-build mavlink-console mavlink-console-start mavlink-console-stop mavlink-control mavlink-arm mavlink-disarm mavlink-check mavlink-flight-check mavlink-gazebo-headless-check mavlink-gazebo-headless-lifecycle-check mavlink-gazebo-flight-check mavlink-full-check qgc-antoine-patch qgc-antoine-build qgc-antoine-run qgc-antoine-check qgc-gazebo-preflight qgc-gazebo qgc-gazebo-status qgc-gazebo-stop qgc-gazebo-verify qgc-gazebo-pin-candidate qgc-gazebo-check lint validate
 
 help: ## Show common commands
 	@printf '%s\n' \
@@ -67,6 +67,7 @@ help: ## Show common commands
 	  '  make mavlink-check     Verify telemetry, ARM/DISARM, ACK, audit and safe SITL state' \
 	  '  make mavlink-flight-check Isolated full MAVLink mission/flight acceptance scenario' \
 	  '  make mavlink-gazebo-headless-check Run isolated MAVLink/Gazebo acceptance without QGC' \
+	  '  make mavlink-gazebo-headless-lifecycle-check Start/status/stop/restart the QGC-free profile' \
 	  '  make mavlink-gazebo-flight-check Test live QGC bridge controls against Gazebo poses' \
 	  '  make mavlink-full-check Run static, bridge, and live bench checks (requires running SITL)' \
 	  '  make qgc-antoine-build Build QGC with the Antoine SITL arm control' \
@@ -279,6 +280,9 @@ mavlink-gazebo-headless-check: doctor antoine-gz-battery-test ## Isolated live M
 	@ANTOINE_GZ_OPEN_QGC=0 ANTOINE_GZ_HEADLESS_ACCEPTANCE=1 ANTOINE_GZ_FLIGHT_GUI=0 \
 	  ANTOINE_GZ_CARGO_TARGET_DIR="$(ANTOINE_GZ_CARGO_TARGET_DIR)" \
 	  ./research/run-antoine-gazebo-mavlink.sh
+
+mavlink-gazebo-headless-lifecycle-check: doctor antoine-gz-battery-test ## Isolated headless profile lifecycle acceptance, including restart and stale identity
+	@$(RESEARCH_PYTHON) python research/run_headless_profile_lifecycle.py
 
 mavlink-full-check: ## Run isolated flight scenario plus local bench MAVLink/NATS checks
 	@$(MAKE) --no-print-directory doctor
