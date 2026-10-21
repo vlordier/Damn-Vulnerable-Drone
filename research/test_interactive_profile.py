@@ -149,7 +149,12 @@ class InteractiveProfileTests(unittest.TestCase):
             ),
             patch(
                 "interactive_profile.sample_telemetry",
-                return_value={"status": "fresh", "armed": None, "mode": None},
+                return_value={
+                    "status": "fresh",
+                    "armed": None,
+                    "mode": None,
+                    "simulationTimeSeconds": 5.0,
+                },
             ),
             patch(
                 "interactive_profile.sample_bridge_heartbeat",
@@ -166,7 +171,7 @@ class InteractiveProfileTests(unittest.TestCase):
             ),
             patch(
                 "interactive_profile.sample_gazebo_pose_recorder",
-                return_value={"status": "fresh"},
+                return_value={"status": "fresh", "simulationTimeSeconds": 5.2},
             ),
         ):
             result = interactive_profile.inspect(self.receipt)
@@ -178,6 +183,74 @@ class InteractiveProfileTests(unittest.TestCase):
         )
         self.assertEqual(result["qgcHeartbeat"]["status"], "not-applicable")
         self.assertEqual(result["qgcPeerRouting"]["status"], "not-applicable")
+        self.assertEqual(result["gazeboClockAlignment"]["status"], "aligned")
+
+    def test_gazebo_clock_alignment_rejects_misaligned_and_invalid_samples(self) -> None:
+        telemetry = {"status": "fresh", "simulationTimeSeconds": 10.0}
+        pose = {"status": "fresh", "simulationTimeSeconds": 10.8}
+        self.assertEqual(
+            interactive_profile.align_gazebo_simulation_time(telemetry, pose)["status"],
+            "aligned",
+        )
+        pose["simulationTimeSeconds"] = 11.01
+        misaligned = interactive_profile.align_gazebo_simulation_time(telemetry, pose)
+        self.assertEqual(misaligned["status"], "misaligned")
+        self.assertAlmostEqual(misaligned["absoluteSkewSeconds"], 1.01)
+        for value in (True, -1.0, float("nan"), float("inf"), "10.0"):
+            pose["simulationTimeSeconds"] = value
+            self.assertEqual(
+                interactive_profile.align_gazebo_simulation_time(telemetry, pose)["status"],
+                "invalid",
+            )
+
+    def test_status_stays_partial_when_nats_and_gazebo_clocks_do_not_align(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["profile"] = interactive_profile.HEADLESS_PROFILE
+        receipt["processes"].pop("qgcUserProcess")
+        self.add_supervisor_process(receipt)
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with (
+            patch(
+                "interactive_profile.process_identity",
+                side_effect={
+                    9001: receipt["processes"]["mavlinkBridge"]["identity"],
+                    9003: "supervisor-process",
+                }.get,
+            ),
+            patch(
+                "interactive_profile._run_owned_port_statuses",
+                return_value={"natsPort": "open", "bridgeUdpBindPort": "open"},
+            ),
+            patch(
+                "interactive_profile.subprocess.run",
+                return_value=type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+            ),
+            patch(
+                "interactive_profile.sample_telemetry",
+                return_value={
+                    "status": "fresh",
+                    "armed": False,
+                    "mode": "STABILIZE",
+                    "simulationTimeSeconds": 5.0,
+                },
+            ),
+            patch(
+                "interactive_profile.sample_bridge_heartbeat",
+                return_value={"status": "unverified"},
+            ),
+            patch(
+                "interactive_profile.sample_headless_bridge_heartbeat",
+                return_value={"status": "observed", "armed": False, "mode": "STABILIZE"},
+            ),
+            patch(
+                "interactive_profile.sample_gazebo_pose_recorder",
+                return_value={"status": "fresh", "simulationTimeSeconds": 8.0},
+            ),
+        ):
+            result = interactive_profile.inspect(self.receipt)
+
+        self.assertEqual(result["gazeboClockAlignment"]["status"], "misaligned")
+        self.assertEqual(result["status"], "partial")
 
     def test_status_rejects_receipt_outside_run_directory_before_probes(self) -> None:
         other_run = Path(self.temp.name) / "other-run"

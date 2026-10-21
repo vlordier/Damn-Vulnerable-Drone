@@ -27,6 +27,7 @@ PROCESS_IDENTITY_TIMEOUT_SECONDS = 2.0
 SUPERVISOR_REQUEST_TIMEOUT_SECONDS = 2.0
 POSE_RECORDER_MAX_AGE_SECONDS = 1.5
 POSE_RECORDER_MAX_FUTURE_SECONDS = 0.25
+GAZEBO_SIMULATION_TIME_MAX_SKEW_SECONDS = 1.0
 MAVLINK_HEARTBEAT_MAX_AGE_SECONDS = 2.0
 PROFILE_CONTRACT = "damn-vulnerable-drone.interactive-profile"
 PROFILE_VERSION = "1.0.0"
@@ -618,6 +619,33 @@ def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def align_gazebo_simulation_time(telemetry: dict[str, Any], pose: dict[str, Any]) -> dict[str, Any]:
+    """Correlate the NATS plant state and independent Gazebo pose clocks."""
+    if telemetry.get("status") != "fresh" or pose.get("status") != "fresh":
+        return {"status": "unavailable", "reason": "fresh telemetry and pose clocks are required"}
+    telemetry_time = telemetry.get("simulationTimeSeconds")
+    pose_time = pose.get("simulationTimeSeconds")
+    if any(
+        not isinstance(value, (int, float))
+        or isinstance(value, bool)
+        or not math.isfinite(value)
+        or value < 0
+        for value in (telemetry_time, pose_time)
+    ):
+        return {
+            "status": "invalid",
+            "reason": "simulation clock values must be finite and nonnegative",
+        }
+    skew = abs(telemetry_time - pose_time)
+    return {
+        "status": "aligned" if skew <= GAZEBO_SIMULATION_TIME_MAX_SKEW_SECONDS else "misaligned",
+        "telemetrySimulationTimeSeconds": telemetry_time,
+        "gazeboSimulationTimeSeconds": pose_time,
+        "absoluteSkewSeconds": skew,
+        "maximumSkewSeconds": GAZEBO_SIMULATION_TIME_MAX_SKEW_SECONDS,
+    }
+
+
 def _gazebo_timestamp_integer(value: Any) -> int | None:
     """Accept protobuf JSON integer strings and integral JSON numbers only."""
     if isinstance(value, bool):
@@ -666,6 +694,10 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
                 "status": "unverified",
                 "reason": "run identity failed; pose evidence was not inspected",
             },
+            "gazeboClockAlignment": {
+                "status": "unverified",
+                "reason": "run identity failed; simulation clocks were not compared",
+            },
             "armed": None,
             "armedReason": "run identity failed; armed state is unknown",
         }
@@ -703,6 +735,10 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
             "gazeboPoseRecorder": {
                 "status": "unverified",
                 "reason": "callsign is invalid; pose evidence was not inspected",
+            },
+            "gazeboClockAlignment": {
+                "status": "unverified",
+                "reason": "callsign is invalid; simulation clocks were not compared",
             },
             "armed": None,
             "armedReason": "callsign is invalid; armed state is unknown",
@@ -884,10 +920,12 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         }
     )
     gazebo_pose_recorder = sample_gazebo_pose_recorder(receipt)
+    gazebo_clock_alignment = align_gazebo_simulation_time(telemetry, gazebo_pose_recorder)
     required_independent_evidence_verified = (
         bridge_heartbeat["status"] == "observed"
         and (headless or qgc_peer_routing["status"] == "observed")
         and gazebo_pose_recorder["status"] == "fresh"
+        and gazebo_clock_alignment["status"] == "aligned"
     )
     owned_processes = [
         item
@@ -968,6 +1006,7 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         "qgcHeartbeat": qgc_heartbeat,
         "qgcPeerRouting": qgc_peer_routing,
         "gazeboPoseRecorder": gazebo_pose_recorder,
+        "gazeboClockAlignment": gazebo_clock_alignment,
         "armed": telemetry.get("armed") if telemetry.get("status") == "fresh" else None,
         "armedReason": (
             "from fresh callsign-bound Antoine telemetry"
