@@ -516,6 +516,28 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "stale")
         self.assertIn("two advancing", result["reason"])
 
+    def test_pose_recorder_rejects_missing_position_coordinate(self) -> None:
+        flight_directory = Path(self.temp.name) / "flight-proof"
+        flight_directory.mkdir()
+        pose_path = flight_directory / "gazebo-pose.jsonl"
+        samples = [
+            {
+                "header": {"stamp": {"sec": second, "nsec": 0}},
+                "pose": [{"name": "isr", "position": {"x": 0.0, "y": 0.0}}],
+            }
+            for second in (5, 6)
+        ]
+        pose_path.write_text(
+            "".join(f"{json.dumps(sample)}\n" for sample in samples), encoding="utf-8"
+        )
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["flightRunDirectory"] = str(flight_directory)
+
+        result = interactive_profile.sample_gazebo_pose_recorder(receipt)
+
+        self.assertEqual(result["status"], "stale")
+        self.assertIn("two advancing finite pose samples", result["reason"])
+
     @patch(
         "interactive_profile.process_identity",
         side_effect=[

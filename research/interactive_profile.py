@@ -418,7 +418,7 @@ def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
         if named_pose is None:
             continue
         position = named_pose.get("position", {})
-        coordinates = [position.get(axis, 0.0) for axis in ("x", "y", "z")]
+        coordinates = [position.get(axis) for axis in ("x", "y", "z")]
         if any(
             isinstance(value, bool)
             or not isinstance(value, (int, float))
