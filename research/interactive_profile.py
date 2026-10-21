@@ -18,6 +18,8 @@ from typing import Any
 STOP_TIMEOUT_SECONDS = 5.0
 STOP_POLL_SECONDS = 0.1
 TELEMETRY_TIMEOUT_SECONDS = 1.5
+POSE_RECORDER_MAX_AGE_SECONDS = 1.5
+POSE_RECORDER_MAX_FUTURE_SECONDS = 0.25
 PROFILE_CONTRACT = "damn-vulnerable-drone.interactive-profile"
 PROFILE_VERSION = "1.0.0"
 
@@ -234,6 +236,108 @@ def read_nats_messages(port: int, subject: str) -> tuple[list[Any], dict[str, st
         return [], {"status": "invalid", "reason": f"NATS returned non-JSON data for {subject}"}
 
 
+def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Check recent, advancing records from the run-owned Gazebo world-pose topic."""
+    run_directory = receipt.get("runDirectory")
+    run_id = receipt.get("runId")
+    flight_directory = receipt.get("flightRunDirectory")
+    if not isinstance(run_directory, str) or not isinstance(run_id, str):
+        return {"status": "unavailable", "reason": "receipt lacks a run directory identity"}
+    run_path = Path(run_directory)
+    if run_path.name != run_id or not run_path.is_dir():
+        return {"status": "unavailable", "reason": "run directory is missing or mismatched"}
+    if isinstance(flight_directory, str) and flight_directory:
+        flight_path = Path(flight_directory).resolve()
+    else:
+        flight_path = (run_path / "flight-proof").resolve()
+    resolved_run = run_path.resolve()
+    if flight_path != resolved_run and not flight_path.is_relative_to(resolved_run):
+        return {"status": "invalid", "reason": "flight evidence directory is outside the run"}
+    pose_path = flight_path / "gazebo-pose.jsonl"
+    if pose_path.is_symlink() or not pose_path.is_file():
+        return {"status": "unavailable", "reason": "run-owned Gazebo pose stream is missing"}
+    try:
+        stat = pose_path.stat()
+        age = time.time() - stat.st_mtime
+        if age < -POSE_RECORDER_MAX_FUTURE_SECONDS or age > POSE_RECORDER_MAX_AGE_SECONDS:
+            return {"status": "stale", "reason": "Gazebo pose stream file is not being updated"}
+        with pose_path.open("rb") as stream:
+            stream.seek(max(0, stat.st_size - 262_144))
+            tail = stream.read().decode("utf-8", errors="replace")
+    except OSError:
+        return {"status": "unavailable", "reason": "Gazebo pose stream cannot be read"}
+
+    samples: list[dict[str, Any]] = []
+    for line in tail.splitlines():
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(message, dict):
+            continue
+        header = message.get("header")
+        stamp = header.get("stamp") if isinstance(header, dict) else None
+        if not isinstance(stamp, dict):
+            continue
+        sec, nsec = stamp.get("sec"), stamp.get("nsec", 0)
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            for value in (sec, nsec)
+        ):
+            continue
+        simulation_time = sec + nsec / 1_000_000_000
+        poses = message.get("pose")
+        if not isinstance(poses, list):
+            poses = [message]
+        named_pose = next(
+            (
+                pose
+                for pose in poses
+                if isinstance(pose, dict)
+                and isinstance(pose.get("name"), str)
+                and isinstance(pose.get("position", {}), dict)
+            ),
+            None,
+        )
+        if named_pose is None:
+            continue
+        position = named_pose.get("position", {})
+        coordinates = [position.get(axis, 0.0) for axis in ("x", "y", "z")]
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            for value in coordinates
+        ):
+            continue
+        samples.append(
+            {
+                "simulationTimeSeconds": simulation_time,
+                "poseName": named_pose["name"],
+            }
+        )
+    if (
+        len(samples) < 2
+        or samples[-1]["simulationTimeSeconds"] <= samples[-2]["simulationTimeSeconds"]
+    ):
+        return {
+            "status": "stale",
+            "reason": "Gazebo pose stream lacks two advancing finite pose samples",
+        }
+    return {
+        "status": "fresh",
+        "source": "run-owned Gazebo /world/*/pose/info JSONL recorder",
+        "poseName": samples[-1]["poseName"],
+        "simulationTimeSeconds": samples[-1]["simulationTimeSeconds"],
+        "simulationTimeAdvanceSeconds": (
+            samples[-1]["simulationTimeSeconds"] - samples[-2]["simulationTimeSeconds"]
+        ),
+        "fileAgeSeconds": max(0.0, age),
+    }
+
+
 def inspect(receipt_path: Path) -> dict[str, Any]:
     receipt = _load_receipt(receipt_path)
     run_directory_error = _run_directory_error(receipt_path, receipt)
@@ -426,14 +530,11 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         "status": "unverified",
         "reason": "process identity and UDP bind do not confirm an outgoing MAVLink heartbeat",
     }
-    gazebo_pose_recorder = {
-        "status": "unverified",
-        "reason": "status does not inspect independent Gazebo pose-recorder evidence",
-    }
+    gazebo_pose_recorder = sample_gazebo_pose_recorder(receipt)
     required_independent_evidence_verified = (
         bridge_heartbeat["status"] == "observed"
         and qgc_peer_routing["status"] == "observed"
-        and gazebo_pose_recorder["status"] == "verified"
+        and gazebo_pose_recorder["status"] == "fresh"
     )
     owned_processes = [
         item

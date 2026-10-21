@@ -269,6 +269,19 @@ class InteractiveProfileTests(unittest.TestCase):
             "Listening for client connections on 127.0.0.1:14226\nServer is ready\n",
             encoding="utf-8",
         )
+        (flight_directory / "gazebo-pose.jsonl").write_text(
+            "\n".join(
+                json.dumps(
+                    {
+                        "header": {"stamp": {"sec": 12, "nsec": nsec}},
+                        "pose": [{"name": "isr", "position": {"x": 0.1, "y": 0.2, "z": 0.0}}],
+                    }
+                )
+                for nsec in (400_000_000, 500_000_000)
+            )
+            + "\n",
+            encoding="utf-8",
+        )
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         self.add_supervisor_process(receipt)
         receipt["flightRunDirectory"] = str(flight_directory)
@@ -307,13 +320,31 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["bridgeHeartbeat"]["status"], "unverified")
         self.assertIn("do not confirm", result["bridgeHeartbeat"]["reason"])
         self.assertEqual(result["qgcPeerRouting"]["status"], "configured-unverified")
-        self.assertEqual(result["gazeboPoseRecorder"]["status"], "unverified")
+        self.assertEqual(result["gazeboPoseRecorder"]["status"], "fresh")
+        self.assertEqual(result["gazeboPoseRecorder"]["poseName"], "isr")
         self.assertIn("not observed", result["qgcPeerRouting"]["reason"])
-        self.assertIn("does not inspect", result["gazeboPoseRecorder"]["reason"])
+        self.assertAlmostEqual(result["gazeboPoseRecorder"]["simulationTimeAdvanceSeconds"], 0.1)
         self.assertEqual(unknown_armed["telemetry"]["status"], "fresh")
         self.assertIsNone(unknown_armed["armed"])
         self.assertEqual(unknown_armed["status"], "partial")
         self.assertIn("did not provide", unknown_armed["armedReason"])
+
+    def test_pose_recorder_rejects_nonadvancing_simulation_time(self) -> None:
+        flight_directory = Path(self.temp.name) / "flight-proof"
+        flight_directory.mkdir()
+        pose_path = flight_directory / "gazebo-pose.jsonl"
+        sample = {
+            "header": {"stamp": {"sec": 5, "nsec": 0}},
+            "pose": [{"name": "isr", "position": {"x": 0.0, "y": 0.0, "z": 0.0}}],
+        }
+        pose_path.write_text(f"{json.dumps(sample)}\n{json.dumps(sample)}\n", encoding="utf-8")
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["flightRunDirectory"] = str(flight_directory)
+
+        result = interactive_profile.sample_gazebo_pose_recorder(receipt)
+
+        self.assertEqual(result["status"], "stale")
+        self.assertIn("two advancing", result["reason"])
 
     @patch(
         "interactive_profile.process_identity",
