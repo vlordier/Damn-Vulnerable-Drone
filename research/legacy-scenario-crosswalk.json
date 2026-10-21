@@ -22,7 +22,7 @@
         "nats-rate-disruption"
       ],
       "adaptation": "2–5 vehicle state-stream timing observation plus bounded wrong-callsign setpoint consumer-load sample",
-      "gap": "one live 10 Hz / 4 s sample correlated all 40 wrong-callsign rejections with no accepted candidate, while aggregate flight qualification remained inconclusive on transition safe-stop recovery; no network packet loss/delay injection, broker rate limiting, or general DoS result"
+      "gap": "one live 10 Hz / 4 s sample passed all 40 exact wrong-callsign rejection and qualified-baseline gates; no network packet loss/delay injection, broker rate limiting, or general DoS result"
     },
     {
       "source": "dos/denial-of-takeoff.yaml",
