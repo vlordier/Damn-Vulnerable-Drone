@@ -23,6 +23,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sqlite3 \
  && rm -rf /var/lib/apt/lists/*
 
+COPY research/pyproject.toml /tmp/dvd-research/pyproject.toml
+COPY research/dvd_research /tmp/dvd-research/dvd_research
+
 RUN pip3 install --no-cache-dir \
     Flask \
     flask-cors \
@@ -31,7 +34,8 @@ RUN pip3 install --no-cache-dir \
     flask-sock \
     "python-socketio[client]==5.11.2" \
     docker \
-    pyyaml
+    pynacl \
+    pyyaml && pip3 install --no-cache-dir --no-deps /tmp/dvd-research
 
 # Copy ONLY the mgmt app from the full project.
 # IMPORTANT: build context is the repo root so this path is valid.
@@ -47,4 +51,4 @@ ENV FLASK_APP=simulator.mgmt.app \
     FLASK_RUN_HOST=0.0.0.0 \
     FLASK_RUN_PORT=8000
 
-CMD ["python3", "/app/simulator/mgmt/app.py"]
+CMD ["python3", "-m", "simulator.mgmt.app"]

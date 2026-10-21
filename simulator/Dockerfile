@@ -135,6 +135,9 @@ RUN /bin/bash -c "source /usr/share/gazebo/setup.sh && npm run deploy -- -m loca
 # ---------------------------------------------------------------------------
 # DVD mgmt web app
 # ---------------------------------------------------------------------------
+COPY research/pyproject.toml /tmp/dvd-research/pyproject.toml
+COPY research/dvd_research /tmp/dvd-research/dvd_research
+
 RUN pip3 install --no-cache-dir \
     Flask \
     flask-cors \
@@ -142,7 +145,8 @@ RUN pip3 install --no-cache-dir \
     requests \
     flask-sock \
     "python-socketio[client]==5.11.2" \
-    docker
+    pynacl \
+    docker && pip3 install --no-cache-dir --no-deps /tmp/dvd-research
 
 COPY simulator/mgmt /Simulator/mgmt
 
@@ -161,4 +165,4 @@ CMD rm -rf /tmp/.X100-lock; \
     bash -c "source /opt/ros/foxy/setup.bash && \
              ros2 launch /Simulator/damn-vulnerable-drone.launch.py & \
              cd /Simulator/gzweb && sleep 15 && npm start > /dev/null 2>&1 & \
-             cd /Simulator/mgmt && sleep 15 && python3 app.py"
+             cd /Simulator && sleep 15 && python3 -m mgmt.app"

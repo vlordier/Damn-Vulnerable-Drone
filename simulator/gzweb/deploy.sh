@@ -1,8 +1,7 @@
 #!/bin/bash
 
-usage()
-{
-cat << EOF
+usage() {
+  cat <<EOF
 OPTIONS:
    -h      Show this message
    -m      Build a local model database.
@@ -10,74 +9,63 @@ OPTIONS:
    -c      Create coarse versions of all models in the local database
    -t      Generate a thumbnail for each model
 EOF
-exit
+  return 0
 }
 
+MODELS=0
+LOCAL=0
+COARSE=0
+THUMBNAIL=0
 
-MODELS=
-LOCAL=
-COARSE=
-THUMBNAIL=
-GetOpts()
-{
-  branch=""
-  argv=()
-  while [ $# -gt 0 ]
-  do
-    opt=$1
-    shift
-    case ${opt} in
-        -m)
-          MODELS=true
-          echo "Build a local model database."
-          if [ $# -eq 0 -o "${1:0:1}" = "-" ]
-          then
-            echo "Download from gazebo_models repository."
-          fi
-          if [[ "$1" == "local" ]]
-          then
-            LOCAL=true
-            echo "Only local models."
-            shift
-          fi
-          ;;
-        -c)
-          COARSE=true
-          echo "Simplify models on local database."
-          ;;
-        -t)
-          THUMBNAIL=true
-          echo "Thumbnails will be generated"
-          ;;
-        *)
-          usage
-          argv+=(${opt})
-          ;;
-    esac
-  done
-}
+while (($#)); do
+  case "$1" in
+    -m)
+      MODELS=1
+      shift
+      if (($#)) && [[ "$1" == "local" ]]; then
+        LOCAL=1
+        shift
+      fi
+      ;;
+    -c)
+      COARSE=1
+      shift
+      ;;
+    -t)
+      THUMBNAIL=1
+      shift
+      ;;
+    -h | --help)
+      usage
+      exit 0 # print help and terminate option parsing
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "$1" >&2
+      usage >&2
+      exit 2 # terminate after reporting an invalid option
+      ;;
+  esac
+done
 
-GetOpts $*
-
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-cd $DIR
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "${DIR}" || exit 1
 
 # Install node modules
 npm install
 
 # Assemble javascript files
-$DIR/node_modules/.bin/grunt build --force
+"${DIR}/node_modules/.bin/grunt" build --force
 
 # build the c++ server component
 rm -rf build
 mkdir build
-cd build
+cd build || exit 1
 
 # Run cmake and check for the exit code
 cmake ..
 
 RETVAL=$?
-if [ $RETVAL -ne 0 ]; then
+if [[ "${RETVAL}" -ne 0 ]]; then
   echo There are cmake errors, exiting.
   exit 1
 fi
@@ -85,45 +73,40 @@ fi
 # continue building if cmake is happy
 make -j 8
 
-cd ../gzbridge
-$DIR/node_modules/.bin/node-gyp rebuild -d
+cd ../gzbridge || exit 1
+"${DIR}/node_modules/.bin/node-gyp" rebuild -d
 
 RETVAL=$?
-if [ $RETVAL -ne 0 ]; then
+if [[ "${RETVAL}" -ne 0 ]]; then
   echo There are node-gyp build errors, exiting.
   exit 1
 fi
 
-cd $DIR
+cd "${DIR}" || exit 1
 
 # build a local model database
-if [[ $MODELS ]]
-then
+if [[ "${MODELS}" -eq 1 ]]; then
   # Temporal directory for the repository
-    TMP_DIR=`mktemp -d`
-    cd $TMP_DIR
+  TMP_DIR=$(mktemp -d)
+  cd "${TMP_DIR}" || exit 1
 
   # If no arg given then download from gazebo_models repo
-  if [[ -z $LOCAL ]]
-  then
+  if [[ "${LOCAL}" -eq 0 ]]; then
     echo -n "Downloading gazebo_models..."
     git clone https://github.com/osrf/gazebo_models.git
 
     RETVAL=$?
-    if [ $RETVAL -ne 0 ]; then
+    if [[ "${RETVAL}" -ne 0 ]]; then
       echo There are mercurial clone errors, exiting.
       exit 1
     fi
 
     echo "Download complete"
-    cd gazebo_models
+    cd gazebo_models || exit 1
     mkdir build
-    cd build
+    cd build || exit 1
     echo -n "Installing gazebo_models..."
-    cmake .. -DCMAKE_INSTALL_PREFIX=$DIR/http/client && make install > /dev/null 2>&1
-
-    RETVAL=$?
-    if [ $RETVAL -ne 0 ]; then
+    if ! { cmake .. -DCMAKE_INSTALL_PREFIX="${DIR}/http/client" && make install >/dev/null 2>&1; }; then
       echo There are build errors, exiting.
       exit 1
     fi
@@ -131,35 +114,32 @@ then
     echo "Install complete"
 
     # Remove temp dir
-    rm -rf $TMP_DIR
-    rm -rf $DIR/http/client/assets
-    mv $DIR/http/client/models $DIR/http/client/assets
+    rm -rf "${TMP_DIR}"
+    rm -rf "${DIR}/http/client/assets"
+    mv "${DIR}/http/client/models" "${DIR}/http/client/assets"
   fi
 
-  cd $DIR
+  cd "${DIR}" || exit 1
 
   echo "Gather all models on the local machine"
 
-  mkdir -p $DIR/http/client/assets
-  ./get_local_models.py $DIR/http/client/assets
-  ./webify_models_v2.py $DIR/http/client/assets
+  mkdir -p "${DIR}/http/client/assets"
+  "${DIR}/get_local_models.py" "${DIR}/http/client/assets"
+  "${DIR}/webify_models_v2.py" "${DIR}/http/client/assets"
 
 else
-  mkdir -p $DIR/http/client/assets
+  mkdir -p "${DIR}/http/client/assets"
   echo "Not cloning the model repo"
 fi
 
-if [[ $THUMBNAIL ]]
-then
+if [[ "${THUMBNAIL}" -eq 1 ]]; then
   echo "Generating a thumbnail for each model. Make sure gazebo is not running"
-  ./tools/gzthumbnails.sh
+  "${DIR}/tools/gzthumbnails.sh"
 fi
 
 # build a local model database
-if [[ $COARSE ]]
-then
-  ./coarse_meshes.sh 50 http/client/assets/
+if [[ "${COARSE}" -eq 1 ]]; then
+  "${DIR}/coarse_meshes.sh" 50 "${DIR}/http/client/assets/"
 fi
 
 echo "Done"
-
