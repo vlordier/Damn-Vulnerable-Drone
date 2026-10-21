@@ -190,7 +190,22 @@ def read_nats_messages(port: int, subject: str) -> tuple[list[Any], dict[str, st
 def inspect(receipt_path: Path) -> dict[str, Any]:
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
     checks: dict[str, Any] = {}
-    for name, process in receipt.get("processes", {}).items():
+    processes = receipt.get("processes")
+    process_records_valid = isinstance(processes, dict)
+    process_error = None if process_records_valid else "processes must be an object"
+    if not process_records_valid:
+        processes = {}
+    for name, process in processes.items():
+        if not isinstance(process, dict):
+            process_records_valid = False
+            process_error = "each process record must be an object"
+            checks[name] = {
+                "pid": None,
+                "alive": False,
+                "identityMatches": False,
+                "error": "invalid-process-record",
+            }
+            continue
         pid = process.get("pid")
         actual = process_identity(pid) if isinstance(pid, int) and pid > 1 else None
         checks[name] = {
@@ -258,7 +273,8 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
     )
     telemetry = sample_telemetry(receipt)
     bridge = checks.get("mavlinkBridge", {})
-    bridge_identity = receipt.get("processes", {}).get("mavlinkBridge", {}).get("identity", "")
+    bridge_process = processes.get("mavlinkBridge", {})
+    bridge_identity = bridge_process.get("identity", "") if isinstance(bridge_process, dict) else ""
     expected_qgc_peer = f"127.0.0.1:{ports.get('qgcUdpListen')}"
     expected_bridge_bind = f"127.0.0.1:{ports.get('bridgeUdpBind')}"
     routing_configured = (
@@ -279,7 +295,8 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         checks.get("bridgeUdpBindPort"),
     ]
     stopped = (
-        ports_valid
+        process_records_valid
+        and ports_valid
         and bool(owned_processes)
         and all(not item["alive"] for item in owned_processes)
         and all(
@@ -289,6 +306,8 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
     )
     if stopped:
         overall_status = "stopped"
+    elif not process_records_valid:
+        overall_status = "partial"
     elif not ports_valid:
         overall_status = "partial"
     elif not all(isinstance(item, dict) and item.get("listening") is True for item in active_ports):
@@ -312,6 +331,10 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         "portValidation": {"status": "valid" if ports_valid else "invalid", "errors": port_errors},
         "receiptStatus": receipt.get("status"),
         "processes": checks,
+        "processValidation": {
+            "status": "valid" if process_records_valid else "invalid",
+            "reason": process_error,
+        },
         "status": overall_status,
         "telemetry": telemetry,
         "qgcPeerRouting": {

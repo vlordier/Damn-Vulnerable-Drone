@@ -106,6 +106,27 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertFalse(valid)
         self.assertEqual(errors, ["qgcUdpListen and bridgeUdpBind must use different UDP ports"])
 
+    def test_status_reports_malformed_process_records_as_partial(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["processes"] = {"mavlinkBridge": None}
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with (
+            patch("interactive_profile.process_identity") as process_identity,
+            patch("interactive_profile.subprocess.run") as run,
+            patch("interactive_profile.read_nats_messages") as read_messages,
+        ):
+            run.return_value.returncode = 0
+            read_messages.return_value = (
+                [],
+                {"status": "unavailable", "reason": "no fresh telemetry"},
+            )
+            result = interactive_profile.inspect(self.receipt)
+
+        process_identity.assert_not_called()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["processValidation"]["status"], "invalid")
+        self.assertEqual(result["processes"]["mavlinkBridge"]["error"], "invalid-process-record")
+
     @patch(
         "interactive_profile.process_identity",
         side_effect=[
