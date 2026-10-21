@@ -151,6 +151,11 @@ commands leave JSON output on stdout; stop also atomically writes
 status when cleanup is partial. A stopped result also verifies that the
 run-owned NATS and bridge ports are closed; the QGC UDP port is preserved. The
 stop reports partial when the run supervisor or bridge record is missing. The
+stop command removes stale supervisor identity/FIFO markers only after the
+recorded child is confirmed absent and both private run-local artifacts match
+that child. Unsafe or mismatched markers remain in place and make cleanup
+partial. A still-live orphan whose supervisor has disappeared remains
+unconfirmed; the command does not signal it by broad PID or process-group kill.
 status command requires matching identities for the run supervisor and MAVLink
 bridge, and subscribes for at most
 1.5 seconds to two messages on the run's loopback

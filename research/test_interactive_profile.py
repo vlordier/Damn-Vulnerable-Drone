@@ -4,6 +4,7 @@ import base64
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -31,7 +32,11 @@ class InteractiveProfileTests(unittest.TestCase):
         self.addCleanup(self.heartbeat.stop)
         self.receipt = Path(self.temp.name) / "interactive-profile-receipt.json"
         bridge_identity = Path(self.temp.name) / ".bridge.identity"
-        bridge_identity.write_text("run-local supervisor marker\n", encoding="utf-8")
+        bridge_identity.write_text(
+            f"pid=8991\nchild_pid=9001\ngroup_owned=1\nfifo={bridge_identity}.control\n",
+            encoding="utf-8",
+        )
+        bridge_identity.chmod(0o600)
         self.receipt.write_text(
             json.dumps(
                 {
@@ -66,7 +71,11 @@ class InteractiveProfileTests(unittest.TestCase):
 
     def add_supervisor_process(self, receipt: dict) -> None:
         identity_path = Path(self.temp.name) / ".antoine.identity"
-        identity_path.write_text("run-local supervisor marker\n", encoding="utf-8")
+        identity_path.write_text(
+            f"pid=8993\nchild_pid=9003\ngroup_owned=1\nfifo={identity_path}.control\n",
+            encoding="utf-8",
+        )
+        identity_path.chmod(0o600)
         receipt["processes"]["antoineGazeboSupervisor"] = {
             "pid": 9003,
             "identity": "supervisor-process",
@@ -611,6 +620,39 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "stopped")
         self.assertEqual(result["telemetry"]["status"], "unavailable")
         self.assertIsNone(result["armed"])
+
+    def test_stop_removes_only_valid_stale_run_owned_supervisor_markers(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        self.add_supervisor_process(receipt)
+        bridge_marker = Path(receipt["processes"]["mavlinkBridge"]["supervisorIdentityPath"])
+        bridge_fifo = bridge_marker.with_name(bridge_marker.name + ".control")
+        os.mkfifo(bridge_fifo, 0o600)
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+
+        with patch("interactive_profile.process_identity", return_value=None):
+            result = interactive_profile.stop_owned(self.receipt)
+
+        self.assertEqual(result["status"], "stopped")
+        self.assertEqual(result["results"]["mavlinkBridge"], "already-stopped-stale-marker-cleaned")
+        self.assertFalse(bridge_marker.exists())
+        self.assertFalse(bridge_fifo.exists())
+
+    def test_stop_preserves_mismatched_stale_marker_and_reports_partial(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        self.add_supervisor_process(receipt)
+        marker = Path(receipt["processes"]["mavlinkBridge"]["supervisorIdentityPath"])
+        marker.write_text(
+            marker.read_text(encoding="utf-8").replace("child_pid=9001", "child_pid=9999"),
+            encoding="utf-8",
+        )
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+
+        with patch("interactive_profile.process_identity", return_value=None):
+            result = interactive_profile.stop_owned(self.receipt)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["results"]["mavlinkBridge"], "stale-marker-not-cleaned")
+        self.assertTrue(marker.exists())
 
     @patch("interactive_profile.process_identity", side_effect=["foreign-process", "qgc-process"])
     @patch("interactive_profile.os.kill")

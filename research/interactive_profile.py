@@ -8,6 +8,7 @@ import base64
 import json
 import math
 import os
+import stat
 import subprocess
 import sys
 import tempfile
@@ -792,7 +793,18 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
             results[name] = "identity-probe-unavailable"
             continue
         if actual is None:
-            results[name] = "already-stopped"
+            control_path = _supervisor_identity_path(receipt, process)
+            if control_path is None:
+                results[name] = "already-stopped"
+            else:
+                try:
+                    cleaned = _remove_stale_supervisor_marker(pid, control_path)
+                except (OSError, ValueError):
+                    results[name] = "stale-marker-not-cleaned"
+                else:
+                    results[name] = (
+                        "already-stopped-stale-marker-cleaned" if cleaned else "already-stopped"
+                    )
         elif actual != expected:
             results[name] = "identity-mismatch-not-signalled"
         else:
@@ -812,6 +824,7 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         in {
             "stopped",
             "already-stopped",
+            "already-stopped-stale-marker-cleaned",
             "preserved-user-owned",
             "closed",
         }
@@ -915,6 +928,51 @@ def _supervisor_identity_path(receipt: dict[str, Any], process: dict[str, Any]) 
     except (OSError, RuntimeError):
         return None
     return resolved
+
+
+def _remove_stale_supervisor_marker(child_pid: int, identity_path: Path) -> bool:
+    """Remove only a private supervisor record and FIFO bound to a dead child."""
+    fifo_path = identity_path.with_name(identity_path.name + ".control")
+    try:
+        identity_stat = identity_path.lstat()
+    except FileNotFoundError:
+        return False
+    if (
+        not stat.S_ISREG(identity_stat.st_mode)
+        or identity_stat.st_uid != os.getuid()
+        or identity_stat.st_mode & 0o077
+    ):
+        raise ValueError("stale supervisor identity is not a private regular file")
+    fields: dict[str, str] = {}
+    for line in identity_path.read_text(encoding="utf-8").splitlines():
+        key, separator, value = line.partition("=")
+        if separator:
+            fields[key] = value
+    recorded_fifo = Path(fields.get("fifo", ""))
+    try:
+        fifo_parent_matches = (
+            recorded_fifo.is_absolute()
+            and recorded_fifo.name == fifo_path.name
+            and recorded_fifo.parent.resolve(strict=True) == identity_path.parent
+        )
+    except (OSError, RuntimeError):
+        fifo_parent_matches = False
+    if fields.get("child_pid") != str(child_pid) or not fifo_parent_matches:
+        raise ValueError("stale supervisor identity does not match the recorded child")
+    try:
+        fifo_stat = fifo_path.lstat()
+    except FileNotFoundError:
+        fifo_stat = None
+    if fifo_stat is not None and (
+        not stat.S_ISFIFO(fifo_stat.st_mode)
+        or fifo_stat.st_uid != os.getuid()
+        or fifo_stat.st_mode & 0o077
+    ):
+        raise ValueError("stale supervisor control path is not a private FIFO")
+    if fifo_stat is not None:
+        fifo_path.unlink()
+    identity_path.unlink()
+    return True
 
 
 def _stop_supervised_process(pid: int, expected: str, identity_path: Path) -> str:
