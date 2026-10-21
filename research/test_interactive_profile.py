@@ -1091,6 +1091,37 @@ class InteractiveProfileTests(unittest.TestCase):
 
         self.assertEqual(result, "stopped")
 
+    def test_stop_waits_for_supervisor_marker_after_child_identity_changes(self) -> None:
+        identity_path = Path(self.temp.name) / ".bridge.identity"
+        identity_path.write_text("run-owned supervisor record\n", encoding="utf-8")
+        module_root = Path(self.temp.name) / "module"
+        module_root.mkdir()
+        supervisor = module_root / ".process-supervisor"
+        supervisor.write_text("test supervisor stub\n")
+        supervisor.chmod(0o700)
+        self.addCleanup(lambda: supervisor.unlink(missing_ok=True))
+
+        def request_stop(*_args, **_kwargs):
+            return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        with (
+            patch("interactive_profile.__file__", str(module_root / "interactive_profile.py")),
+            patch("interactive_profile.subprocess.run", side_effect=request_stop),
+            patch(
+                "interactive_profile._wait_for_owned_exit",
+                return_value="identity-changed-after-interrupt",
+            ),
+            patch(
+                "interactive_profile.time.sleep",
+                side_effect=lambda _seconds: identity_path.unlink(missing_ok=True),
+            ),
+        ):
+            result = interactive_profile._stop_supervised_process(
+                9002, "original process identity", identity_path
+            )
+
+        self.assertEqual(result, "stopped")
+
     @patch(
         "interactive_profile.process_identity",
         return_value="owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",

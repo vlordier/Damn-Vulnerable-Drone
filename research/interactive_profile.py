@@ -20,6 +20,7 @@ from typing import Any
 
 STOP_TIMEOUT_SECONDS = 5.0
 STOP_POLL_SECONDS = 0.1
+SUPERVISOR_CLEANUP_GRACE_SECONDS = 2.0
 TELEMETRY_TIMEOUT_SECONDS = 1.5
 PORT_PROBE_TIMEOUT_SECONDS = 5.0
 PROCESS_IDENTITY_TIMEOUT_SECONDS = 2.0
@@ -1251,10 +1252,16 @@ def _stop_supervised_process(pid: int, expected: str, identity_path: Path) -> st
         diagnostic = (request.stderr or request.stdout).strip().replace("\n", " ")
         return f"supervisor-stop-rejected: {diagnostic[:240]}"
     outcome = _wait_for_owned_exit(pid, expected)
-    if outcome == "identity-changed-after-interrupt" and not identity_path.exists():
-        # A completed run supervisor removes its private identity atomically
-        # with process-group cleanup; the numeric PID may then be reused.
-        return "stopped"
+    if outcome == "identity-changed-after-interrupt":
+        # The child can exit just before the supervisor removes its private
+        # marker. Treat that ordering as complete only after the marker is gone;
+        # the supervisor removes it after process-group cleanup, when PID reuse
+        # can no longer make this run appear active.
+        deadline = time.monotonic() + SUPERVISOR_CLEANUP_GRACE_SECONDS
+        while identity_path.exists() and time.monotonic() < deadline:
+            time.sleep(STOP_POLL_SECONDS)
+        if not identity_path.exists():
+            return "stopped"
     return outcome
 
 
