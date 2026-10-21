@@ -392,8 +392,7 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
             await asyncio.sleep(0.1)
         offset = await check.wait_state(
             lambda t: (
-                t.get("lat_deg", 48.0002) > 48.000201
-                and t.get("lon_deg", 0.3564) > 0.3564003
+                t.get("lat_deg", 48.0002) > 48.000201 and t.get("lon_deg", 0.3564) > 0.3564003
             ),
             3,
             "native telemetry at offset before direct RTL",
@@ -489,9 +488,7 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
                             "lat_deg": returned.get("lat_deg"),
                             "lon_deg": returned.get("lon_deg"),
                         },
-                        "homeDistanceAfterM": round(
-                            horizontal_distance_from_home(returned), 3
-                        ),
+                        "homeDistanceAfterM": round(horizontal_distance_from_home(returned), 3),
                         "evidenceLimit": "native SITL telemetry is not independent Gazebo truth",
                     },
                 },
