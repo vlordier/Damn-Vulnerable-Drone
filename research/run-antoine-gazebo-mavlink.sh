@@ -220,10 +220,10 @@ else
       exit 1
     }
 fi
-RECEIPT_TOOL="${ANTOINE_RUN_ROOT}/scripts/antoine_sitl_build_receipt.py"
-PYTHONPATH="${ANTOINE_RUN_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
-  RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.99.1}" uv run --no-project --script \
-  "${RECEIPT_TOOL}" verify --root "${ANTOINE_RUN_ROOT}" --receipt "${ANTOINE_RUN_BUILD_RECEIPT}" \
+uv run --no-project python "${PROJECT_ROOT}/research/verify_antoine_native_receipt.py" \
+  --root "${ANTOINE_RUN_ROOT}" \
+  --snapshot-root "$(dirname "${ANTOINE_RUN_ROOT}")" \
+  --receipt "${ANTOINE_RUN_BUILD_RECEIPT}" \
   >"${RUN_DIR}/logs/source-build-receipt-verify.log" 2>&1 || {
     cat "${RUN_DIR}/logs/source-build-receipt-verify.log" >&2
     echo "Sealed Antoine source-build receipt did not verify." >&2
