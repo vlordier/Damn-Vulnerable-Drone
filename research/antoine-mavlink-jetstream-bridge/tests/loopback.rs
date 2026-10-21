@@ -441,6 +441,8 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     client.flush().await?;
     let (reply_tx, mut reply_rx) = tokio::sync::mpsc::unbounded_channel();
     let reply_client = client.clone();
+    let mission_upload_count = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let upload_count = mission_upload_count.clone();
     tokio::spawn(async move {
         let mut controls = controls;
         while let Some(message) = controls.next().await {
@@ -454,10 +456,14 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
                 let omit_mission_state = request_id
                     .as_str()
                     .is_some_and(|id| id.contains("-mission-query-13-"));
+                let reject_mission_upload = value["command"]["type"] == "mission_upload"
+                    && upload_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0;
                 let response = if reject_mission_query {
                     serde_json::json!({"requestId":request_id,"accepted":false,"armed":true,"mode":"GUIDED"})
                 } else if omit_mission_state {
                     serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED"})
+                } else if reject_mission_upload {
+                    serde_json::json!({"requestId":request_id,"accepted":false,"armed":true,"mode":"GUIDED"})
                 } else {
                     serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED","missionUploaded":false,"waypoints":[]})
                 };
@@ -823,6 +829,41 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     assert_eq!(uploaded["command"]["payload"]["waypoints"][0][0], 0.0);
     assert_eq!(uploaded["command"]["payload"]["waypoints"][0][1], 0.0);
     assert_eq!(uploaded["command"]["payload"]["waypoints"][0][2], -1.0);
+
+    let rejected_upload_count = v2_frame(44, 16, 255, &mission_count_payload, 221);
+    gcs.send_to(&rejected_upload_count, qgc_bind).await?;
+    let (_, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("rejected upload mission request timeout")??;
+    assert_eq!(
+        buffer[7], 51,
+        "bridge should request the rejected upload item"
+    );
+    gcs.send_to(&mission_item, qgc_bind).await?;
+    let mut rejected_upload_ack = None;
+    for _ in 0..4 {
+        let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+            .await
+            .context("rejected mission upload ACK timeout")??;
+        if buffer[7] == 47 {
+            let (_, response) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+                &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+            )?;
+            let mavlink::dialects::common::MavMessage::MISSION_ACK(response) = response else {
+                anyhow::bail!("expected MISSION_ACK for rejected upload");
+            };
+            rejected_upload_ack = Some(response.mavtype);
+            break;
+        }
+    }
+    assert_eq!(
+        rejected_upload_ack,
+        Some(mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR),
+        "controller rejection should be reported as a generic mission error"
+    );
+    let _ = timeout(Duration::from_secs(2), reply_rx.recv())
+        .await
+        .context("rejected mission upload was not received")?;
 
     let mut unsupported_payload = arm_payload.clone();
     unsupported_payload[28..30].copy_from_slice(&22_u16.to_le_bytes());

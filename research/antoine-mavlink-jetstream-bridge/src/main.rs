@@ -1199,7 +1199,7 @@ async fn qgc_to_antoine_nats(
                         config.system_id,
                         frame.system_id,
                         frame.component_id,
-                        if accepted { 0 } else { 2 },
+                        if accepted { 0 } else { 1 },
                     );
                     gcs.send_to(&ack, source).await?;
                     mission_upload = None;
