@@ -444,6 +444,21 @@ fn command_ack(
     )
 }
 
+fn mission_query_envelope(config: &Config, request_id: String) -> serde_json::Value {
+    let mut envelope = serde_json::json!({
+        "schema":"furia.mavlink.control",
+        "version":"1.0.0",
+        "identity":config.callsign,
+        "request_id":request_id
+    });
+    if config.mode == "gazebo-nats" {
+        envelope["command"] = serde_json::json!({"type":"mission_query","payload":{}});
+    } else {
+        envelope["type"] = serde_json::json!("mission_query");
+    }
+    envelope
+}
+
 fn mission_ack(
     sequence: u8,
     system_id: u8,
@@ -987,13 +1002,7 @@ async fn qgc_to_antoine_nats(
                 frame.sequence,
                 unix_ms()?
             );
-            let query = serde_json::json!({
-                "schema":"furia.mavlink.control",
-                "version":"1.0.0",
-                "identity":config.callsign,
-                "request_id":request_id,
-                "type":"mission_query"
-            });
+            let query = mission_query_envelope(&config, request_id.clone());
             let query_response = tokio::time::timeout(
                 std::time::Duration::from_secs(2),
                 client.request(command_subject.clone(), query.to_string().into()),
@@ -1565,6 +1574,39 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn test_config(mode: &str) -> Config {
+        Config {
+            callsign: "drone-1".to_owned(),
+            nats_url: "nats://127.0.0.1:4222".to_owned(),
+            vehicle_bind: "127.0.0.1:14560".parse().unwrap(),
+            vehicle_peer: "127.0.0.1:14561".parse().unwrap(),
+            qgc_bind: "127.0.0.1:14562".parse().unwrap(),
+            qgc_peer: "127.0.0.1:14550".parse().unwrap(),
+            qgc_telemetry_peer: None,
+            system_id: 1,
+            home_alt_msl: 82.0,
+            home_lat_deg: 48.0002,
+            home_lon_deg: 0.3564,
+            mode: mode.to_owned(),
+            control_subject: "furia.mavlink.control.drone-1".to_owned(),
+        }
+    }
+
+    #[test]
+    fn mission_query_uses_the_selected_plant_request_envelope() {
+        let native = mission_query_envelope(&test_config("antoine-nats"), "native-query".into());
+        assert_eq!(native["type"], "mission_query");
+        assert!(native.get("command").is_none());
+
+        let gazebo = mission_query_envelope(&test_config("gazebo-nats"), "gazebo-query".into());
+        assert_eq!(
+            gazebo["command"],
+            serde_json::json!({"type":"mission_query","payload":{}})
+        );
+        assert!(gazebo.get("type").is_none());
+        assert_eq!(gazebo["request_id"], "gazebo-query");
+    }
 
     #[test]
     fn only_vehicle_heartbeat_uses_dedicated_outgoing_audit_subject() {
