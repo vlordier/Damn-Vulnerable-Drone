@@ -24,7 +24,7 @@ MAVLINK_AUDIT_STREAM ?= ANTOINE_MAVLINK
 QGC_UDP_LISTEN_PORT ?= 14550
 QGC_BRIDGE_PORT ?= 14651
 
-.PHONY: help doctor antoine-gz-battery-patch antoine-gz-battery-test console-start console-status console-stop baseline attack-waypoint attack-replay observe-nats probe-gps observe-camera early-revoke state-timing swarm-smoke swarm-baseline swarm-flight swarm-live swarm-vee swarm-rendezvous swarm-split swarm-bridge swarm-3 swarm-5 swarm-blackhole swarm-rate swarm-auth-isolation test-swarm test-research bridge-test bridge-build mavlink-console mavlink-console-start mavlink-console-stop mavlink-control mavlink-arm mavlink-disarm mavlink-check mavlink-flight-check mavlink-gazebo-flight-check mavlink-full-check qgc-antoine-patch qgc-antoine-build qgc-antoine-run qgc-antoine-check qgc-gazebo-preflight qgc-gazebo qgc-gazebo-status qgc-gazebo-stop qgc-gazebo-verify qgc-gazebo-pin-candidate qgc-gazebo-check lint validate
+.PHONY: help doctor antoine-gz-battery-patch antoine-gz-battery-test console-start console-status console-stop baseline attack-waypoint attack-replay observe-nats probe-gps observe-camera early-revoke state-timing swarm-smoke swarm-baseline swarm-flight swarm-live swarm-vee swarm-rendezvous swarm-split swarm-bridge swarm-3 swarm-5 swarm-blackhole swarm-rate swarm-auth-isolation test-swarm test-research test-process-supervisor bridge-test bridge-build mavlink-console mavlink-console-start mavlink-console-stop mavlink-control mavlink-arm mavlink-disarm mavlink-check mavlink-flight-check mavlink-gazebo-flight-check mavlink-full-check qgc-antoine-patch qgc-antoine-build qgc-antoine-run qgc-antoine-check qgc-gazebo-preflight qgc-gazebo qgc-gazebo-status qgc-gazebo-stop qgc-gazebo-verify qgc-gazebo-pin-candidate qgc-gazebo-check lint validate
 
 help: ## Show common commands
 	@printf '%s\n' \
@@ -51,6 +51,7 @@ help: ## Show common commands
 	  '  make swarm-vee         Fly the scripted V formation (also rendezvous/split)' \
 	  '  make swarm-bridge      Fly with one MAVLink telemetry bridge per drone' \
 	  '  make test-swarm        Run planner, evaluator, and MAVLink probe unit tests' \
+	  '  make test-process-supervisor Compile and test the isolated native child supervisor' \
 	  '  make swarm-3           Fly three drones' \
 	  '  make swarm-5           Fly five drones' \
 	  '  make swarm-blackhole   Partition one controller-only state stream for 2s and verify recovery' \
@@ -200,6 +201,10 @@ test-swarm: ## Run planner, summarizer, and MAVLink probe unit tests
 
 test-research: ## Run every research Python unit test
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_*.py' -v
+	$(MAKE) test-process-supervisor
+
+test-process-supervisor: ## Compile and test the isolated native child supervisor
+	bash research/test_process_supervisor.sh
 
 swarm-3: ## Fly three drones
 	ANTOINE_SWARM_SIZE=3 $(SWARM_RUNNER)
