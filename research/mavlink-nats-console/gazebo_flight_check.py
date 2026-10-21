@@ -186,7 +186,8 @@ async def run_check() -> dict:
     agent = os.environ.get("ANTOINE_GZ_AGENT", "isr")
     pose_file = Path(os.environ["ANTOINE_GZ_POSE_FILE"])
     bind_port = int(os.environ.get("MAVLINK_GAZEBO_CHECK_PORT", "14574"))
-    check = GazeboFlightCheck(url, bind_port, 14651, callsign, pose_file, agent)
+    bridge_port = int(os.environ.get("QGC_BRIDGE_PORT", "14651"))
+    check = GazeboFlightCheck(url, bind_port, bridge_port, callsign, pose_file, agent)
     home = None
     armed = False
     try:
