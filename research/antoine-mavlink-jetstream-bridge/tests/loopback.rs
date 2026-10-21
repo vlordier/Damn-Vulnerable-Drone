@@ -785,7 +785,30 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
             },
         ),
     )?;
-    probe.send_to(&mission_item, qgc_bind).await?;
+    let matching_component_item =
+        v2_frame(73, 15, 255, &mission_item[10..mission_item.len() - 2], 38);
+    gcs.send_to(&mission_item, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("wrong-component mission-item rejection timeout")??;
+    assert_eq!(
+        buffer[7], 47,
+        "wrong GCS component must not complete upload"
+    );
+    let (_, wrong_component_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(wrong_component_ack) =
+        wrong_component_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for wrong GCS component");
+    };
+    assert_eq!(
+        wrong_component_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
+    probe.send_to(&matching_component_item, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), probe.recv_from(&mut buffer))
         .await
         .context("foreign mission-item rejection timeout")??;
@@ -803,7 +826,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         foreign_item_ack.mavtype,
         mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
     );
-    gcs.send_to(&mission_item, qgc_bind).await?;
+    gcs.send_to(&matching_component_item, qgc_bind).await?;
     let mut mission_ack_seen = false;
     for _ in 0..4 {
         let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
@@ -857,7 +880,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         invalid_item_ack.mavtype,
         mavlink::dialects::common::MavMissionResult::MAV_MISSION_INVALID_SEQUENCE
     );
-    gcs.send_to(&mission_item, qgc_bind).await?;
+    gcs.send_to(&matching_component_item, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
         .context("unsolicited mission-item response timeout")??;
@@ -909,7 +932,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     let _ = timeout(Duration::from_secs(2), reply_rx.recv())
         .await
         .context("mission clear request was not sent to Antoine")?;
-    gcs.send_to(&mission_item, qgc_bind).await?;
+    gcs.send_to(&matching_component_item, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
         .context("late mission item rejection timeout")??;
@@ -935,7 +958,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         buffer[7], 51,
         "bridge should request the rejected upload item"
     );
-    gcs.send_to(&mission_item, qgc_bind).await?;
+    gcs.send_to(&matching_component_item, qgc_bind).await?;
     let mut rejected_upload_ack = None;
     for _ in 0..4 {
         let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
