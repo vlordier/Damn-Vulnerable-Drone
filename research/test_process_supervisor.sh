@@ -157,6 +157,21 @@ if kill -0 "${ignored_pid}" 2>/dev/null; then
 fi
 [[ ! -e "${identity}" && ! -e "${escalation_fifo}" ]]
 
+# A run wrapper may need several seconds to stop its own children after TERM.
+# The supervisor must allow that bounded cleanup before process-group escalation.
+identity="${TEMP_ROOT}/graceful-cleanup.identity"
+"${SUPERVISOR}" run "${identity}" -- sh -c \
+  'trap '\''trap "" TERM; sleep 2; exit 0'\'' TERM; while :; do sleep 0.05; done' & graceful_pid=$!
+wait_for_file "${identity}"
+graceful_fifo="$(identity_fifo "${identity}")"
+"${SUPERVISOR}" stop "${identity}"
+set +e
+wait "${graceful_pid}"
+graceful_status=$?
+set -e
+[[ "${graceful_status}" == 0 ]]
+[[ ! -e "${identity}" && ! -e "${graceful_fifo}" ]]
+
 # Stopping an owned process group also removes a direct descendant.
 identity="${TEMP_ROOT}/tree.identity"
 "${SUPERVISOR}" run "${identity}" -- sh -c \

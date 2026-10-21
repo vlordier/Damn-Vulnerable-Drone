@@ -192,7 +192,10 @@ static int run_command(const char *identity, char **command) {
     if (stop_requested && !stopping) {
       stopping = true;
       terminate_owned(child, group_owned, (int)stop_requested);
-      grace = 20;
+      /* Give run wrappers time to stop their own supervised children before
+       * escalating the process group. A one-second window killed Gazebo
+       * cleanup wrappers before their bounded service shutdown could finish. */
+      grace = 80;
     }
     if (stopping) {
       if (exited_without_reaping(child, &info) == 1) {
