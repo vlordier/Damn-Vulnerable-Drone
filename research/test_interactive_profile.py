@@ -39,8 +39,11 @@ class InteractiveProfileTests(unittest.TestCase):
         self.addCleanup(self.bridge_heartbeat.stop)
         self.receipt = Path(self.temp.name) / "interactive-profile-receipt.json"
         bridge_identity = Path(self.temp.name) / ".bridge.identity"
+        bridge_control = bridge_identity.with_name(
+            bridge_identity.name + ".control.0123456789abcdef0123456789abcdef"
+        )
         bridge_identity.write_text(
-            f"pid=8991\nchild_pid=9001\ngroup_owned=1\nfifo={bridge_identity}.control\n",
+            f"pid=8991\nchild_pid=9001\ngroup_owned=1\nfifo={bridge_control}\n",
             encoding="utf-8",
         )
         bridge_identity.chmod(0o600)
@@ -78,8 +81,11 @@ class InteractiveProfileTests(unittest.TestCase):
 
     def add_supervisor_process(self, receipt: dict) -> None:
         identity_path = Path(self.temp.name) / ".antoine.identity"
+        control_path = identity_path.with_name(
+            identity_path.name + ".control.0123456789abcdef0123456789abcdef"
+        )
         identity_path.write_text(
-            f"pid=8993\nchild_pid=9003\ngroup_owned=1\nfifo={identity_path}.control\n",
+            f"pid=8993\nchild_pid=9003\ngroup_owned=1\nfifo={control_path}\n",
             encoding="utf-8",
         )
         identity_path.chmod(0o600)
@@ -756,7 +762,9 @@ class InteractiveProfileTests(unittest.TestCase):
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         self.add_supervisor_process(receipt)
         bridge_marker = Path(receipt["processes"]["mavlinkBridge"]["supervisorIdentityPath"])
-        bridge_fifo = bridge_marker.with_name(bridge_marker.name + ".control")
+        bridge_fifo = bridge_marker.with_name(
+            bridge_marker.name + ".control.0123456789abcdef0123456789abcdef"
+        )
         os.mkfifo(bridge_fifo, 0o600)
         self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
 

@@ -12,6 +12,7 @@
 #include <limits.h>
 #include <signal.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -57,6 +58,58 @@ static int exited_without_reaping(pid_t child, siginfo_t *info) {
   return info->si_pid == child;
 }
 
+static int create_control_fifo(const char *identity, char **fifo_out) {
+  unsigned char nonce[16];
+  int random_fd = open("/dev/urandom", O_RDONLY | O_CLOEXEC);
+  if (random_fd < 0) return -1;
+  size_t offset = 0;
+  while (offset < sizeof(nonce)) {
+    ssize_t count = read(random_fd, nonce + offset, sizeof(nonce) - offset);
+    if (count < 0 && errno == EINTR) continue;
+    if (count <= 0) { close(random_fd); errno = EIO; return -1; }
+    offset += (size_t)count;
+  }
+  close(random_fd);
+
+  size_t identity_len = strlen(identity);
+  const char suffix[] = ".control.";
+  if (identity_len > SIZE_MAX - sizeof(suffix) - sizeof(nonce) * 2) {
+    errno = ENAMETOOLONG;
+    return -1;
+  }
+  size_t length = identity_len + sizeof(suffix) + sizeof(nonce) * 2;
+  char *fifo = calloc(length, 1);
+  if (!fifo) return -1;
+  memcpy(fifo, identity, identity_len);
+  memcpy(fifo + identity_len, suffix, sizeof(suffix) - 1);
+  static const char hex[] = "0123456789abcdef";
+  char *cursor = fifo + identity_len + sizeof(suffix) - 1;
+  for (size_t i = 0; i < sizeof(nonce); i++) {
+    cursor[i * 2] = hex[nonce[i] >> 4];
+    cursor[i * 2 + 1] = hex[nonce[i] & 0x0f];
+  }
+  *fifo_out = fifo;
+  return 0;
+}
+
+static bool fifo_matches_identity(const char *identity, const char *fifo) {
+  size_t identity_len = strlen(identity);
+  const char legacy_suffix[] = ".control";
+  if (strcmp(fifo, "") == 0) return false;
+  if (strlen(fifo) == identity_len + sizeof(legacy_suffix) - 1 &&
+      strncmp(fifo, identity, identity_len) == 0 &&
+      strcmp(fifo + identity_len, legacy_suffix) == 0) return true;
+  const char suffix[] = ".control.";
+  size_t prefix_len = identity_len + sizeof(suffix) - 1;
+  if (strlen(fifo) != prefix_len + 32 || strncmp(fifo, identity, identity_len) != 0 ||
+      strncmp(fifo + identity_len, suffix, sizeof(suffix) - 1) != 0) return false;
+  for (size_t i = prefix_len; i < prefix_len + 32; i++) {
+    char c = fifo[i];
+    if (!((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'))) return false;
+  }
+  return true;
+}
+
 static void terminate_owned(pid_t child, bool group_owned, int signo) {
   siginfo_t info;
   int exited = exited_without_reaping(child, &info);
@@ -64,10 +117,11 @@ static void terminate_owned(pid_t child, bool group_owned, int signo) {
 }
 
 static int run_command(const char *identity, char **command) {
-  size_t n = strlen(identity) + sizeof(".control");
-  char *fifo = calloc(n, 1);
-  if (!fifo) return 125;
-  snprintf(fifo, n, "%s.control", identity);
+  char *fifo = NULL;
+  if (create_control_fifo(identity, &fifo) < 0) {
+    fprintf(stderr, "supervisor: cannot create unique control path: %s\n", strerror(errno));
+    return 125;
+  }
   if (mkfifo(fifo, 0600) < 0) {
     fprintf(stderr, "supervisor: cannot create control FIFO: %s\n", strerror(errno));
     free(fifo);
@@ -189,12 +243,7 @@ static int stop_command(const char *identity) {
     }
   }
   fclose(record);
-  size_t expected_len = strlen(identity) + sizeof(".control");
-  char *expected_fifo = calloc(expected_len, 1);
-  if (!expected_fifo) return 1;
-  snprintf(expected_fifo, expected_len, "%s.control", identity);
-  bool expected_path = strcmp(fifo, expected_fifo) == 0;
-  free(expected_fifo);
+  bool expected_path = fifo_matches_identity(identity, fifo);
   struct stat path_stat;
   if (!expected_path || !fifo[0] || lstat(fifo, &path_stat) < 0 ||
       !S_ISFIFO(path_stat.st_mode) || path_stat.st_uid != getuid() ||

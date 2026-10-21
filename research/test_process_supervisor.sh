@@ -28,6 +28,14 @@ wait_for_file() {
   return 1
 }
 
+identity_fifo() {
+  sed -n 's/^fifo=//p' "$1"
+}
+
+identity_fifo_exists() {
+  compgen -G "$1.control.*" >/dev/null
+}
+
 # A child exit racing a stop request must leave no stale run-control files.
 identity="${TEMP_ROOT}/race.identity"
 "${SUPERVISOR}" run "${identity}" -- sh -c 'exit 7' & supervisor_pid=$!
@@ -38,7 +46,7 @@ wait "${supervisor_pid}"
 race_status=$?
 set -e
 [[ "${race_status}" == 7 || "${race_status}" == 143 ]]
-[[ ! -e "${identity}" && ! -e "${identity}.control" ]]
+[[ ! -e "${identity}" ]] && ! identity_fifo_exists "${identity}"
 
 # A direct stop can arrive as soon as the run identity becomes visible. The
 # supervisor must already own the signal and reap its child before removing it.
@@ -48,6 +56,7 @@ child_pid_file="${TEMP_ROOT}/early-signal-child.pid"
   'echo $$ > "$1"; trap "exit 0" TERM INT; while :; do sleep 0.05; done' \
   _ "${child_pid_file}" & early_signal_pid=$!
 wait_for_file "${identity}"
+early_fifo="$(identity_fifo "${identity}")"
 kill -TERM "${early_signal_pid}"
 set +e
 wait "${early_signal_pid}"
@@ -65,7 +74,7 @@ if [[ -s "${child_pid_file}" ]]; then
     exit 1
   fi
 fi
-[[ ! -e "${identity}" && ! -e "${identity}.control" ]]
+[[ ! -e "${identity}" && ! -e "${early_fifo}" ]]
 
 # Replacing the identity's FIFO reference cannot stop another live process.
 sh -c 'trap "exit 0" TERM INT; while :; do sleep 0.05; done' & unrelated_pid=$!
@@ -73,7 +82,8 @@ identity="${TEMP_ROOT}/owned.identity"
 "${SUPERVISOR}" run "${identity}" -- sh -c \
   'trap "exit 0" TERM INT; while :; do sleep 0.05; done' & owned_pid=$!
 wait_for_file "${identity}"
-sed "s|${identity}\.control|${TEMP_ROOT}/foreign.control|" "${identity}" >"${TEMP_ROOT}/stale.identity"
+owned_fifo="$(identity_fifo "${identity}")"
+sed "s|${owned_fifo}|${TEMP_ROOT}/foreign.control|" "${identity}" >"${TEMP_ROOT}/stale.identity"
 if "${SUPERVISOR}" stop "${TEMP_ROOT}/stale.identity" >/dev/null 2>&1; then
   echo "supervisor accepted a replaced identity" >&2
   exit 1
@@ -86,16 +96,16 @@ fi
 owned_child_pid="$(awk -F= '$1 == "child_pid" { print $2; exit }' "${identity}")"
 kill -0 "${owned_child_pid}"
 rm "${TEMP_ROOT}/linked.identity"
-mv "${identity}.control" "${TEMP_ROOT}/owned.control"
+mv "${owned_fifo}" "${TEMP_ROOT}/owned.control"
 mkfifo "${TEMP_ROOT}/foreign.control"
-ln -s "${TEMP_ROOT}/foreign.control" "${identity}.control"
+ln -s "${TEMP_ROOT}/foreign.control" "${owned_fifo}"
 if "${SUPERVISOR}" stop "${identity}" >/dev/null 2>&1; then
   echo "supervisor accepted a symlinked control FIFO" >&2
   exit 1
 fi
 kill -0 "${owned_child_pid}"
-rm "${identity}.control" "${TEMP_ROOT}/foreign.control"
-mv "${TEMP_ROOT}/owned.control" "${identity}.control"
+rm "${owned_fifo}" "${TEMP_ROOT}/foreign.control"
+mv "${TEMP_ROOT}/owned.control" "${owned_fifo}"
 kill -0 "${unrelated_pid}"
 "${SUPERVISOR}" stop "${identity}"
 wait "${owned_pid}" || true
@@ -108,12 +118,15 @@ identity="${TEMP_ROOT}/restart.identity"
 "${SUPERVISOR}" run "${identity}" -- sh -c \
   'trap "exit 0" TERM INT; while :; do sleep 0.05; done' & first_run_pid=$!
 wait_for_file "${identity}"
+first_fifo="$(identity_fifo "${identity}")"
 cp "${identity}" "${TEMP_ROOT}/previous-run.identity"
 "${SUPERVISOR}" stop "${identity}"
 wait "${first_run_pid}" || true
 "${SUPERVISOR}" run "${identity}" -- sh -c \
   'trap "exit 0" TERM INT; while :; do sleep 0.05; done' & restarted_pid=$!
 wait_for_file "${identity}"
+restarted_fifo="$(identity_fifo "${identity}")"
+[[ "${first_fifo}" != "${restarted_fifo}" ]]
 if "${SUPERVISOR}" stop "${TEMP_ROOT}/previous-run.identity" >/dev/null 2>&1; then
   echo "supervisor accepted stale receipt after identity-path reuse" >&2
   exit 1
@@ -122,7 +135,7 @@ restarted_child_pid="$(awk -F= '$1 == "child_pid" { print $2; exit }' "${identit
 kill -0 "${restarted_child_pid}"
 "${SUPERVISOR}" stop "${identity}"
 wait "${restarted_pid}" || true
-[[ ! -e "${identity}" && ! -e "${identity}.control" ]]
+[[ ! -e "${identity}" && ! -e "${restarted_fifo}" ]]
 
 # Escalation must stop an owned child that deliberately ignores TERM.
 identity="${TEMP_ROOT}/escalation.identity"
@@ -130,6 +143,7 @@ identity="${TEMP_ROOT}/escalation.identity"
   'trap "" TERM INT; echo $$ > "$1"; while :; do sleep 0.05; done' \
   _ "${TEMP_ROOT}/ignores-term.pid" & escalation_pid=$!
 wait_for_file "${TEMP_ROOT}/ignores-term.pid"
+escalation_fifo="$(identity_fifo "${identity}")"
 ignored_pid="$(cat "${TEMP_ROOT}/ignores-term.pid")"
 "${SUPERVISOR}" stop "${identity}"
 set +e
@@ -141,7 +155,7 @@ if kill -0 "${ignored_pid}" 2>/dev/null; then
   echo "TERM-ignoring owned process survived escalation" >&2
   exit 1
 fi
-[[ ! -e "${identity}" && ! -e "${identity}.control" ]]
+[[ ! -e "${identity}" && ! -e "${escalation_fifo}" ]]
 
 # Stopping an owned process group also removes a direct descendant.
 identity="${TEMP_ROOT}/tree.identity"
@@ -149,6 +163,7 @@ identity="${TEMP_ROOT}/tree.identity"
   'sh -c '\''trap "exit 0" TERM INT; while :; do sleep 0.05; done'\'' & echo $! > "$1"; trap "exit 0" TERM INT; while :; do sleep 0.05; done' \
   _ "${TEMP_ROOT}/descendant.pid" & tree_pid=$!
 wait_for_file "${TEMP_ROOT}/descendant.pid"
+tree_fifo="$(identity_fifo "${identity}")"
 descendant_pid="$(cat "${TEMP_ROOT}/descendant.pid")"
 "${SUPERVISOR}" stop "${identity}"
 wait "${tree_pid}" || true
@@ -160,5 +175,5 @@ if kill -0 "${descendant_pid}" 2>/dev/null; then
   echo "owned descendant survived process-group cleanup" >&2
   exit 1
 fi
-[[ ! -e "${identity}" && ! -e "${identity}.control" ]]
+[[ ! -e "${identity}" && ! -e "${tree_fifo}" ]]
 echo "process supervisor acceptance passed"

@@ -982,7 +982,8 @@ def _supervisor_identity_path(receipt: dict[str, Any], process: dict[str, Any]) 
 
 def _remove_stale_supervisor_marker(child_pid: int, identity_path: Path) -> bool:
     """Remove only a private supervisor record and FIFO bound to a dead child."""
-    fifo_path = identity_path.with_name(identity_path.name + ".control")
+    legacy_fifo_name = identity_path.name + ".control"
+    fifo_prefix = legacy_fifo_name + "."
     try:
         identity_stat = identity_path.lstat()
     except FileNotFoundError:
@@ -999,10 +1000,16 @@ def _remove_stale_supervisor_marker(child_pid: int, identity_path: Path) -> bool
         if separator:
             fields[key] = value
     recorded_fifo = Path(fields.get("fifo", ""))
+    suffix = recorded_fifo.name.removeprefix(fifo_prefix)
+    fifo_name_matches = recorded_fifo.name == legacy_fifo_name or (
+        recorded_fifo.name.startswith(fifo_prefix)
+        and len(suffix) == 32
+        and all(character in "0123456789abcdef" for character in suffix)
+    )
     try:
         fifo_parent_matches = (
             recorded_fifo.is_absolute()
-            and recorded_fifo.name == fifo_path.name
+            and fifo_name_matches
             and recorded_fifo.parent.resolve(strict=True) == identity_path.parent
         )
     except (OSError, RuntimeError):
@@ -1010,7 +1017,7 @@ def _remove_stale_supervisor_marker(child_pid: int, identity_path: Path) -> bool
     if fields.get("child_pid") != str(child_pid) or not fifo_parent_matches:
         raise ValueError("stale supervisor identity does not match the recorded child")
     try:
-        fifo_stat = fifo_path.lstat()
+        fifo_stat = recorded_fifo.lstat()
     except FileNotFoundError:
         fifo_stat = None
     if fifo_stat is not None and (
@@ -1020,7 +1027,7 @@ def _remove_stale_supervisor_marker(child_pid: int, identity_path: Path) -> bool
     ):
         raise ValueError("stale supervisor control path is not a private FIFO")
     if fifo_stat is not None:
-        fifo_path.unlink()
+        recorded_fifo.unlink()
     identity_path.unlink()
     return True
 

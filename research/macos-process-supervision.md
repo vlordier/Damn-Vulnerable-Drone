@@ -5,7 +5,9 @@
 `dvd_research/process_supervisor.c` is the direct parent for local research
 services. It places the child in a fresh process group, retains the child as an
 unreaped child while observing it with native `waitid(WNOWAIT)`, and accepts a
-stop request through a mode-0600 FIFO named by a mode-0600 run identity file.
+stop request through a mode-0600 FIFO whose unpredictable per-run name is
+recorded in a mode-0600 run identity file. Reusing the identity path on restart
+therefore cannot reuse the previous run's control endpoint.
 It verifies that the child leads the new process group before using group
 signals and records that result; if verification fails, it only signals the
 direct child while it remains waitable.
