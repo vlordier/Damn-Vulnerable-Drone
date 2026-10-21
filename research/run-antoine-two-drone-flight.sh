@@ -147,8 +147,8 @@ if [[ ! "${FAULT_MAX_MESSAGES}" =~ ^[0-9]+$ ]] || ((FAULT_MAX_MESSAGES < 1 || FA
   echo "Fault message cap must be 1..200" >&2
   exit 2
 fi
-if [[ ! "${FAULT_WAIT_TIMEOUT}" =~ ^[0-9]+$ ]] || ((FAULT_WAIT_TIMEOUT < 1 || FAULT_WAIT_TIMEOUT > 180)); then
-  echo "Fault pose-gate wait timeout must be 1..180 seconds" >&2
+if [[ ! "${FAULT_WAIT_TIMEOUT}" =~ ^[0-9]+$ ]] || ((FAULT_WAIT_TIMEOUT < 1 || FAULT_WAIT_TIMEOUT > 300)); then
+  echo "Fault pose-gate wait timeout must be 1..300 seconds" >&2
   exit 2
 fi
 if [[ "${FAULT}" == cross-vehicle-authorization && "${FAULT_MAX_MESSAGES}" != 1 ]]; then
@@ -167,7 +167,7 @@ if [[ "${FAULT}" == command-rate ]]; then
   fi
 fi
 case "${AUTH_MUTATION}" in
-  wrong-callsign | wrong-task | stale-run) ;;
+  wrong-callsign | wrong-task | wrong-target | stale-run) ;;
   *) echo "Unsupported authorization mutation: ${AUTH_MUTATION}" >&2; exit 2 ;;
 esac
 FAULT_CALLSIGN="${ANTOINE_SWARM_FAULT_CALLSIGN:-drone-2}"
@@ -498,7 +498,7 @@ if [[ "${FAULT}" != none ]]; then
       FAULT_SERVER="nats://127.0.0.1:${ANTOINE_GZ_FLIGHT_NATS_PORT}"
       ;;
     cross-vehicle-authorization)
-      FAULT_NOTE="one bounded malformed setpoint published to another vehicle's run-owned subject; probe requires explicit target-controller rejection"
+      FAULT_NOTE="one bounded authorization mutation published on the target vehicle's run-owned subject; probe requires explicit controller rejection"
       ;;
     state-stream-partition|controller-state-blackhole)
       FAULT_NOTE="run-local controller-only NATS state-delivery partition; local authority remains subscribed to the source state subject; stale watchdog emits zero-velocity hold before delivery recovery"

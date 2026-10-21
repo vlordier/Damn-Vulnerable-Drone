@@ -29,6 +29,7 @@ RUNNER_ARGUMENTS = {
         "ANTOINE_SWARM_FAULT=cross-vehicle-authorization",
         "ANTOINE_SWARM_AUTH_MUTATION=wrong-callsign",
         "ANTOINE_SWARM_AUTH_MUTATION=wrong-task",
+        "ANTOINE_SWARM_AUTH_MUTATION=wrong-target",
         "ANTOINE_SWARM_AUTH_MUTATION=stale-run",
         "ANTOINE_SWARM_FAULT_MAX_MESSAGES=1",
         "ANTOINE_SWARM_SIZE=3",

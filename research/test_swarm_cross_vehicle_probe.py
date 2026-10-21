@@ -76,6 +76,15 @@ class MutationTests(unittest.TestCase):
         self.assertEqual(evidence["field"], "taskId")
         self.assertEqual(evidence["additionalFields"], ["vigieAdmissionCorrelationId"])
 
+    def test_wrong_target_changes_only_one_bounded_position_component_and_sequence(self) -> None:
+        original = valid_live_setpoint()
+        mutated, evidence = mutate_setpoint(original, "wrong-target", "drone-1", "drone-2")
+        self.assertEqual(mutated["position_enu_m"], [10.0, 8.0, 10.0])
+        self.assertEqual(mutated["sequence"], 130)
+        for field in original.keys() - {"position_enu_m", "sequence"}:
+            self.assertEqual(mutated[field], original[field], field)
+        self.assertEqual(evidence["field"], "position_enu_m")
+
     def test_stale_run_is_explicitly_unsupported_by_setpoint_contract(self) -> None:
         payload, evidence = mutate_setpoint({}, "stale-run", "drone-1", "drone-2")
         self.assertIsNone(payload)
@@ -125,6 +134,16 @@ class MutationTests(unittest.TestCase):
             "drone-2",
             "dvd-cross-vehicle-unauthorized-drone-2",
             self.PROBE_HASH,
+        )
+        self.assertEqual(decision["status"], "rejected-before-active-setpoint")
+        self.assertTrue(decision["activeSetpointSequenceNotAdvanced"])
+
+    def test_wrong_target_decision_requires_rejection_before_active_setpoint(self) -> None:
+        lines = [
+            f"ANTOINE_GZ_SETPOINT_REJECTED callsign=drone-2 reason=current-grant-or-vigie-binding vehicle_id=drone-2 sequence=31 payload_sha256={self.PROBE_HASH} last_sequence=30",
+        ]
+        decision = controller_decision(
+            "wrong-target", lines, 31, "drone-2", "unused", self.PROBE_HASH
         )
         self.assertEqual(decision["status"], "rejected-before-active-setpoint")
         self.assertTrue(decision["activeSetpointSequenceNotAdvanced"])

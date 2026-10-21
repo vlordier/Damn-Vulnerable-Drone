@@ -210,7 +210,7 @@ swarm-blackhole: ## Partition one controller-only state stream for two seconds a
 swarm-rate: ## Send up to 40 wrong-callsign setpoints at 10 Hz on a run-owned broker
 	ANTOINE_SWARM_FAULT=command-rate ANTOINE_SWARM_FAULT_RATE_HZ=10 ANTOINE_SWARM_FAULT_SECONDS=4 ANTOINE_SWARM_FAULT_MAX_MESSAGES=40 $(SWARM_RUNNER)
 
-swarm-auth-isolation: ## Attempt one misaddressed setpoint on the run-owned NATS broker
+swarm-auth-isolation: ## Attempt one bounded unauthorized setpoint mutation on the run-owned NATS broker
 	ANTOINE_SWARM_FAULT=cross-vehicle-authorization ANTOINE_SWARM_FAULT_MAX_MESSAGES=1 $(SWARM_RUNNER)
 
 bridge-build: ## Build the versioned MAVLink↔NATS bridge

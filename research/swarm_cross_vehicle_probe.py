@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
-SUPPORTED_MUTATIONS = {"wrong-callsign", "wrong-task", "stale-run"}
+SUPPORTED_MUTATIONS = {"wrong-callsign", "wrong-task", "wrong-target", "stale-run"}
 MAX_PROBE_MESSAGES = 1
 MAX_POSE_BYTES = 512_000
 MAX_ACTUATOR_BYTES = 512_000
@@ -57,7 +57,7 @@ def mutate_setpoint(
             "field": "runId",
             "reason": "mission-setpoint-v2.1-has-no-runId-field; run identity is carried by the authority grant and broker context",
         }
-    if mutation not in {"wrong-callsign", "wrong-task"}:
+    if mutation not in {"wrong-callsign", "wrong-task", "wrong-target"}:
         raise ValueError(f"unsupported mutation {mutation}")
     if (
         payload.get("contract") != "furia.gzsitl.mission-setpoint"
@@ -71,7 +71,7 @@ def mutate_setpoint(
     if mutation == "wrong-callsign":
         mutated["vehicleId"] = source
         field, before, after = "vehicleId", target, source
-    else:
+    elif mutation == "wrong-task":
         old_task = payload.get("taskId")
         if not isinstance(old_task, str) or not old_task:
             raise ValueError("captured setpoint has no task binding")
@@ -90,6 +90,22 @@ def mutate_setpoint(
         prefix = old_correlation[: -len(old_task) - len(str(admission_sequence)) - 1]
         mutated["vigieAdmissionCorrelationId"] = f"{prefix}{new_task}-{admission_sequence}"
         field, before, after = "taskId", old_task, new_task
+    else:
+        old_position = payload.get("position_enu_m")
+        if (
+            not isinstance(old_position, list)
+            or len(old_position) != 3
+            or any(
+                not isinstance(value, (int, float)) or isinstance(value, bool)
+                for value in old_position
+            )
+            or any(not math.isfinite(value) for value in old_position)
+        ):
+            raise ValueError("captured setpoint has no finite ENU position target")
+        new_position = list(old_position)
+        new_position[0] += 2.0
+        mutated["position_enu_m"] = new_position
+        field, before, after = "position_enu_m", old_position, new_position
     original_sequence = payload["sequence"]
     # Keep the injected sequence distinct from a concurrent authority refresh.
     mutated["sequence"] = original_sequence + PROBE_SEQUENCE_GAP
@@ -427,7 +443,7 @@ def controller_decision(
             else None,
             "mutatedVehicleId": mutation_value,
         }
-    if mutation == "wrong-task":
+    if mutation in {"wrong-task", "wrong-target"}:
         return {
             "status": "rejected-before-active-setpoint"
             if rejected and not received
@@ -471,8 +487,8 @@ def main() -> int:
     validate_server(args.server)
     if args.source == args.target or args.max_messages != MAX_PROBE_MESSAGES:
         raise SystemExit("probe requires distinct vehicles and exactly one bounded message")
-    if not 1 <= args.wait_timeout_seconds <= 180:
-        raise SystemExit("pose wait timeout must be in 1..180 seconds")
+    if not 1 <= args.wait_timeout_seconds <= 300:
+        raise SystemExit("pose wait timeout must be in 1..300 seconds")
 
     run_dir = args.run_dir.resolve()
     subject = f"furia.gzsitl.setpoint.{args.target}"
