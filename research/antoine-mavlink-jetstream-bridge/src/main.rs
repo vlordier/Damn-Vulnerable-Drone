@@ -1752,6 +1752,54 @@ mod tests {
     }
 
     #[test]
+    fn gazebo_model_prearm_gate_fails_closed_on_unsafe_inputs() {
+        let observed_at_unix_ms = unix_ms().unwrap() as u64;
+        let healthy_ground = serde_json::json!({
+            "identity":"drone-1","protocol":"antoine-gz",
+            "observedAtUnixMs":observed_at_unix_ms,
+            "lat_deg":48.0002,"lon_deg":0.3564,"alt_m":0.09,
+            "vn_mps":0.0,"ve_mps":0.0,"vd_mps":0.0,
+            "battery_pct":20.0,"control_authority":"safe-hold"
+        });
+        let has_prearm_health = |value: &serde_json::Value| {
+            let frames = telemetry_frames(value, 1, 82.0, 48.0002, 0.3564, 0, false, 0).unwrap();
+            let status = validate_frame(&frames[4]).unwrap();
+            u32::from_le_bytes(status.payload[8..12].try_into().unwrap())
+                & MavSysStatusSensor::MAV_SYS_STATUS_PREARM_CHECK.bits()
+                != 0
+        };
+
+        assert!(
+            has_prearm_health(&healthy_ground),
+            "20% battery is the inclusive floor"
+        );
+
+        let mut unsafe_cases = Vec::new();
+        let mut value = healthy_ground.clone();
+        value["control_authority"] = serde_json::json!("authorized");
+        unsafe_cases.push(("authority is not safe-hold", value));
+
+        let mut value = healthy_ground.clone();
+        value["alt_m"] = serde_json::json!(0.101);
+        unsafe_cases.push(("altitude exceeds the ground gate", value));
+
+        let mut value = healthy_ground.clone();
+        value["vn_mps"] = serde_json::json!(0.151);
+        unsafe_cases.push(("horizontal speed exceeds the settled gate", value));
+
+        let mut value = healthy_ground.clone();
+        value["battery_pct"] = serde_json::json!(19.999);
+        unsafe_cases.push(("battery is below the inclusive floor", value));
+
+        for (description, value) in unsafe_cases {
+            assert!(
+                !has_prearm_health(&value),
+                "model pre-arm health must be clear when {description}"
+            );
+        }
+    }
+
+    #[test]
     fn gazebo_antoine_telemetry_rejects_stale_and_far_future_observations() {
         let now_ms = unix_ms().unwrap() as u64;
         let make = |observed_at_unix_ms| {
