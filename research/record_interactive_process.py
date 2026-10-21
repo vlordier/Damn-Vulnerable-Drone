@@ -8,6 +8,7 @@ import json
 import os
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 
@@ -25,15 +26,22 @@ def record_process(
     if pid <= 1:
         raise ValueError("process PID must be greater than 1")
 
-    result = subprocess.run(
-        ["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    identity = result.stdout.strip()
-    if result.returncode != 0 or not identity:
+    identity = ""
+    detail = "process identity was not observable"
+    deadline = time.monotonic() + 1.0
+    while time.monotonic() < deadline:
+        result = subprocess.run(
+            ["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        identity = result.stdout.strip()
+        if result.returncode == 0 and identity:
+            break
         detail = result.stderr.strip() or f"ps exited with status {result.returncode}"
+        time.sleep(0.025)
+    else:
         raise ValueError(f"cannot record process identity for {name}: {detail}")
 
     receipt = json.loads(receipt_path.read_text())

@@ -53,6 +53,19 @@ class RecordInteractiveProcessTests(unittest.TestCase):
         self.assertEqual(json.loads(self.receipt_path.read_text()), self.original)
 
     @patch("record_interactive_process.subprocess.run")
+    def test_retries_transient_ps_miss_before_recording_identity(self, run):
+        run.side_effect = [
+            subprocess.CompletedProcess([], 1, "", ""),
+            subprocess.CompletedProcess([], 0, "Mon Oct 20 bridge process\n", ""),
+        ]
+
+        record_process(self.receipt_path, "bridge", 42)
+
+        self.assertEqual(run.call_count, 2)
+        receipt = json.loads(self.receipt_path.read_text())
+        self.assertEqual(receipt["processes"]["bridge"]["identity"], "Mon Oct 20 bridge process")
+
+    @patch("record_interactive_process.subprocess.run")
     def test_empty_ps_identity_does_not_modify_receipt(self, run):
         run.return_value = subprocess.CompletedProcess([], 0, " \n", "")
 
