@@ -270,7 +270,30 @@ class InteractiveProfileTests(unittest.TestCase):
             exit_code = interactive_profile.main()
 
         self.assertEqual(exit_code, 1)
-        self.assertEqual(json.loads(output.getvalue())["status"], "partial")
+        stdout_report = json.loads(output.getvalue())
+        persisted_report = json.loads(
+            (Path(self.temp.name) / "interactive-profile-stop-result.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(stdout_report["status"], "partial")
+        self.assertEqual(persisted_report["status"], stdout_report["status"])
+
+    def test_later_partial_stop_replaces_previous_success_report(self) -> None:
+        report_path = Path(self.temp.name) / "interactive-profile-stop-result.json"
+        with patch("interactive_profile.process_identity", return_value=None):
+            first = interactive_profile.stop_owned(self.receipt)
+        self.assertEqual(first["status"], "stopped")
+
+        with patch("interactive_profile.process_identity", return_value="foreign-process"):
+            second = interactive_profile.stop_owned(self.receipt)
+
+        persisted_report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(second["status"], "partial")
+        self.assertEqual(persisted_report["status"], "partial")
+        self.assertEqual(
+            persisted_report["results"]["mavlinkBridge"], "identity-mismatch-not-signalled"
+        )
 
     @patch("interactive_profile.process_identity")
     @patch("interactive_profile.os.kill")
