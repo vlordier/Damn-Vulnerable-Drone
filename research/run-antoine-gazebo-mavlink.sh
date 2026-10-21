@@ -44,6 +44,8 @@ PROFILE_PID=""
 BRIDGE_PID=""
 GUI_PID=""
 PROVENANCE_ENV="${RUN_DIR}/.research-provenance-expected.env"
+ANTOINE_SOURCE_SNAPSHOT="${RUN_DIR}/antoine-source-snapshot"
+GAZEBO_SOURCE_SNAPSHOT="${RUN_DIR}/gazebo-source-snapshot"
 RUNTIME_CONFIG="${RUN_DIR}/interactive-profile.json"
 PROFILE_RECEIPT="${RUN_DIR}/interactive-profile-receipt.json"
 PROFILE_IDENTITY="${RUN_DIR}/.antoine-profile.identity"
@@ -95,10 +97,15 @@ capture_provenance() {
     --phase "${phase}" \
     --source-sim "${SIM_ROOT}" \
     --runtime-world "${VISIBLE_WORLD}" \
-    --input-world "${SIM_ROOT}/worlds/antoine-gz-flight-proof.sdf" \
-    --input-applier "${SIM_ROOT}/tools/gz-sitl-applier/gz-sitl-applier" \
+    --input-world "${GAZEBO_SOURCE_SNAPSHOT}/worlds/antoine-gz-flight-proof.sdf" \
+    --input-applier "${FLIGHT_RUN_DIR}/applier-build/debug/gz-sitl-applier" \
     --input-bridge "${BRIDGE_BIN}" \
     --input-build-receipt "${ANTOINE_RUN_BUILD_RECEIPT}" \
+    --input-antoine-source-dir "${ANTOINE_SOURCE_SNAPSHOT}" \
+    --input-antoine-snapshot-receipt "${ANTOINE_SOURCE_SNAPSHOT}/antoine-source-snapshot.json" \
+    --input-models-dir "${GAZEBO_SOURCE_SNAPSHOT}/models" \
+    --input-gazebo-source-dir "${GAZEBO_SOURCE_SNAPSHOT}" \
+    --input-snapshot-receipt "${GAZEBO_SOURCE_SNAPSHOT}/gazebo-source-snapshot.json" \
     --antoine-patch "${PROJECT_ROOT}/research/patches/antoine-gazebo-battery-drain.patch" \
     --input-gui-config "${PROJECT_ROOT}/research/gazebo-qgc-gui.config" \
     --input-runtime-config "${RUNTIME_CONFIG}" \
@@ -186,6 +193,14 @@ RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.99.1}" \
   --manifest-path "${PROJECT_ROOT}/research/antoine-mavlink-jetstream-bridge/Cargo.toml"
 
 mkdir -p "${RUN_DIR}/logs"
+echo "Capturing run-owned Antoine and Gazebo rebuild inputs..."
+uv run --no-project python "${PROJECT_ROOT}/research/snapshot_antoine_build_inputs.py" \
+  "${ANTOINE_ROOT}" "${ANTOINE_ROOT}/../ew-wire-contract" "${ANTOINE_SOURCE_SNAPSHOT}" \
+  --sitl-lockfile "${PROJECT_ROOT}/research/locks/antoine-sitl.Cargo.lock" \
+  --boundary-lockfile "${PROJECT_ROOT}/research/locks/antoine-boundary.Cargo.lock" \
+  --source-patch "${PROJECT_ROOT}/research/patches/antoine-gazebo-battery-drain.patch"
+uv run --no-project python "${PROJECT_ROOT}/research/snapshot_gazebo_inputs.py" \
+  "${SIM_ROOT}" "${GAZEBO_SOURCE_SNAPSHOT}"
 RECEIPT_TOOL="${ANTOINE_ROOT}/scripts/antoine_sitl_build_receipt.py"
 if ! PYTHONPATH="${ANTOINE_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
   RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.99.1}" uv run --no-project --script \
@@ -270,6 +285,8 @@ uv run --no-project python "${PROJECT_ROOT}/research/create_interactive_profile_
   --qgc-patch "${PROJECT_ROOT}/research/patches/qgroundcontrol-antoine.patch" \
   --runtime-world "${VISIBLE_WORLD}" \
   --gui-config "${PROJECT_ROOT}/research/gazebo-qgc-gui.config" \
+  --antoine-source-snapshot "${ANTOINE_SOURCE_SNAPSHOT}" \
+  --gazebo-source-snapshot "${GAZEBO_SOURCE_SNAPSHOT}" \
   --callsign "${CALLSIGN}" \
   --nats-port "${NATS_PORT}" \
   --qgc-port "${QGC_LISTEN_PORT}" \
@@ -280,6 +297,7 @@ echo "Starting the isolated Antoine/Gazebo profile at ${NATS_URL}..."
 (
   cd "${ANTOINE_ROOT}"
   dvd_run_owned_child "${PROJECT_ROOT}" "${PROFILE_IDENTITY}" env ANTOINE_GZ_INTERACTIVE_CONTROL=1 \
+    AGR_SIM="${GAZEBO_SOURCE_SNAPSHOT}" \
     ANTOINE_GZ_FLIGHT_GUI=0 \
     ANTOINE_GZ_BUILD_DONE=1 ANTOINE_SITL_BUILD_RECEIPT="${ANTOINE_RUN_BUILD_RECEIPT}" \
     ANTOINE_GZ_PREBUILT_BIN_DIR="${ANTOINE_RUN_BIN_DIR}" \
@@ -287,7 +305,7 @@ echo "Starting the isolated Antoine/Gazebo profile at ${NATS_URL}..."
     ANTOINE_GZ_INTERACTIVE_TIMEOUT_SECONDS="${ANTOINE_GZ_INTERACTIVE_TIMEOUT_SECONDS:-3600}" \
     ANTOINE_GZ_FLIGHT_NATS_PORT="${NATS_PORT}" \
     ANTOINE_GZ_CARGO_TARGET_DIR="${ANTOINE_TARGET}" \
-    GZ_BIN="${HOME}/Work/gz-macOS/ws/install/bin/gz" \
+    GZ_BIN="${GZ_BINARY}" \
     "${ANTOINE_ROOT}/scripts/gz_flight_proof.sh" --run-dir "${FLIGHT_RUN_DIR}" --keep
 ) &
 PROFILE_PID=$!

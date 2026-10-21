@@ -251,7 +251,15 @@ def main() -> int:
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Gazebo source snapshot failed: {error}", file=sys.stderr)
         return 2
-    print(json.dumps({key: receipt[key] for key in ("status", "snapshotManifestSha256", "files")}))
+    print(
+        json.dumps(
+            {
+                "status": receipt["status"],
+                "snapshotManifestSha256": receipt["snapshotManifestSha256"],
+                "fileCount": len(receipt["files"]),
+            }
+        )
+    )
     return 0
 
 

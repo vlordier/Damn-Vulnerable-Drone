@@ -338,6 +338,16 @@ launcher fails before starting SITL if the expected local QGC binary or
 verified Antoine build artifacts are missing. Provenance identifies inspected
 files; it does not attest which executable the OS loaded.
 
+Each profile run also retains verified `antoine-source-snapshot/` and
+`gazebo-source-snapshot/` bundles. The Antoine bundle includes its local Cargo
+path dependencies, versioned lockfiles, and battery-drain patch receipt. The
+Gazebo bundle includes the world, models, applier sources, and build scripts;
+the profile launches against this run-owned Gazebo bundle. Their manifest
+digests and receipt hashes are included in the profile receipt and pre/post
+provenance. These bundles make the source inputs available for a clean rebuild;
+they do not include the installed Gazebo toolchain or prove a rebuild by
+themselves.
+
 Create a non-overwriting candidate from a stable run with
 `make qgc-gazebo-pin-candidate PROFILE_RECEIPT=... PROFILE_COMPARISON=... PROFILE_PIN_CANDIDATE=...`.
 The candidate command requires matching run IDs, a stable pre/post comparison,

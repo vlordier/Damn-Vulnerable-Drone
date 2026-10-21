@@ -105,6 +105,68 @@ def command_version(*command: str) -> str | None:
     return output.splitlines()[0] if output else None
 
 
+def snapshot_record(run_dir: Path, snapshot_dir: Path, filename: str, contract: str) -> dict:
+    run_dir = run_dir.resolve(strict=True)
+    if snapshot_dir.is_symlink():
+        raise ValueError("source snapshot must be a run-owned directory")
+    snapshot_dir = snapshot_dir.resolve(strict=True)
+    if not snapshot_dir.is_dir() or not snapshot_dir.is_relative_to(run_dir):
+        raise ValueError("source snapshot must be a run-owned directory")
+    receipt_path = snapshot_dir / filename
+    if receipt_path.is_symlink() or not receipt_path.is_file():
+        raise ValueError(f"source snapshot receipt is missing: {receipt_path}")
+    document = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if (
+        document.get("contract") != contract
+        or document.get("status") != "verified"
+        or not isinstance(document.get("snapshotManifestSha256"), str)
+        or not isinstance(document.get("files"), list)
+        or not document["files"]
+    ):
+        raise ValueError(f"source snapshot receipt is incomplete: {receipt_path}")
+    manifest = hashlib.sha256()
+    seen: set[Path] = set()
+    for entry in document["files"]:
+        if not isinstance(entry, dict):
+            raise ValueError(f"source snapshot manifest is invalid: {receipt_path}")
+        raw_path = entry.get("path")
+        expected_size = entry.get("sizeBytes")
+        expected_hash = entry.get("sha256")
+        if not isinstance(raw_path, str) or not raw_path:
+            raise ValueError(f"source snapshot manifest is invalid: {receipt_path}")
+        relative = Path(raw_path)
+        if relative.is_absolute() or ".." in relative.parts or relative in seen:
+            raise ValueError(f"source snapshot manifest has an unsafe path: {receipt_path}")
+        source = snapshot_dir / relative
+        try:
+            resolved_source = source.resolve(strict=True)
+        except OSError as error:
+            raise ValueError(f"source snapshot file is missing: {source}") from error
+        content_hash = sha256(source)
+        if (
+            not resolved_source.is_relative_to(snapshot_dir)
+            or content_hash is None
+            or content_hash != expected_hash
+            or not isinstance(expected_size, int)
+            or isinstance(expected_size, bool)
+            or source.stat().st_size != expected_size
+        ):
+            raise ValueError(f"source snapshot bytes do not match their receipt: {source}")
+        seen.add(relative)
+        manifest.update(relative.as_posix().encode("utf-8"))
+        manifest.update(b"\0")
+        manifest.update(content_hash.encode("ascii"))
+        manifest.update(b"\n")
+    if manifest.hexdigest() != document["snapshotManifestSha256"]:
+        raise ValueError(f"source snapshot manifest digest is invalid: {receipt_path}")
+    return {
+        "path": snapshot_dir.relative_to(run_dir).as_posix(),
+        "receiptSha256": sha256(receipt_path),
+        "snapshotManifestSha256": document["snapshotManifestSha256"],
+        "fileCount": len(document["files"]),
+    }
+
+
 def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = args.run_dir.resolve()
     if (
@@ -151,6 +213,26 @@ def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
     }
     if args.qgc_root is not None:
         sources["qgroundcontrol"] = source_record("qgroundcontrol", args.qgc_root)
+    antoine_snapshot = getattr(args, "antoine_source_snapshot", None)
+    gazebo_snapshot = getattr(args, "gazebo_source_snapshot", None)
+    source_snapshots = None
+    if antoine_snapshot is not None or gazebo_snapshot is not None:
+        if antoine_snapshot is None or gazebo_snapshot is None:
+            raise ValueError("both Antoine and Gazebo source snapshots are required together")
+        source_snapshots = {
+            "antoine": snapshot_record(
+                run_dir,
+                antoine_snapshot,
+                "antoine-source-snapshot.json",
+                "damn-vulnerable-drone.antoine-source-snapshot",
+            ),
+            "gazebo": snapshot_record(
+                run_dir,
+                gazebo_snapshot,
+                "gazebo-source-snapshot.json",
+                "damn-vulnerable-drone.gazebo-source-snapshot",
+            ),
+        }
     receipt = {
         "contract": "damn-vulnerable-drone.interactive-profile",
         "version": "1.0.0",
@@ -167,6 +249,7 @@ def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "bridgeUdpBind": args.bridge_port,
         },
         "source": sources,
+        "sourceSnapshots": source_snapshots,
         "artifacts": {
             "qgroundcontrolBinarySha256": sha256(args.qgc_binary) if args.qgc_binary else None,
             "bridgeBinarySha256": sha256(args.bridge_binary),
@@ -226,6 +309,8 @@ def main() -> int:
     parser.add_argument("--runtime-world", type=Path, required=True)
     parser.add_argument("--qgc-settings", type=Path)
     parser.add_argument("--gui-config", type=Path, required=True)
+    parser.add_argument("--antoine-source-snapshot", type=Path)
+    parser.add_argument("--gazebo-source-snapshot", type=Path)
     parser.add_argument("--callsign", required=True)
     parser.add_argument("--nats-port", type=int, required=True)
     parser.add_argument("--qgc-port", type=int, required=True)

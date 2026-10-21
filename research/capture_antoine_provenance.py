@@ -311,6 +311,7 @@ def main() -> int:
     parser.add_argument("--input-world", type=Path)
     parser.add_argument("--input-x500-model", type=Path)
     parser.add_argument("--input-models-dir", type=Path)
+    parser.add_argument("--input-gazebo-source-dir", type=Path)
     parser.add_argument("--input-snapshot-receipt", type=Path)
     parser.add_argument("--input-antoine-source-dir", type=Path)
     parser.add_argument("--input-antoine-snapshot-receipt", type=Path)
@@ -386,6 +387,8 @@ def main() -> int:
     ]
     if args.input_models_dir:
         input_paths.append(("gazebo_model_assets", args.input_models_dir))
+    if args.input_gazebo_source_dir:
+        input_paths.append(("gazebo_build_source_snapshot", args.input_gazebo_source_dir))
     if args.input_snapshot_receipt:
         input_paths.append(("gazebo_source_snapshot_receipt", args.input_snapshot_receipt))
     if args.input_antoine_source_dir:

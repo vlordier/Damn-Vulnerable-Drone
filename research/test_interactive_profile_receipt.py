@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import subprocess
 import tempfile
 import unittest
@@ -191,6 +192,60 @@ class InteractiveReceiptTests(unittest.TestCase):
                 paths[name] = path
             run_dir = root / "run-123"
             run_dir.mkdir()
+            antoine_snapshot = run_dir / "antoine-source-snapshot"
+            gazebo_snapshot = run_dir / "gazebo-source-snapshot"
+            antoine_snapshot.mkdir()
+            gazebo_snapshot.mkdir()
+            antoine_file = antoine_snapshot / "antoine" / "Cargo.toml"
+            antoine_file.parent.mkdir()
+            antoine_bytes = b"[package]\nname = 'snapshot'\n"
+            antoine_file.write_bytes(antoine_bytes)
+            antoine_hash = hashlib.sha256(antoine_bytes).hexdigest()
+            antoine_manifest = hashlib.sha256(
+                f"antoine/Cargo.toml\0{antoine_hash}\n".encode()
+            ).hexdigest()
+            gazebo_file = gazebo_snapshot / "worlds" / "flight.sdf"
+            gazebo_file.parent.mkdir()
+            gazebo_bytes = b"<sdf/>\n"
+            gazebo_file.write_bytes(gazebo_bytes)
+            gazebo_hash = hashlib.sha256(gazebo_bytes).hexdigest()
+            gazebo_manifest = hashlib.sha256(
+                f"worlds/flight.sdf\0{gazebo_hash}\n".encode()
+            ).hexdigest()
+            (antoine_snapshot / "antoine-source-snapshot.json").write_text(
+                json.dumps(
+                    {
+                        "contract": "damn-vulnerable-drone.antoine-source-snapshot",
+                        "status": "verified",
+                        "snapshotManifestSha256": antoine_manifest,
+                        "files": [
+                            {
+                                "path": "antoine/Cargo.toml",
+                                "sizeBytes": len(antoine_bytes),
+                                "sha256": antoine_hash,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (gazebo_snapshot / "gazebo-source-snapshot.json").write_text(
+                json.dumps(
+                    {
+                        "contract": "damn-vulnerable-drone.gazebo-source-snapshot",
+                        "status": "verified",
+                        "snapshotManifestSha256": gazebo_manifest,
+                        "files": [
+                            {
+                                "path": "worlds/flight.sdf",
+                                "sizeBytes": len(gazebo_bytes),
+                                "sha256": gazebo_hash,
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
             args = argparse.Namespace(
                 run_dir=run_dir,
                 antoine_root=paths["antoine"],
@@ -210,6 +265,8 @@ class InteractiveReceiptTests(unittest.TestCase):
                 nats_port=14238,
                 qgc_port=14660,
                 bridge_port=14661,
+                antoine_source_snapshot=antoine_snapshot,
+                gazebo_source_snapshot=gazebo_snapshot,
             )
             with patch(
                 "create_interactive_profile_receipt.source_record",
@@ -232,8 +289,18 @@ class InteractiveReceiptTests(unittest.TestCase):
                 receipt["artifacts"]["gazeboBinarySha256"],
                 hashlib.sha256(paths["gazebo_binary"].read_bytes()).hexdigest(),
             )
+            self.assertEqual(receipt["sourceSnapshots"]["antoine"]["fileCount"], 1)
+            self.assertEqual(receipt["sourceSnapshots"]["gazebo"]["fileCount"], 1)
+            self.assertEqual(
+                receipt["sourceSnapshots"]["gazebo"]["snapshotManifestSha256"],
+                gazebo_manifest,
+            )
             self.assertIn("rustc", receipt["toolchain"])
             self.assertTrue((run_dir / "interactive-profile.json").is_file())
+
+            gazebo_file.write_bytes(b"<sdf><mutated/></sdf>\n")
+            with self.assertRaisesRegex(ValueError, "bytes do not match"):
+                create_receipt(args)
 
 
 if __name__ == "__main__":
