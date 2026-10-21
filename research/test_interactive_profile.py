@@ -21,7 +21,11 @@ class InteractiveProfileTests(unittest.TestCase):
         self.real_port_status = interactive_profile._run_owned_port_statuses
         self.port_status = patch(
             "interactive_profile._run_owned_port_statuses",
-            return_value={"natsPort": "closed", "bridgeUdpBindPort": "closed"},
+            return_value={
+                "natsPort": "closed",
+                "bridgeUdpBindPort": "closed",
+                "qgcUdpListenPort": "closed",
+            },
         )
         self.port_status_mock = self.port_status.start()
         self.addCleanup(self.port_status.stop)
@@ -100,6 +104,79 @@ class InteractiveProfileTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "receipt must be a JSON object"):
             interactive_profile.inspect(self.receipt)
+
+    def test_audited_heartbeat_decodes_armed_state_from_mavlink_v2(self) -> None:
+        payload = bytes((0, 0, 0, 0, 2, 3, 0x80, 4, 3))
+        frame = bytes((0xFD, len(payload), 0, 0, 1, 1, 0, 0, 0, 0)) + payload + b"\x00\x00"
+        state = interactive_profile._decode_heartbeat_state(base64.b64encode(frame).decode())
+
+        self.assertEqual(state["armed"], True)
+        self.assertEqual(state["mode"], "STABILIZE")
+        self.assertEqual(state["customMode"], 0)
+        self.assertIsNone(interactive_profile._decode_heartbeat_state("not-base64"))
+
+    def test_live_heartbeat_requires_valid_mavlink_crc(self) -> None:
+        payload = bytes((0, 0, 0, 0, 2, 3, 0, 4, 3))
+        header = bytes((0xFD, len(payload), 0, 0, 0, 1, 1, 0, 0, 0))
+        crc = interactive_profile._mavlink_x25(header[1:] + payload + bytes((50,)))
+        frame = header + payload + crc.to_bytes(2, "little")
+
+        self.assertEqual(interactive_profile._decode_live_heartbeat(frame)["armed"], False)
+        self.assertIsNone(interactive_profile._decode_live_heartbeat(frame[:-1] + b"\x00"))
+
+    def test_headless_profile_reports_fresh_disarmed_state_without_qgc(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["profile"] = interactive_profile.HEADLESS_PROFILE
+        receipt["processes"].pop("qgcUserProcess")
+        self.add_supervisor_process(receipt)
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with (
+            patch(
+                "interactive_profile.process_identity",
+                side_effect={
+                    9001: receipt["processes"]["mavlinkBridge"]["identity"],
+                    9003: "supervisor-process",
+                }.get,
+            ),
+            patch(
+                "interactive_profile._run_owned_port_statuses",
+                return_value={"natsPort": "open", "bridgeUdpBindPort": "open"},
+            ),
+            patch(
+                "interactive_profile.subprocess.run",
+                return_value=type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+            ),
+            patch(
+                "interactive_profile.sample_telemetry",
+                return_value={"status": "fresh", "armed": None, "mode": None},
+            ),
+            patch(
+                "interactive_profile.sample_bridge_heartbeat",
+                return_value={"status": "unverified"},
+            ),
+            patch(
+                "interactive_profile.sample_headless_bridge_heartbeat",
+                return_value={
+                    "status": "observed",
+                    "armed": False,
+                    "mode": "STABILIZE",
+                    "stateSource": "CRC-validated live MAVLink HEARTBEAT from configured bridge UDP peer",
+                },
+            ),
+            patch(
+                "interactive_profile.sample_gazebo_pose_recorder",
+                return_value={"status": "fresh"},
+            ),
+        ):
+            result = interactive_profile.inspect(self.receipt)
+
+        self.assertEqual(result["status"], "recorded", result)
+        self.assertEqual(result["armed"], False)
+        self.assertEqual(
+            result["telemetry"]["stateSource"], result["bridgeHeartbeat"]["stateSource"]
+        )
+        self.assertEqual(result["qgcHeartbeat"]["status"], "not-applicable")
+        self.assertEqual(result["qgcPeerRouting"]["status"], "not-applicable")
 
     def test_status_rejects_receipt_outside_run_directory_before_probes(self) -> None:
         other_run = Path(self.temp.name) / "other-run"
@@ -273,7 +350,14 @@ class InteractiveProfileTests(unittest.TestCase):
                 json.loads(self.receipt.read_text(encoding="utf-8"))
             )
 
-        self.assertEqual(result, {"natsPort": "unavailable", "bridgeUdpBindPort": "unavailable"})
+        self.assertEqual(
+            result,
+            {
+                "natsPort": "unavailable",
+                "bridgeUdpBindPort": "unavailable",
+                "qgcUdpListenPort": "unavailable",
+            },
+        )
         self.assertTrue(
             all(
                 call.kwargs["timeout"] == interactive_profile.PORT_PROBE_TIMEOUT_SECONDS
@@ -578,6 +662,29 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "stale")
         self.assertIn("two advancing", result["reason"])
 
+    def test_pose_recorder_accepts_advancing_protobuf_json_timestamp_strings(self) -> None:
+        flight_directory = Path(self.temp.name) / "flight-proof"
+        flight_directory.mkdir()
+        pose_path = flight_directory / "gazebo-pose.jsonl"
+        samples = [
+            {
+                "header": {"stamp": {"sec": str(second), "nsec": "250000000"}},
+                "pose": [{"name": "isr", "position": {"x": 0.1, "y": 0.2, "z": 0.3}}],
+            }
+            for second in (5, 6)
+        ]
+        pose_path.write_text(
+            "".join(f"{json.dumps(sample)}\n" for sample in samples), encoding="utf-8"
+        )
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["flightRunDirectory"] = str(flight_directory)
+
+        result = interactive_profile.sample_gazebo_pose_recorder(receipt)
+
+        self.assertEqual(result["status"], "fresh")
+        self.assertEqual(result["poseName"], "isr")
+        self.assertEqual(result["simulationTimeAdvanceSeconds"], 1.0)
+
     def test_pose_recorder_rejects_missing_position_coordinate(self) -> None:
         flight_directory = Path(self.temp.name) / "flight-proof"
         flight_directory.mkdir()
@@ -758,6 +865,25 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["telemetry"]["status"], "unavailable")
         self.assertIsNone(result["armed"])
 
+    @patch("interactive_profile.process_identity", return_value=None)
+    def test_status_accepts_removed_supervisor_records_after_owned_process_exit(
+        self, _identity
+    ) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        self.add_supervisor_process(receipt)
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        for process in receipt["processes"].values():
+            identity_path = process.get("supervisorIdentityPath")
+            if identity_path:
+                Path(identity_path).unlink()
+
+        with patch("interactive_profile.subprocess.run") as run:
+            run.return_value.returncode = 1
+            result = interactive_profile.inspect(self.receipt)
+
+        self.assertEqual(result["status"], "stopped")
+        self.assertEqual(result["processValidation"]["status"], "valid")
+
     def test_stop_removes_only_valid_stale_run_owned_supervisor_markers(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         self.add_supervisor_process(receipt)
@@ -909,6 +1035,62 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(args[1], "stop")
         self.assertEqual(args[2], str((Path(self.temp.name) / ".bridge.identity").resolve()))
 
+    @patch("interactive_profile.time.sleep")
+    @patch(
+        "interactive_profile.process_identity",
+        side_effect=["drone-1", "drone-1", "drone-1"],
+    )
+    def test_stop_waits_for_run_local_supervisor_identity_record(self, _identity, _sleep) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        identity_path = Path(self.temp.name) / ".bridge.identity"
+        receipt["processes"]["mavlinkBridge"]["supervisorIdentityPath"] = str(identity_path)
+        identity_path.write_text("pid=8991\nchild_pid=9001\nfifo=/tmp/bridge.control\n")
+        identity_path.chmod(0o600)
+        receipt["processes"]["mavlinkBridge"]["identity"] = "drone-1"
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+
+        with (
+            patch(
+                "interactive_profile._supervisor_identity_path",
+                side_effect=[None, None, None, None, identity_path],
+            ),
+            patch("interactive_profile._stop_supervised_process", return_value="stopped") as stop,
+        ):
+            result = interactive_profile.stop_owned(self.receipt)
+
+        self.assertEqual(result["results"]["mavlinkBridge"], "stopped")
+        stop.assert_called_once()
+
+    def test_completed_supervisor_cleanup_accepts_pid_reuse_after_control_record_removal(
+        self,
+    ) -> None:
+        identity_path = Path(self.temp.name) / ".bridge.identity"
+        identity_path.write_text("run-owned supervisor record\n", encoding="utf-8")
+        module_root = Path(self.temp.name) / "module"
+        module_root.mkdir()
+        supervisor = module_root / ".process-supervisor"
+        supervisor.write_text("test supervisor stub\n", encoding="utf-8")
+        supervisor.chmod(0o700)
+        self.addCleanup(lambda: supervisor.unlink(missing_ok=True))
+
+        def complete_stop(*_args, **_kwargs):
+            identity_path.unlink()
+            return type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+        with (
+            patch("interactive_profile.__file__", str(module_root / "interactive_profile.py")),
+            patch("interactive_profile.subprocess.run", side_effect=complete_stop),
+            patch(
+                "interactive_profile._wait_for_owned_exit",
+                return_value="identity-changed-after-interrupt",
+            ),
+        ):
+            result = interactive_profile._stop_supervised_process(
+                9001, "original process identity", identity_path
+            )
+
+        self.assertEqual(result, "stopped")
+
     @patch(
         "interactive_profile.process_identity",
         return_value="owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
@@ -963,15 +1145,23 @@ class InteractiveProfileTests(unittest.TestCase):
             run.side_effect = [
                 type("Result", (), {"returncode": 1})(),
                 type("Result", (), {"returncode": 0})(),
+                type("Result", (), {"returncode": 1})(),
             ]
             result = self.real_port_status(json.loads(self.receipt.read_text(encoding="utf-8")))
 
-        self.assertEqual(result, {"natsPort": "closed", "bridgeUdpBindPort": "open"})
+        self.assertEqual(
+            result,
+            {
+                "natsPort": "closed",
+                "bridgeUdpBindPort": "open",
+                "qgcUdpListenPort": "closed",
+            },
+        )
         commands = [call.args[0] for call in run.call_args_list]
-        self.assertEqual(len(commands), 2)
+        self.assertEqual(len(commands), 3)
         self.assertIn("-iTCP:14226", commands[0])
         self.assertIn("-iUDP:14651", commands[1])
-        self.assertNotIn("14550", str(commands))
+        self.assertIn("-iUDP:14550", commands[2])
 
     @patch("interactive_profile.process_identity")
     @patch("interactive_profile.os.kill")
@@ -1039,7 +1229,7 @@ class InteractiveProfileTests(unittest.TestCase):
             result = interactive_profile.stop_owned(self.receipt)
 
         self.assertEqual(result["status"], "partial")
-        self.assertEqual(result["results"]["mavlinkBridge"], "supervisor-stop-rejected")
+        self.assertEqual(result["results"]["mavlinkBridge"], "supervisor-stop-rejected: stale")
 
     @patch(
         "interactive_profile.process_identity",

@@ -8,6 +8,7 @@ import base64
 import json
 import math
 import os
+import socket
 import stat
 import subprocess
 import sys
@@ -20,7 +21,7 @@ from typing import Any
 STOP_TIMEOUT_SECONDS = 5.0
 STOP_POLL_SECONDS = 0.1
 TELEMETRY_TIMEOUT_SECONDS = 1.5
-PORT_PROBE_TIMEOUT_SECONDS = 2.0
+PORT_PROBE_TIMEOUT_SECONDS = 5.0
 PROCESS_IDENTITY_TIMEOUT_SECONDS = 2.0
 SUPERVISOR_REQUEST_TIMEOUT_SECONDS = 2.0
 POSE_RECORDER_MAX_AGE_SECONDS = 1.5
@@ -28,6 +29,8 @@ POSE_RECORDER_MAX_FUTURE_SECONDS = 0.25
 MAVLINK_HEARTBEAT_MAX_AGE_SECONDS = 2.0
 PROFILE_CONTRACT = "damn-vulnerable-drone.interactive-profile"
 PROFILE_VERSION = "1.0.0"
+INTERACTIVE_PROFILE = "interactive-antoine-gazebo"
+HEADLESS_PROFILE = "headless-antoine-gazebo-mavlink"
 
 
 def _load_receipt(receipt_path: Path) -> dict[str, Any]:
@@ -37,7 +40,7 @@ def _load_receipt(receipt_path: Path) -> dict[str, Any]:
     if (
         receipt.get("contract") != PROFILE_CONTRACT
         or receipt.get("version") != PROFILE_VERSION
-        or receipt.get("profile") != "interactive-antoine-gazebo"
+        or receipt.get("profile") not in {INTERACTIVE_PROFILE, HEADLESS_PROFILE}
     ):
         raise ValueError("unsupported interactive profile receipt contract or version")
     return receipt
@@ -328,12 +331,139 @@ def _sample_audited_heartbeat(
     source = envelope.get("source")
     if not isinstance(source, str) or not source.startswith("127.0.0.1:"):
         return {"status": "unverified", "reason": f"{label} heartbeat did not arrive from loopback"}
-    return {
+    result = {
         "status": "observed",
         "source": source,
         "ageSeconds": max(0.0, age),
         "messageId": 0,
         "reason": f"fresh loopback {label} heartbeat is present in the run-owned JetStream audit",
+    }
+    state = _decode_heartbeat_state(envelope.get("raw_base64"))
+    if state is not None:
+        result.update(state)
+    return result
+
+
+def _decode_heartbeat_state(raw_base64: Any) -> dict[str, Any] | None:
+    """Decode the mode and armed flag from a bridge-validated HEARTBEAT frame."""
+    if not isinstance(raw_base64, str):
+        return None
+    try:
+        raw = base64.b64decode(raw_base64, validate=True)
+    except (ValueError, TypeError):
+        return None
+    if len(raw) < 17:
+        return None
+    if raw[0] == 0xFD:
+        payload_length, header_length = raw[1], 10
+        message_id = int.from_bytes(raw[7:10], "little")
+    elif raw[0] == 0xFE:
+        payload_length, header_length = raw[1], 6
+        message_id = raw[5]
+    else:
+        return None
+    if message_id != 0 or payload_length < 9 or len(raw) < header_length + payload_length + 2:
+        return None
+    payload = raw[header_length : header_length + payload_length]
+    custom_mode = int.from_bytes(payload[0:4], "little")
+    base_mode = payload[6]
+    mode_names = {0: "STABILIZE", 1: "GUIDED", 2: "AUTO", 3: "HOLD", 4: "RTL", 5: "LAND"}
+    return {
+        "armed": bool(base_mode & 0x80),
+        "mode": mode_names.get(custom_mode, f"UNKNOWN_{custom_mode}"),
+        "customMode": custom_mode,
+        "stateSource": "validated bridge-audited MAVLink HEARTBEAT",
+    }
+
+
+def _mavlink_x25(data: bytes) -> int:
+    crc = 0xFFFF
+    for byte in data:
+        temporary = byte ^ (crc & 0xFF)
+        temporary ^= (temporary << 4) & 0xFF
+        crc = ((crc >> 8) ^ (temporary << 8) ^ (temporary << 3) ^ (temporary >> 4)) & 0xFFFF
+    return crc
+
+
+def _decode_live_heartbeat(raw: bytes) -> dict[str, Any] | None:
+    """Validate a MAVLink HEARTBEAT frame and extract its base flight state."""
+    if len(raw) < 17:
+        return None
+    if raw[0] == 0xFD:
+        payload_length, header_length = raw[1], 10
+        message_id = int.from_bytes(raw[7:10], "little")
+        signed = bool(raw[2] & 0x01)
+        system_id, component_id = raw[5], raw[6]
+    elif raw[0] == 0xFE:
+        payload_length, header_length = raw[1], 6
+        message_id, signed = raw[5], False
+        system_id, component_id = raw[3], raw[4]
+    else:
+        return None
+    frame_length = header_length + payload_length + 2 + (13 if signed else 0)
+    if (
+        message_id != 0
+        or system_id != 1
+        or component_id != 1
+        or payload_length < 9
+        or len(raw) < frame_length
+    ):
+        return None
+    checksum_offset = header_length + payload_length
+    expected_crc = int.from_bytes(raw[checksum_offset : checksum_offset + 2], "little")
+    if _mavlink_x25(raw[1:checksum_offset] + bytes((50,))) != expected_crc:
+        return None
+    payload = raw[header_length:checksum_offset]
+    custom_mode = int.from_bytes(payload[0:4], "little")
+    mode_names = {0: "STABILIZE", 1: "GUIDED", 2: "AUTO", 3: "HOLD", 4: "RTL", 5: "LAND"}
+    return {
+        "armed": bool(payload[6] & 0x80),
+        "mode": mode_names.get(custom_mode, f"UNKNOWN_{custom_mode}"),
+        "customMode": custom_mode,
+        "stateSource": "CRC-validated live MAVLink HEARTBEAT from configured bridge UDP peer",
+    }
+
+
+def sample_headless_bridge_heartbeat(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Observe fresh bridge output on the reserved QGC peer port in headless mode."""
+    ports = receipt.get("ports")
+    peer_port = ports.get("qgcUdpListen") if isinstance(ports, dict) else None
+    bridge_port = ports.get("bridgeUdpBind") if isinstance(ports, dict) else None
+    if not all(
+        isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535
+        for port in (peer_port, bridge_port)
+    ):
+        return {"status": "unverified", "reason": "headless profile has invalid bridge UDP ports"}
+    deadline = time.monotonic() + 0.8
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as observer:
+            observer.bind(("127.0.0.1", peer_port))
+            observer.settimeout(0.1)
+            while time.monotonic() < deadline:
+                try:
+                    raw, source = observer.recvfrom(4096)
+                except TimeoutError:
+                    continue
+                if source != ("127.0.0.1", bridge_port):
+                    continue
+                state = _decode_live_heartbeat(raw)
+                if state is not None:
+                    return {
+                        "status": "observed",
+                        "source": f"{source[0]}:{source[1]}",
+                        "evidenceSource": "live UDP output",
+                        "cryptographicallyAuthenticated": False,
+                        "reason": "fresh CRC-valid HEARTBEAT matched the receipt-owned bridge bind address",
+                        **state,
+                    }
+    except OSError:
+        return {
+            "status": "unverified",
+            "reason": "reserved headless MAVLink peer port is unavailable",
+        }
+    return {
+        "status": "stale",
+        "reason": "no fresh bridge HEARTBEAT arrived on the headless UDP peer",
     }
 
 
@@ -400,38 +530,32 @@ def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
         stamp = header.get("stamp") if isinstance(header, dict) else None
         if not isinstance(stamp, dict):
             continue
-        sec, nsec = stamp.get("sec"), stamp.get("nsec", 0)
-        if any(
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            for value in (sec, nsec)
-        ):
+        sec = _gazebo_timestamp_integer(stamp.get("sec"))
+        nsec = _gazebo_timestamp_integer(stamp.get("nsec", 0))
+        if sec is None or nsec is None or sec < 0 or not 0 <= nsec < 1_000_000_000:
             continue
         simulation_time = sec + nsec / 1_000_000_000
         poses = message.get("pose")
         if not isinstance(poses, list):
             poses = [message]
-        named_pose = next(
-            (
-                pose
-                for pose in poses
-                if isinstance(pose, dict)
-                and isinstance(pose.get("name"), str)
-                and isinstance(pose.get("position", {}), dict)
-            ),
-            None,
-        )
+        named_pose = None
+        for pose in poses:
+            if not isinstance(pose, dict) or not isinstance(pose.get("name"), str):
+                continue
+            position = pose.get("position")
+            if not isinstance(position, dict):
+                continue
+            coordinates = [position.get(axis) for axis in ("x", "y", "z")]
+            if any(
+                isinstance(value, bool)
+                or not isinstance(value, (int, float))
+                or not math.isfinite(value)
+                for value in coordinates
+            ):
+                continue
+            named_pose = pose
+            break
         if named_pose is None:
-            continue
-        position = named_pose.get("position", {})
-        coordinates = [position.get(axis) for axis in ("x", "y", "z")]
-        if any(
-            isinstance(value, bool)
-            or not isinstance(value, (int, float))
-            or not math.isfinite(value)
-            for value in coordinates
-        ):
             continue
         samples.append(
             {
@@ -457,6 +581,17 @@ def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
         ),
         "fileAgeSeconds": max(0.0, age),
     }
+
+
+def _gazebo_timestamp_integer(value: Any) -> int | None:
+    """Accept protobuf JSON integer strings and integral JSON numbers only."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isascii() and value.isdecimal():
+        return int(value)
+    return None
 
 
 def inspect(receipt_path: Path) -> dict[str, Any]:
@@ -543,7 +678,10 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
     process_error = None if process_records_valid else "processes must be an object"
     if not process_records_valid:
         processes = {}
-    for name, process in processes.items():
+    ordered_processes = sorted(
+        processes.items(), key=lambda item: (item[0] != "mavlinkBridge", item[0])
+    )
+    for name, process in ordered_processes:
         if not isinstance(process, dict):
             process_records_valid = False
             process_error = "each process record must be an object"
@@ -555,14 +693,6 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
             }
             continue
         control_identity = process.get("supervisorIdentityPath")
-        if control_identity is not None and (
-            not isinstance(control_identity, str) or not control_identity
-        ):
-            process_records_valid = False
-            process_error = "supervisor identity path must be a non-empty string"
-        elif control_identity is not None and _supervisor_identity_path(receipt, process) is None:
-            process_records_valid = False
-            process_error = "supervisor identity must be a regular run-local file"
         pid = process.get("pid")
         try:
             actual = process_identity(pid) if isinstance(pid, int) and pid > 1 else None
@@ -574,6 +704,28 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
                 "error": "identity-probe-unavailable",
             }
             continue
+        if control_identity is not None:
+            control_path = _supervisor_identity_path(receipt, process)
+            control_candidate = (
+                Path(control_identity) if isinstance(control_identity, str) else None
+            )
+            run_directory = receipt.get("runDirectory")
+            try:
+                candidate_is_run_local = (
+                    control_candidate is not None
+                    and control_candidate.is_absolute()
+                    and not control_candidate.is_symlink()
+                    and isinstance(run_directory, str)
+                    and control_candidate.parent.resolve(strict=True)
+                    == Path(run_directory).resolve(strict=True)
+                )
+            except (OSError, RuntimeError):
+                candidate_is_run_local = False
+            if control_path is None and (actual is not None or not candidate_is_run_local):
+                process_records_valid = False
+                process_error = (
+                    "supervisor identity must be a regular run-local file for a live process"
+                )
         checks[name] = {
             "pid": pid,
             "alive": actual is not None,
@@ -657,8 +809,24 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         and f"--qgc-peer {expected_qgc_peer}" in bridge_identity
         and f"--qgc-bind {expected_bridge_bind}" in bridge_identity
     )
-    qgc_heartbeat = sample_qgc_heartbeat(receipt)
     bridge_heartbeat = sample_bridge_heartbeat(receipt)
+    headless = receipt.get("profile") == HEADLESS_PROFILE
+    if headless and bridge_heartbeat.get("status") != "observed":
+        bridge_heartbeat = sample_headless_bridge_heartbeat(receipt)
+    if (
+        telemetry.get("status") == "fresh"
+        and telemetry.get("armed") is None
+        and isinstance(bridge_heartbeat.get("armed"), bool)
+    ):
+        telemetry = dict(telemetry)
+        telemetry["armed"] = bridge_heartbeat["armed"]
+        telemetry["mode"] = bridge_heartbeat.get("mode")
+        telemetry["stateSource"] = bridge_heartbeat["stateSource"]
+    qgc_heartbeat = (
+        {"status": "not-applicable", "reason": "headless profile has no QGC process"}
+        if headless
+        else sample_qgc_heartbeat(receipt)
+    )
     qgc_process = checks.get("qgcUserProcess", {})
     qgc_identity_matches = (
         isinstance(qgc_process, dict)
@@ -666,20 +834,24 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         and qgc_process.get("identityMatches") is True
     )
     path_observed = qgc_heartbeat.get("status") == "observed" and routing_configured
-    qgc_peer_routing = {
-        "status": "observed"
-        if path_observed and qgc_identity_matches
-        else ("configured-unverified" if routing_configured else "unverified"),
-        "reason": (
-            "fresh loopback heartbeat traversed the configured bridge while the recorded QGC process was alive; UDP source process is not authenticated"
+    qgc_peer_routing = (
+        {"status": "not-applicable", "reason": "headless profile has no QGC peer"}
+        if headless
+        else {
+            "status": "observed"
             if path_observed and qgc_identity_matches
-            else "configured bridge peer has no corroborated fresh heartbeat from a live recorded QGC process"
-        ),
-    }
+            else ("configured-unverified" if routing_configured else "unverified"),
+            "reason": (
+                "fresh loopback heartbeat traversed the configured bridge while the recorded QGC process was alive; UDP source process is not authenticated"
+                if path_observed and qgc_identity_matches
+                else "configured bridge peer has no corroborated fresh heartbeat from a live recorded QGC process"
+            ),
+        }
+    )
     gazebo_pose_recorder = sample_gazebo_pose_recorder(receipt)
     required_independent_evidence_verified = (
         bridge_heartbeat["status"] == "observed"
-        and qgc_peer_routing["status"] == "observed"
+        and (headless or qgc_peer_routing["status"] == "observed")
         and gazebo_pose_recorder["status"] == "fresh"
     )
     owned_processes = [
@@ -688,11 +860,9 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         if isinstance(item, dict) and "pid" in item and not name.lower().startswith("qgc")
     ]
     run_owned_ports = [checks.get("natsPort"), checks.get("bridgeUdpBindPort")]
-    active_ports = [
-        checks.get("natsPort"),
-        checks.get("qgcUdpListenPort"),
-        checks.get("bridgeUdpBindPort"),
-    ]
+    active_ports = [checks.get("natsPort"), checks.get("bridgeUdpBindPort")]
+    if not headless:
+        active_ports.insert(1, checks.get("qgcUdpListenPort"))
     stopped = (
         process_records_valid
         and ports_valid
@@ -737,6 +907,7 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
             "reason": "run directory changed during inspection" if stale else None,
         },
         "callsign": receipt.get("callsign"),
+        "profile": receipt.get("profile"),
         "ports": receipt.get("ports"),
         "portValidation": {"status": "valid" if ports_valid else "invalid", "errors": port_errors},
         "receiptStatus": receipt.get("status"),
@@ -746,7 +917,7 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
                 "invalid"
                 if not process_records_valid
                 else "valid"
-                if required_processes_matched
+                if required_processes_matched or stopped
                 else "incomplete"
             ),
             "reason": process_error
@@ -813,7 +984,10 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         if name not in processes or not isinstance(processes.get(name), dict)
     ]
     results = {}
-    for name, process in processes.items():
+    ordered_processes = sorted(
+        processes.items(), key=lambda item: (item[0] != "mavlinkBridge", item[0])
+    )
+    for name, process in ordered_processes:
         if name.lower().startswith("qgc"):
             results[name] = "preserved-user-owned"
             continue
@@ -852,7 +1026,21 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         elif actual != expected:
             results[name] = "identity-mismatch-not-signalled"
         else:
+            control_value = process.get("supervisorIdentityPath")
+            control_candidate = Path(control_value) if isinstance(control_value, str) else None
             control_path = _supervisor_identity_path(receipt, process)
+            if control_path is None and control_candidate is not None:
+                # Early foreground supervisors have a valid process identity
+                # before their private FIFO record is published. Retry the
+                # lookup briefly, while retaining the fail-closed requirement.
+                deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
+                while (
+                    control_path is None
+                    and not control_candidate.is_symlink()
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(STOP_POLL_SECONDS)
+                    control_path = _supervisor_identity_path(receipt, process)
             if control_path is None:
                 results[name] = "supervisor-identity-required-not-signalled"
             else:
@@ -908,7 +1096,11 @@ def _validate_profile_ports(ports: Any) -> tuple[bool, list[str]]:
 def _run_owned_port_statuses(receipt: dict[str, Any]) -> dict[str, str]:
     ports = receipt.get("ports")
     checks = {}
-    for name, protocol in (("nats", "TCP"), ("bridgeUdpBind", "UDP")):
+    for name, protocol in (
+        ("nats", "TCP"),
+        ("bridgeUdpBind", "UDP"),
+        ("qgcUdpListen", "UDP"),
+    ):
         port = ports.get(name) if isinstance(ports, dict) else None
         result_name = f"{name}Port"
         if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
@@ -1054,8 +1246,16 @@ def _stop_supervised_process(pid: int, expected: str, identity_path: Path) -> st
             current = process_identity(pid)
         except OSError:
             return "identity-probe-unavailable"
-        return "already-stopped" if current is None else "supervisor-stop-rejected"
-    return _wait_for_owned_exit(pid, expected)
+        if current is None:
+            return "already-stopped"
+        diagnostic = (request.stderr or request.stdout).strip().replace("\n", " ")
+        return f"supervisor-stop-rejected: {diagnostic[:240]}"
+    outcome = _wait_for_owned_exit(pid, expected)
+    if outcome == "identity-changed-after-interrupt" and not identity_path.exists():
+        # A completed run supervisor removes its private identity atomically
+        # with process-group cleanup; the numeric PID may then be reused.
+        return "stopped"
+    return outcome
 
 
 def _wait_for_owned_exit(pid: int, expected: str) -> str:
