@@ -1,0 +1,582 @@
+diff --git a/scripts/gz_flight_proof.sh b/scripts/gz_flight_proof.sh
+index 0fff411456..d5ebc071af 100755
+--- a/scripts/gz_flight_proof.sh
++++ b/scripts/gz_flight_proof.sh
+@@ -582,6 +582,9 @@ mkdir -p "$RUN_DIR/applier-neutral" "$RUN_DIR/applier-authorized"
+ export DVD_APPLIER_BIN="$SIMROOT/tools/gz-sitl-applier/gz-sitl-applier"
+ export NATS_URL RUN_DIR ANTOINE_COMMAND_PUBLIC_KEY_HEX AUTHORITY_PUBLIC_KEY_HEX
+ export WORLD_SHA256 FRAME_ID AGENT
++APPLIER_LIFECYCLE_REQUIRED=1
++[ "$INTERACTIVE_CONTROL" = "1" ] && APPLIER_LIFECYCLE_REQUIRED=0
++export APPLIER_LIFECYCLE_REQUIRED
+   # This script string intentionally expands environment exported above in its child shell.
+   # shellcheck disable=SC2016
+   start_owned bash -c 'nats --server "$NATS_URL" sub --raw "furia.gzsitl.commands.>" 2>/dev/null | env \
+@@ -590,6 +593,7 @@ export WORLD_SHA256 FRAME_ID AGENT
+   FURIA_CORE_EXECUTION_GRANT_PUBLIC_KEY_HEX="$AUTHORITY_PUBLIC_KEY_HEX" \
+   FURIA_GZ_APPLIER_NEUTRAL_DIR="$RUN_DIR/applier-neutral" \
+   FURIA_GZ_APPLIER_AUTHORIZED_DIR="$RUN_DIR/applier-authorized" \
++  FURIA_GZ_APPLIER_REQUIRE_LIFECYCLE="$APPLIER_LIFECYCLE_REQUIRED" \
+   FURIA_SITL_RUN_ID="${RUN_DIR##*/}" GZ_SITL_WORLD_SHA256="sha256:$WORLD_SHA256" \
+   FURIA_PRIME_ENU_FRAME_ID="$FRAME_ID" "$DVD_APPLIER_BIN" --agents "$AGENTS_CSV" --verbose' \
+   >"$LOG_DIR/gz-applier.log" 2>&1
+@@ -649,6 +653,10 @@ for callsign in "${CALLSIGNS[@]}"; do
+ done
+ 
+ # ---- 7. local authority ------------------------------------------------------
++if [ "$APPLIER_LIFECYCLE_REQUIRED" = "1" ]; then
++  wait_for "actuator lifecycle intake ready" 40 \
++    "grep -q 'ready with neutral outputs' '$LOG_DIR/gz-applier.log' 2>/dev/null"
++fi
+ step "issuing per-vehicle local (non-Core) grants, mission setpoints and navigation health"
+ AUTHORITY_PIDS=()
+ for i in "${!CALLSIGNS[@]}"; do
+@@ -663,6 +671,10 @@ for i in "${!CALLSIGNS[@]}"; do
+     authority_log="$LOG_DIR/local-authority-$callsign.log"
+     authority_evidence="$RUN_DIR/flight-evidence-$callsign.json"
+   fi
++  lifecycle_args=()
++  if [ "$APPLIER_LIFECYCLE_REQUIRED" = "1" ]; then
++    lifecycle_args=(--actuator-state-dir "$RUN_DIR/applier-neutral")
++  fi
+   start_owned "$BIN_DIR/antoine_gz_local_authority" \
+     --callsign "$callsign" --nats-url "$NATS_URL" --world-frame-id "$FRAME_ID" \
+     --waypoints "$waypoints" --arrival-radius-m "$ARRIVAL_RADIUS_M" \
+@@ -678,6 +690,7 @@ for i in "${!CALLSIGNS[@]}"; do
+     --flight-seconds "$FLIGHT_SECONDS" --revoke-after-seconds "$REVOKE_AFTER_SECONDS" \
+     --interactive-control "$INTERACTIVE_CONTROL" \
+     --settle-seconds "$SETTLE_SECONDS" \
++    "${lifecycle_args[@]}" \
+     --evidence-out "$authority_evidence" \
+     >"$authority_log" 2>&1
+   record_run_binary_launch "local-authority-$callsign" antoine_gz_local_authority
+diff --git a/sitl/antoine-sitl/src/attitude_control.rs b/sitl/antoine-sitl/src/attitude_control.rs
+index 832538aa34..4aed8614d4 100644
+--- a/sitl/antoine-sitl/src/attitude_control.rs
++++ b/sitl/antoine-sitl/src/attitude_control.rs
+@@ -4,6 +4,13 @@ use super::{qconj, rotate_by_quat, shortest_arc};
+ pub(super) fn critical_gains(inertia: f64, bandwidth: f64) -> (f64, f64) {
+     (2.0 * inertia * bandwidth, bandwidth / 2.0)
+ }
++pub(super) fn sampled_critical_gains(inertia: f64, bandwidth: f64, control_hz: f64) -> (f64, f64) {
++    // The continuous-time gains omit the pose derivative, 0.5 rate filter,
++    // transport and motor delays. Keep omega_n * sample_period <= 0.08 for
++    // this local X500 cascade. At 25 Hz this gives 2 rad/s rather than 4;
++    // the delayed sampled-plant regression below exposes the old instability.
++    critical_gains(inertia, bandwidth.min(control_hz * 0.08))
++}
+ pub(super) fn tilt_rate(
+     quaternion: [f64; 4],
+     desired_up_world: [f64; 3],
+@@ -23,6 +30,76 @@ pub(super) fn tilt_rate(
+ #[cfg(test)]
+ mod tests {
+     use super::*;
++
++    fn delayed_roll_response(
++        bandwidth: f64,
++        sensor_delay: usize,
++        command_delay: usize,
++    ) -> (f64, f64) {
++        use std::collections::VecDeque;
++        let inertia = 0.02945;
++        let (torque_gain, angle_gain) = critical_gains(inertia, bandwidth);
++        let mut angle: f64 = 0.05;
++        let mut rate = 0.0;
++        let mut filtered_rate = 0.0;
++        let mut motor_torque = 0.0;
++        let mut applied_torque = 0.0;
++        let mut last_sample = angle;
++        let mut history = vec![angle];
++        let mut pending = VecDeque::new();
++        let mut peak = angle.abs();
++        // Linearized pinned-inertia roll plant, 1 ms integration, 25 Hz
++        // zero-order-hold control, 25 ms motor lag and the actual 0.5 filter.
++        // Stop at 0.25 rad: departure from the linear regime is failure,
++        // not evidence about the simulated vehicle's subsequent trajectory.
++        for step in 0_usize..12_000 {
++            if step.is_multiple_of(40) {
++                let measured = history[step.saturating_sub(sensor_delay)];
++                let raw_rate = (measured - last_sample) / 0.04;
++                last_sample = measured;
++                filtered_rate = 0.5 * raw_rate + 0.5 * filtered_rate;
++                pending.push_back((
++                    step + command_delay,
++                    torque_gain * (-angle_gain * measured - filtered_rate),
++                ));
++            }
++            while pending.front().is_some_and(|(due, _)| *due <= step) {
++                applied_torque = pending.pop_front().unwrap().1;
++            }
++            motor_torque += (applied_torque - motor_torque) * (1.0 - (-0.001_f64 / 0.025).exp());
++            rate += motor_torque / inertia * 0.001;
++            angle += rate * 0.001;
++            history.push(angle);
++            peak = peak.max(angle.abs());
++            if peak > 0.25 {
++                break;
++            }
++        }
++        (peak, angle.abs())
++    }
++
++    #[test]
++    fn sampled_bandwidth_retains_damping_and_scales_with_control_rate() {
++        for hz in [20.0_f64, 25.0, 50.0, 100.0] {
++            let (torque, rate) = sampled_critical_gains(0.02945, 4.0, hz);
++            let frequency = (torque * rate / 0.02945).sqrt();
++            assert!((frequency - 4.0_f64.min(hz * 0.08)).abs() < 1e-10);
++            assert!((torque / 0.02945 / (2.0 * frequency) - 1.0).abs() < 1e-10);
++        }
++    }
++
++    #[test]
++    fn sampled_gain_avoids_the_observed_delayed_roll_instability() {
++        let (torque, rate) = sampled_critical_gains(0.02945, 4.0, 25.0);
++        let bandwidth = (torque * rate / 0.02945).sqrt();
++        for delay in [40, 60, 80] {
++            let (old_peak, _) = delayed_roll_response(4.0, delay, delay);
++            assert!(old_peak > 0.25, "old gain should expose instability: {delay}");
++            let (peak, final_angle) = delayed_roll_response(bandwidth, delay, delay);
++            assert!(peak <= 0.050_001, "bounded small-angle transient: {delay}");
++            assert!(final_angle < 0.001, "roll should converge: {delay}");
++        }
++    }
+     #[test]
+     fn critical_gains_have_unit_damping_ratio() {
+         let inertia = 0.02945;
+diff --git a/sitl/antoine-sitl/src/bin/antoine_gz_local_authority.rs b/sitl/antoine-sitl/src/bin/antoine_gz_local_authority.rs
+index b1ff82bb5f..e48d600e25 100644
+--- a/sitl/antoine-sitl/src/bin/antoine_gz_local_authority.rs
++++ b/sitl/antoine-sitl/src/bin/antoine_gz_local_authority.rs
+@@ -802,7 +802,8 @@ struct Observations {
+     actuator_commands: Vec<serde_json::Value>,
+     stop_commands: Vec<serde_json::Value>,
+     stop_events: Vec<serde_json::Value>,
+-    active_stop_started_at_ms: Option<u64>,
++    clock_origin: Instant,
++    active_stop_started_at_ms: Option<(u64, u64)>,
+     grant_accepts: u64,
+     grant_renewals: u64,
+     /// Highest lease sequence a renewal has succeeded for, used to tell a
+@@ -824,6 +825,7 @@ impl Observations {
+             actuator_commands: Vec::new(),
+             stop_commands: Vec::new(),
+             stop_events: Vec::new(),
++            clock_origin: Instant::now(),
+             active_stop_started_at_ms: None,
+             grant_accepts: 0,
+             grant_renewals: 0,
+@@ -839,6 +841,98 @@ fn parse_json(payload: &[u8]) -> Option<serde_json::Value> {
+     serde_json::from_slice(payload).ok()
+ }
+ 
++fn actuator_lifecycle_ack_matches(state: &serde_json::Value, request: &serde_json::Value) -> bool {
++    let Some(issued_at_ms) = request.get("issuedAtMs").and_then(serde_json::Value::as_u64) else {
++        return false;
++    };
++    state.get("contract").and_then(serde_json::Value::as_str)
++        == Some("furia.gzsitl.actuator-lifecycle-state")
++        && state.get("version").and_then(serde_json::Value::as_str) == Some("1.0.0")
++        && state.get("source").and_then(serde_json::Value::as_str) == Some("gz-sitl-applier")
++        && state.get("request") == Some(request)
++        && state.get("armed").and_then(serde_json::Value::as_bool)
++            == request.get("armed").and_then(serde_json::Value::as_bool)
++        && state.get("sequence").and_then(serde_json::Value::as_u64)
++            == request.get("sequence").and_then(serde_json::Value::as_u64)
++        && state.get("runId") == request.get("runId")
++        && state.get("vehicleId") == request.get("identity")
++        && state.get("recordedAtUnixMs").and_then(serde_json::Value::as_u64).is_some_and(|time| {
++            time >= issued_at_ms.saturating_sub(50) && time <= issued_at_ms + 250
++        })
++        && state.get("frameId") == request.get("frameId")
++        && state.get("requestId") == request.get("requestId")
++        && state.get("stopCommandSequence") == request.get("stopCommandSequence")
++}
++
++async fn change_actuator_lifecycle(
++    client: &async_nats::Client,
++    authority: &Arc<tokio::sync::Mutex<Authority>>,
++    observations: &Arc<tokio::sync::Mutex<Observations>>,
++    directory: &str,
++    armed: bool,
++    first_sequence: u64,
++    requests: &mut Vec<serde_json::Value>,
++) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
++    // A bounded handshake with the sole actuator writer, independent of the
++    // grant/stop lifecycle. The acknowledgement must echo this exact signed
++    // request, not merely an armed flag found in an old file.
++    for attempt in 0..10 {
++        let stop_sequence = if armed {
++            0
++        } else {
++            observations
++                .lock()
++                .await
++                .stop_commands
++                .last()
++                .and_then(|value| value.get("sequence"))
++                .and_then(serde_json::Value::as_u64)
++                .unwrap_or(0)
++        };
++        if !armed && stop_sequence == 0 {
++            tokio::time::sleep(Duration::from_millis(200)).await;
++            continue;
++        }
++        let authority = authority.lock().await;
++        let issued_at_ms = now_ms();
++        let sequence = first_sequence + attempt;
++        let mut request = serde_json::json!({
++            "schema": "furia.gzsitl.actuator-lifecycle", "version": "1.0.0",
++            "identity": authority.vehicle_id, "runId": authority.run_id,
++            "frameId": authority.world_frame_id, "sequence": sequence,
++            "requestId": format!("{}:lifecycle:{sequence}", authority.vehicle_id),
++            "armed": armed, "stopCommandSequence": stop_sequence,
++            "issuedAtMs": issued_at_ms, "expiresAtMs": issued_at_ms + 250,
++            "signatureAlgorithm": "Ed25519",
++        });
++        sign_in_place(&authority.key, &mut request)?;
++        let subject = format!("furia.gzsitl.commands.{}", authority.vehicle_id);
++        let state_path = std::path::Path::new(directory)
++            .join(format!("{}.armed-state.json", authority.vehicle_id));
++        drop(authority);
++        requests.push(request.clone());
++        client.publish(subject, serde_json::to_vec(&request)?.into()).await?;
++        client.flush().await?;
++        for _ in 0..4 {
++            tokio::time::sleep(Duration::from_millis(50)).await;
++            let safe_file = std::fs::symlink_metadata(&state_path).is_ok_and(|metadata| {
++                metadata.is_file() && !metadata.file_type().is_symlink() && metadata.len() <= 16_384
++            });
++            if !safe_file {
++                continue;
++            }
++            let Some(state) = std::fs::read(&state_path).ok().and_then(|data| parse_json(&data))
++            else {
++                continue;
++            };
++            if actuator_lifecycle_ack_matches(&state, &request) {
++                return Ok(state);
++            }
++        }
++    }
++    Err(format!("actuator lifecycle handshake timed out: armed={armed}").into())
++}
++
+ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+     let args: Vec<String> = std::env::args().skip(1).collect();
+     let callsign = arg(&args, "--callsign", "drone-1");
+@@ -916,6 +1010,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+         return Err("--revoke-after-seconds must be zero (disabled) or positive and less than --flight-seconds".into());
+     }
+     let evidence_path = arg(&args, "--evidence-out", "");
++    let actuator_state_dir = arg(&args, "--actuator-state-dir", "");
+     let run_id = arg(&args, "--run-id", "antoine-local-authority-run");
+     let revoke_at_end = arg(&args, "--revoke", "1") != "0";
+     let nav_health_subject = arg(&args, "--nav-health-subject", "louviers.nav.health.vehicle-1");
+@@ -1263,6 +1358,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+                     continue;
+                 };
+                 let mut observations = observations.lock().await;
++                let received_at_monotonic_ms =
++                    observations.clock_origin.elapsed().as_millis() as u64;
+                 // The actuator envelopes carry `schema`, not `contract`.
+                 match command.get("schema").and_then(serde_json::Value::as_str) {
+                     Some("furia.gzsitl.veto-cleared-actuator") => {
+@@ -1277,7 +1374,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+                         if observations.actuator_commands.len() < 20_000 {
+                             observations.actuator_commands.push(command);
+                         }
+-                        if let Some(started_at_unix_ms) =
++                        if let Some((started_at_unix_ms, started_at_monotonic_ms)) =
+                             observations.active_stop_started_at_ms.take()
+                         {
+                             let last_stop = observations.stop_events.iter().rev().find(|event| {
+@@ -1308,9 +1405,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+                                 "callsign": callsign,
+                                 "eventSequence": event_sequence,
+                                 "atUnixMs": received_at_unix_ms,
++                                "clockSource": "authority-process-monotonic",
++                                "atMonotonicMs": received_at_monotonic_ms,
+                                 "stopSequence": stop_sequence,
+                                 "holdStartedAtUnixMs": started_at_unix_ms,
+-                                "holdDurationMs": received_at_unix_ms.saturating_sub(started_at_unix_ms),
++                                "holdStartedAtMonotonicMs": started_at_monotonic_ms,
++                                "holdDurationMs": received_at_monotonic_ms.saturating_sub(started_at_monotonic_ms),
++                                "holdWallDurationMs": received_at_unix_ms.saturating_sub(started_at_unix_ms),
+                                 "recoveryActuatorSequence": recovery_actuator_sequence,
+                                 "recoveryGrantSequence": recovery_grant_sequence,
+                             });
+@@ -1329,13 +1430,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+                         let event_sequence = observations.stop_events.len() + 1;
+                         let start = *observations
+                             .active_stop_started_at_ms
+-                            .get_or_insert(received_at_unix_ms);
++                            .get_or_insert((received_at_unix_ms, received_at_monotonic_ms));
+                         let event = serde_json::json!({
+                             "event": "observed-stop",
+                             "runId": run_id,
+                             "callsign": callsign,
+                             "eventSequence": event_sequence,
+                             "atUnixMs": received_at_unix_ms,
++                            "clockSource": "authority-process-monotonic",
++                            "atMonotonicMs": received_at_monotonic_ms,
+                             "stopSequence": command.get("sequence").cloned().unwrap_or(serde_json::Value::Null),
+                             "stopCommandId": command.get("commandId").cloned().unwrap_or(serde_json::Value::Null),
+                             "reason": reason,
+@@ -1346,7 +1449,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+                             "vigieAdmissionSequence": command.pointer("/observation/vigieAdmissionSequence").or_else(|| command.pointer("/observation/gateDiagnostic/vigieAdmissionSequence")).cloned().unwrap_or(serde_json::Value::Null),
+                             "controllerHoldStartedAtUnixMs": command.pointer("/observation/holdStartedAtUnixMs").cloned().unwrap_or(serde_json::Value::Null),
+                             "controllerHoldDurationMsAtPublication": command.pointer("/observation/holdDurationMsAtPublication").cloned().unwrap_or(serde_json::Value::Null),
+-                            "actuatorHoldStartedAtUnixMs": start,
++                            "actuatorHoldStartedAtUnixMs": start.0,
++                            "actuatorHoldStartedAtMonotonicMs": start.1,
+                         });
+                         if observations.stop_commands.len() < 20_000 {
+                             observations.stop_commands.push(command);
+@@ -1369,6 +1473,24 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+     let revoke_subject = format!("furia.prime.execution-revoke.{callsign}");
+     let setpoint_subject = format!("furia.gzsitl.setpoint.{callsign}");
+     let vigie_subject = format!("brenta.swarm.0.vehicle.{callsign}.action-outcome");
++    let mut lifecycle_requests = Vec::new();
++    let mut lifecycle_error = None;
++    let initial_actuator_state = if actuator_state_dir.is_empty() {
++        None
++    } else {
++        Some(
++            change_actuator_lifecycle(
++                &client,
++                &authority,
++                &observations,
++                &actuator_state_dir,
++                true,
++                1,
++                &mut lifecycle_requests,
++            )
++            .await?,
++        )
++    };
+ 
+     // Re-publish the initial lease periodically so a controller that starts
+     // late still joins without a restart.
+@@ -1683,6 +1805,28 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+         settle.tick().await;
+     }
+ 
++    let final_actuator_state =
++        if !actuator_state_dir.is_empty() && observations.lock().await.revoke_published {
++            match change_actuator_lifecycle(
++                &client,
++                &authority,
++                &observations,
++                &actuator_state_dir,
++                false,
++                100,
++                &mut lifecycle_requests,
++            )
++            .await
++            {
++                Ok(state) => Some(state),
++                Err(error) => {
++                    lifecycle_error = Some(error.to_string());
++                    None
++                }
++            }
++        } else {
++            None
++        };
+     let observations = observations.lock().await;
+     let authority = authority.lock().await;
+     let mut lag = observations.delivery_lag_ms.clone();
+@@ -1718,6 +1862,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+         "worldFrameId": world_frame_id,
+         "targetEnuM": target_enu_m,
+         "authorityPublicKeyHex": authority.public_key_hex,
++        "capturedAtUnixMs": now_ms(),
+         "grantAccepts": observations.grant_accepts,
+         "grantRenewals": observations.grant_renewals,
+         "grantCompletions": observations.grant_completions,
+@@ -1740,6 +1885,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+         "lastActuatorCommand": observations.actuator_commands.last(),
+         "stopCommands": observations.stop_commands,
+         "stopEvents": observations.stop_events,
++        "actuatorLifecycleRequests": lifecycle_requests,
++        "initialActuatorState": initial_actuator_state,
++        "finalActuatorState": final_actuator_state,
++        "actuatorLifecycleError": lifecycle_error,
+         "telemetry": observations.telemetry,
+     });
+     let rendered = serde_json::to_string_pretty(&evidence)?;
+@@ -1766,6 +1915,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
+ mod tests {
+     use super::*;
+ 
++    #[test]
++    fn actuator_lifecycle_ack_requires_exact_fresh_request_binding() {
++        let request = serde_json::json!({"identity":"drone-1", "runId":"run-test", "frameId":"enu-test",
++            "sequence":1, "requestId":"drone-1:lifecycle:1", "armed":true,
++            "stopCommandSequence":0, "issuedAtMs":1000});
++        let state = serde_json::json!({"contract":"furia.gzsitl.actuator-lifecycle-state", "version":"1.0.0",
++            "source":"gz-sitl-applier", "request":request, "vehicleId":"drone-1", "runId":"run-test",
++            "frameId":"enu-test", "sequence":1, "requestId":"drone-1:lifecycle:1",
++            "armed":true, "stopCommandSequence":0, "recordedAtUnixMs":1010});
++        assert!(actuator_lifecycle_ack_matches(&state, &request));
++        for (field, invalid) in [
++            ("source", serde_json::json!("controller")),
++            ("sequence", serde_json::json!(true)),
++            ("runId", serde_json::json!("another-run")),
++            ("vehicleId", serde_json::json!("drone-2")),
++            ("frameId", serde_json::json!("another-frame")),
++            ("armed", serde_json::json!(false)),
++            ("requestId", serde_json::json!("old-request")),
++            ("stopCommandSequence", serde_json::json!(1)),
++            ("recordedAtUnixMs", serde_json::json!(1251)),
++            ("request", serde_json::json!({})),
++        ] {
++            let mut mutated = state.clone();
++            mutated[field] = invalid;
++            assert!(!actuator_lifecycle_ack_matches(&mutated, &request), "{field}");
++        }
++    }
++
+     fn interactive_authority() -> Authority {
+         let key = SigningKey::from_bytes(&[1; 32]);
+         Authority {
+diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
+index 34b1671180..bc9e48c354 100644
+--- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
++++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
+@@ -2373,7 +2373,7 @@ async fn run_gz_plant(
+     // Critical damping for the pinned X500 inertia, including rotor masses.
+     let inertia = 0.02945_f64;
+     let (default_torque_gain, default_rate_gain) =
+-        attitude_control::critical_gains(inertia, cfg.attitude_gain_s_inv * 0.5);
++        attitude_control::sampled_critical_gains(inertia, cfg.attitude_gain_s_inv * 0.5, hz);
+     let env_gain =
+         |name: &'static str| std::env::var(name).ok().and_then(|v| v.parse::<f64>().ok());
+     let k_torque: f64 = env_gain("ANTOINE_GZ_TORQUE_GAIN")
+--- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
++++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
+@@ -508,6 +508,37 @@
+         && setpoint.operation.as_deref() == grant["operation"].as_str()
+         && setpoint.capability.as_deref() == grant["capability"].as_str()
+         && setpoint.target_shape.as_deref() == grant["targetShape"].as_str()
++}
++
++fn mission_setpoint_matches_live_authorization(
++    setpoint: &MissionSetpoint,
++    grant: &serde_json::Value,
++    admissions: &VigieAdmissions,
++    callsign: &str,
++    frame_id: &str,
++    now_ms: u64,
++) -> bool {
++    let issued = grant["issuedAtUnixMs"].as_u64().unwrap_or(0);
++    let expires = grant["expiresAtUnixMs"].as_u64().unwrap_or(0);
++    setpoint.vehicle_id == callsign
++        && setpoint.command_lease.is_live_at(std::time::Instant::now())
++        && setpoint.frame_id == frame_id
++        && setpoint.mission_id == grant["missionId"].as_str().unwrap_or_default()
++        && setpoint.task_id == grant["taskId"].as_str().unwrap_or_default()
++        && setpoint.plan_revision == grant["planRevision"].as_str().unwrap_or_default()
++        && setpoint.plan_digest == grant["planDigest"].as_str().unwrap_or_default()
++        && setpoint_matches_grant_task_binding(setpoint, grant)
++        && setpoint.execution_epoch == grant["executionEpoch"].as_u64().unwrap_or(0)
++        && setpoint.authority_epoch == grant["authorityEpoch"].as_u64().unwrap_or(u64::MAX)
++        && admissions.admits_for_grant(setpoint, now_ms, grant)
++        && expires > issued
++        && grant["targetFrameId"].as_str() == Some(setpoint.frame_id.as_str())
++        && grant["targetEnuMm"].as_array().is_some_and(|target| {
++            target.len() == 3
++                && target.iter().zip(setpoint.position_enu_m).all(|(mm, meters)| {
++                    mm.as_i64().is_some_and(|value| (meters * 1000.0).round() as i64 == value)
++                })
++        })
+ }
+ 
+ #[derive(Clone)]
+@@ -1642,10 +1673,14 @@
+ 
+     let setpoint_subject = format!("furia.gzsitl.setpoint.{callsign}");
+     let sp: Arc<Mutex<Option<MissionSetpoint>>> = Arc::new(Mutex::new(None));
++    let core_grant = Arc::new(core_lease::CoreLease::new());
+     {
+         let mut sub = client.subscribe(setpoint_subject.clone()).await?;
+         let sp = sp.clone();
+         let callsign = callsign.clone();
++        let core_grant = core_grant.clone();
++        let vigie_admission = vigie_admission.clone();
++        let world_frame_id = world_frame_id.clone();
+         tokio::spawn(async move {
+             let mut last_sequence = 0_u64;
+             let mut wall_clock = command_lease::WallClockGuard::default();
+@@ -1677,21 +1712,36 @@
+                         }
+                         continue;
+                     }
++                    let payload_sha256 = hex::encode(Sha256::digest(&msg.payload));
+                     if let Some(setpoint) =
+                         mission_setpoint_from_json_at(&v, wall_now_ms, std::time::Instant::now())
+                     {
+-                        if setpoint.vehicle_id == callsign && setpoint.sequence > last_sequence {
++                        let grant = core_grant.for_command().await;
++                        let admissions = vigie_admission.lock().await;
++                        let grant_bound = grant.as_ref().is_some_and(|grant| {
++                            mission_setpoint_matches_live_authorization(
++                                &setpoint,
++                                grant,
++                                &admissions,
++                                &callsign,
++                                &world_frame_id,
++                                wall_now_ms,
++                            )
++                        });
++                        drop(admissions);
++                        if setpoint.sequence > last_sequence && grant_bound {
+                             last_sequence = setpoint.sequence;
+                             if trace {
+                                 println!(
+-                                    "ANTOINE_GZ_SETPOINT_RECEIVED callsign={callsign} sequence={last_sequence} accepted_at_unix_ms={wall_now_ms}"
++                                    "ANTOINE_GZ_SETPOINT_RECEIVED callsign={callsign} sequence={last_sequence} payload_sha256={payload_sha256} accepted_at_unix_ms={wall_now_ms}"
+                                 );
+                                 let _ = std::io::Write::flush(&mut std::io::stdout());
+                             }
+                             *sp.lock().await = Some(setpoint);
+                         } else if trace {
+                             println!(
+-                                "ANTOINE_GZ_SETPOINT_REJECTED callsign={callsign} reason=vehicle-or-sequence vehicle_id={} sequence={} last_sequence={last_sequence}",
++                                "ANTOINE_GZ_SETPOINT_REJECTED callsign={callsign} reason={} vehicle_id={} sequence={} payload_sha256={payload_sha256} last_sequence={last_sequence}",
++                                if !grant_bound { "current-grant-or-vigie-binding" } else { "vehicle-or-sequence" },
+                                 setpoint.vehicle_id,
+                                 setpoint.sequence
+                             );
+@@ -1699,8 +1749,10 @@
+                         }
+                     } else if trace {
+                         println!(
+-                            "ANTOINE_GZ_SETPOINT_REJECTED callsign={callsign} reason={}",
+-                            mission_setpoint_rejection_diagnostic(&v, wall_now_ms)
++                            "ANTOINE_GZ_SETPOINT_REJECTED callsign={callsign} reason={} vehicle_id={} sequence={} payload_sha256={payload_sha256}",
++                            mission_setpoint_rejection_diagnostic(&v, wall_now_ms),
++                            v.get("vehicleId").and_then(serde_json::Value::as_str).unwrap_or("missing"),
++                            v.get("sequence").and_then(serde_json::Value::as_u64).unwrap_or(0)
+                         );
+                         let _ = std::io::Write::flush(&mut std::io::stdout());
+                     }
+@@ -1824,7 +1876,6 @@
+         });
+     }
+     let grant_subject = format!("furia.prime.execution-grant.{callsign}");
+-    let core_grant = Arc::new(core_lease::CoreLease::new());
+     {
+         let revoke_subject = format!("furia.prime.execution-revoke.{callsign}");
+         let mut sub = client.subscribe(revoke_subject.clone()).await?;
+diff --git a/scripts/gz_flight_proof.sh b/scripts/gz_flight_proof.sh
+--- a/scripts/gz_flight_proof.sh
++++ b/scripts/gz_flight_proof.sh
+@@ -636,4 +636,4 @@ for callsign in "${CALLSIGNS[@]}"; do
+   record_run_binary_launch "controller-$callsign" antoine_sitl_nats
+   wait_for "controller subscriptions for $callsign" 30 \
+-    "grep -q 'ANTOINE_GZ_STATE_RECEIVED callsign=$callsign' '$controller_log' 2>/dev/null && grep -q 'ANTOINE_GZ_GRANT_SUBSCRIBED callsign=$callsign' '$controller_log' 2>/dev/null"
++    "grep -q 'ANTOINE_GZ_STATE_RELAY_READY run_id=$RUN_ID callsign=$callsign' '$controller_log' 2>/dev/null && grep -q 'ANTOINE_GZ_GRANT_SUBSCRIBED callsign=$callsign' '$controller_log' 2>/dev/null"
+ done

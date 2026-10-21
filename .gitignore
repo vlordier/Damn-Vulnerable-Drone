@@ -11,7 +11,12 @@ mav.parm
 __pycache__/
 .cargo-target/
 build_logs/
+runs/
 .antoine-runtime/
+.research-ui-runtime/
+research/.venv/
+research/*.egg-info/
+research/.process-supervisor*
 
 # Beads / Dolt files (added by bd init)
 .dolt/

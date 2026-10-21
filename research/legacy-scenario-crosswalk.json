@@ -1,0 +1,408 @@
+{
+  "contract": "damn-vulnerable-drone.legacy-antoine-crosswalk",
+  "version": "1.0.0",
+  "sourceRoot": "simulator/mgmt/templates/pages/attacks",
+  "nativeCatalog": "research/scenario-catalog.json",
+  "principle": "Semantic porting to native Antoine/NATS trust boundaries; MAVLink payloads are not re-used.",
+  "scenarios": [
+    {
+      "source": "dos/camera-feed-ros-topic-flooding.yaml",
+      "title": "Camera Feed ROS Topic Flooding",
+      "status": "unavailable",
+      "nativeScenarioIds": [],
+      "adaptation": "Flood the configured camera transport",
+      "gap": "the partition-aware opt-in headless profile has no camera topic; ROS 2 transport is not launched"
+    },
+    {
+      "source": "dos/communication-link-flooding.yaml",
+      "title": "Communication Link Flooding",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "swarm-state-stream-observation",
+        "nats-rate-disruption"
+      ],
+      "adaptation": "2–5 vehicle state-stream timing observation plus bounded wrong-callsign setpoint consumer-load sample",
+      "gap": "bounded wrong-callsign setpoint consumer-load sample is available; no network packet loss/delay injection, broker rate limiting, or general DoS result"
+    },
+    {
+      "source": "dos/denial-of-takeoff.yaml",
+      "title": "Denial-of-Takeoff",
+      "status": "adapted",
+      "nativeScenarioIds": [
+        "waypoint-injection"
+      ],
+      "adaptation": "Withhold or corrupt local authority/setpoint before launch",
+      "gap": null
+    },
+    {
+      "source": "dos/flight-termination.yaml",
+      "title": "Flight Termination",
+      "status": "adapted",
+      "nativeScenarioIds": [
+        "early-authority-revoke"
+      ],
+      "adaptation": "Test authority revoke and neutralization behavior",
+      "gap": "one bounded timed revoke from the local demo signer; local stop latency only"
+    },
+    {
+      "source": "dos/geofencing-attack.yaml",
+      "title": "Geofencing Attack",
+      "status": "partial",
+      "nativeScenarioIds": [],
+      "adaptation": "Attempt to alter the mission boundary or navigation constraints",
+      "gap": "only if a configured geofence is enforced in this profile"
+    },
+    {
+      "source": "dos/gps-offset-glitching.yaml",
+      "title": "GPS Offset Glitching",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "signed-gps-field-tampering",
+        "gps-freshness-and-replay"
+      ],
+      "adaptation": "Send bounded GPS offset/stale-state faults",
+      "gap": "signature mutation rejection is repeatable; same/older sequence and 501 ms-old/live-TTL ingress acceptance plus future timestamp non-acceptance are observed with run-local signatures; navigation freshness-use, rejection reason, and movement impact remain unmeasured"
+    },
+    {
+      "source": "dos/wireless-deauthentication.yaml",
+      "title": "Wifi Deauth Attack",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "nats-rate-disruption"
+      ],
+      "adaptation": "Interrupt an attacker-owned local NATS client connection",
+      "gap": "no wireless network; do not disrupt shared broker"
+    },
+    {
+      "source": "exfiltration/camera-feed-eavesdropping.yaml",
+      "title": "Camera Feed Eavesdropping",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "camera-topic-observation"
+      ],
+      "adaptation": "Capture camera stream",
+      "gap": "a camera-only rehearsal proves same-host unauthenticated Gazebo Transport readability; remote, ROS 2, Wi-Fi, and GCS reachability are untested"
+    },
+    {
+      "source": "exfiltration/flight-log-extraction.yaml",
+      "title": "Flight Log Extraction",
+      "status": "partial",
+      "nativeScenarioIds": [],
+      "adaptation": "Collect per-run Antoine/Gazebo evidence and assess sensitive fields",
+      "gap": "run evidence is saved and exportable, but a dedicated log-extraction scenario and secret-redaction qualification are not catalogued"
+    },
+    {
+      "source": "exfiltration/ftp-eavesdropping.yaml",
+      "title": "FTP Eavesdropping",
+      "status": "unavailable",
+      "nativeScenarioIds": [],
+      "adaptation": "Capture FTP traffic",
+      "gap": "no FTP service in native profile"
+    },
+    {
+      "source": "exfiltration/mission-extraction.yaml",
+      "title": "Mission Extraction",
+      "status": "adapted",
+      "nativeScenarioIds": [
+        "mission-extraction",
+        "nats-observation"
+      ],
+      "adaptation": "Read the setpoints and mission metadata visible on NATS",
+      "gap": null
+    },
+    {
+      "source": "exfiltration/parameter-extraction.yaml",
+      "title": "Parameter Extraction",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "mission-extraction"
+      ],
+      "adaptation": "Query controller parameters over a supported interface",
+      "gap": "no parameter service is currently wired into this proof profile"
+    },
+    {
+      "source": "exfiltration/ros2-topic-replay.yaml",
+      "title": "ROS 2 Topic Replay",
+      "status": "adapted",
+      "nativeScenarioIds": [
+        "waypoint-replay",
+        "gps-freshness-and-replay"
+      ],
+      "adaptation": "Replay captured NATS contract messages with stale sequence/time",
+      "gap": null
+    },
+    {
+      "source": "exfiltration/wifi-client-data-leak.yaml",
+      "title": "Wifi Client Data Leak",
+      "status": "unavailable",
+      "nativeScenarioIds": [],
+      "adaptation": "Inspect simulated wireless client data",
+      "gap": "no wireless lab in native profile"
+    },
+    {
+      "source": "firmware/firmware-decompile.yaml",
+      "title": "Firmware Decompile",
+      "status": "partial",
+      "nativeScenarioIds": [],
+      "adaptation": "Inspect the compiled Rust SITL binary and recover exposed contracts/secrets",
+      "gap": "binary analysis only; private keys must never be embedded in the artifact"
+    },
+    {
+      "source": "firmware/firmware-modding.yaml",
+      "title": "Firmware Modding",
+      "status": "partial",
+      "nativeScenarioIds": [],
+      "adaptation": "Modify Rust controller source in an isolated research fork and compare its build identity",
+      "gap": "this is a supply-chain experiment, not an in-flight patch"
+    },
+    {
+      "source": "injection/camera-gimbal-takeover.yaml",
+      "title": "Camera Gimbal Takeover",
+      "status": "unavailable",
+      "nativeScenarioIds": [],
+      "adaptation": "Command a gimbal endpoint",
+      "gap": "no gimbal model/controller in the native profile"
+    },
+    {
+      "source": "injection/companion-computer-exploitation.yaml",
+      "title": "Companion Computer Takeover",
+      "status": "partial",
+      "nativeScenarioIds": [],
+      "adaptation": "Compromise bridge process and test sensor provenance boundary",
+      "gap": "bridge is external; use a local test double, never the host service"
+    },
+    {
+      "source": "injection/companion-computer-web-ui-login-brute-force.yaml",
+      "title": "Companion Computer Web UI Login Brute Force",
+      "status": "unavailable",
+      "nativeScenarioIds": [],
+      "adaptation": "Attack companion web login",
+      "gap": "no native companion UI"
+    },
+    {
+      "source": "injection/flight-mode-injection.yaml",
+      "title": "Flight Mode Injection",
+      "status": "partial",
+      "nativeScenarioIds": [],
+      "adaptation": "Attempt to change an unsupported mode/task through NATS",
+      "gap": "map only to modes/tasks Antoine actually exposes"
+    },
+    {
+      "source": "injection/ground-control-station-hijacking.yaml",
+      "title": "Ground Control Station Spoofing",
+      "status": "adapted",
+      "nativeScenarioIds": [
+        "waypoint-injection"
+      ],
+      "adaptation": "Impersonate an authority or mission producer without its signing key",
+      "gap": null
+    },
+    {
+      "source": "injection/mavlink-command-injection.yaml",
+      "title": "MAVLink Injection Attack",
+      "status": "adapted",
+      "nativeScenarioIds": [
+        "waypoint-injection",
+        "waypoint-replay"
+      ],
+      "adaptation": "Send malformed or unauthorized actuator/setpoint envelopes on NATS",
+      "gap": null
+    },
+    {
+      "source": "injection/return-to-home-override.yaml",
+      "title": "Return to Home Point Override",
+      "status": "partial",
+      "nativeScenarioIds": [],
+      "adaptation": "Attempt to replace the approved local return/mission target",
+      "gap": "depends on a native RTL behavior and approved task contract"
+    },
+    {
+      "source": "injection/ros2-rogue-publisher-injection.yaml",
+      "title": "ROS 2 Rogue Publisher Injection",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "waypoint-injection",
+        "signed-gps-field-tampering"
+      ],
+      "adaptation": "Publish unauthorized sensor data to Antoine's NATS input contract",
+      "gap": "setpoint publisher boundary is exercised; sensor contracts are not enabled by this launcher"
+    },
+    {
+      "source": "injection/sensor-data-injection.yaml",
+      "title": "GPS Data Injection",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "signed-gps-field-tampering",
+        "gps-freshness-and-replay"
+      ],
+      "adaptation": "Publish a forged or altered GPS envelope to the native sensor contract",
+      "gap": "the isolated opt-in sensor runner supports bounded probes, but standard swarm/baseline runs do not enable the sensor path; accepted freshness boundaries and navigation use remain unqualified"
+    },
+    {
+      "source": "injection/waypoint-injection.yaml",
+      "title": "Waypoint Injection",
+      "status": "adapted",
+      "nativeScenarioIds": [
+        "waypoint-injection"
+      ],
+      "adaptation": "Publish unauthorized or mismatched NATS setpoints",
+      "gap": null
+    },
+    {
+      "source": "recon/companion-computer-discovery.yaml",
+      "title": "Companion Computer Discovery",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "nats-observation"
+      ],
+      "adaptation": "Discover bridge/service role and reachable NATS subjects",
+      "gap": "legacy companion container is absent"
+    },
+    {
+      "source": "recon/drone-discovery.yaml",
+      "title": "Drone Discovery",
+      "status": "adapted",
+      "nativeScenarioIds": [
+        "nats-observation",
+        "swarm-minimum-separation"
+      ],
+      "adaptation": "Discover local Gazebo model and NATS state subjects",
+      "gap": null
+    },
+    {
+      "source": "recon/gps-telemetry-analysis.yaml",
+      "title": "Drone GPS & Telemetry Detection",
+      "status": "adapted",
+      "nativeScenarioIds": [
+        "nats-observation"
+      ],
+      "adaptation": "Observe the Gazebo-to-NATS state stream",
+      "gap": null
+    },
+    {
+      "source": "recon/ground-control-station-discovery.yaml",
+      "title": "Ground Control Station Discovery",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "nats-observation"
+      ],
+      "adaptation": "Discover local authority/controller endpoints and NATS subjects",
+      "gap": "no GCS in native profile"
+    },
+    {
+      "source": "recon/packet-sniffing.yaml",
+      "title": "Packet Sniffing",
+      "status": "adapted",
+      "nativeScenarioIds": [
+        "nats-observation"
+      ],
+      "adaptation": "Observe NATS state, setpoint, and actuator subjects on the lab broker",
+      "gap": null
+    },
+    {
+      "source": "recon/protocol-fingerprinting.yaml",
+      "title": "Protocol Fingerprinting",
+      "status": "adapted",
+      "nativeScenarioIds": [
+        "nats-observation"
+      ],
+      "adaptation": "Fingerprint NATS server/client and message contracts",
+      "gap": null
+    },
+    {
+      "source": "recon/ros2-dds-graph-enumeration.yaml",
+      "title": "ROS 2 DDS Graph Enumeration",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "nats-observation"
+      ],
+      "adaptation": "Enumerate NATS subjects and Gazebo Transport topics",
+      "gap": "DDS graph is not the Antoine control plane"
+    },
+    {
+      "source": "recon/wifi-analysis-cracking.yaml",
+      "title": "Wifi Analysis & Cracking",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "nats-observation"
+      ],
+      "adaptation": "NATS endpoint discovery and broker access review",
+      "gap": "native profile is loopback-only and has no simulated Wi-Fi"
+    },
+    {
+      "source": "tampering/alttitude-spoofing.yaml",
+      "title": "Attitude Spoofing",
+      "status": "unavailable",
+      "nativeScenarioIds": [],
+      "adaptation": "Inject altered signed-state-shaped sensor data",
+      "gap": "it does not start the Nav sensor forwarder or pin sensor keys"
+    },
+    {
+      "source": "tampering/battery-spoofing.yaml",
+      "title": "Battery Spoofing",
+      "status": "unavailable",
+      "nativeScenarioIds": [
+        "battery-telemetry"
+      ],
+      "adaptation": "Inject altered battery telemetry",
+      "gap": "the native profile has no battery telemetry producer/consumer contract"
+    },
+    {
+      "source": "tampering/critical-error-spoofing.yaml",
+      "title": "Critical Error Spoofing",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "swarm-state-stream-observation"
+      ],
+      "adaptation": "Inject synthetic health/error state",
+      "gap": "only if a consumed NATS health contract exists"
+    },
+    {
+      "source": "tampering/emergency-status-spoofing.yaml",
+      "title": "Emergency Status Spoofing",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "early-authority-revoke"
+      ],
+      "adaptation": "Forge or replay emergency/outcome data",
+      "gap": "distinguish telemetry display from authority-bearing veto"
+    },
+    {
+      "source": "tampering/gps-spoofing.yaml",
+      "title": "GPS Spoofing",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "signed-gps-field-tampering",
+        "gps-freshness-and-replay"
+      ],
+      "adaptation": "Publish forged or stale GPS input to the configured NATS sensor subject",
+      "gap": "signature mutation is rejected; valid run-local signatures passed same/older-sequence and 501 ms-old/live-TTL ingress; a +499 ms future sample produced no ingress trace; idealized GPS and test-only key"
+    },
+    {
+      "source": "tampering/satellite-spoofing.yaml",
+      "title": "Satellite Spoofing",
+      "status": "unavailable",
+      "nativeScenarioIds": [],
+      "adaptation": "Alter satellite-count input",
+      "gap": "satellite-count data is not consumed in the current native pipeline"
+    },
+    {
+      "source": "tampering/system-status-spoofing.yaml",
+      "title": "System Status Spoofing",
+      "status": "partial",
+      "nativeScenarioIds": [
+        "swarm-state-stream-observation"
+      ],
+      "adaptation": "Publish mismatched controller-health state",
+      "gap": "map to signed health and veto contracts"
+    },
+    {
+      "source": "tampering/vfr-hud-spoofing.yaml",
+      "title": "VFR HUD Spoofing",
+      "status": "unavailable",
+      "nativeScenarioIds": [],
+      "adaptation": "Falsify flight telemetry presented to an operator",
+      "gap": "no native GCS/HUD"
+    }
+  ]
+}

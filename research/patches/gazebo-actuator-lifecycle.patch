@@ -1,0 +1,282 @@
+diff --git a/tools/gz-sitl-applier/authorization_test.cc b/tools/gz-sitl-applier/authorization_test.cc
+index e0bfad9..dd7bfec 100644
+--- a/tools/gz-sitl-applier/authorization_test.cc
++++ b/tools/gz-sitl-applier/authorization_test.cc
+@@ -395,6 +395,85 @@ void resign_grant(json_object *grant, const unsigned char *secret_key) {
+   put_string(grant, "signature", signature_hex);
+ }
+ 
++void test_explicit_actuator_lifecycle() {
++  unsigned char seed[crypto_sign_SEEDBYTES] = {7};
++  unsigned char public_key[crypto_sign_PUBLICKEYBYTES], secret_key[crypto_sign_SECRETKEYBYTES];
++  assert(crypto_sign_seed_keypair(public_key, secret_key, seed) == 0);
++  char public_hex[65];
++  sodium_bin2hex(public_hex, sizeof(public_hex), public_key, sizeof(public_key));
++  const auto make_request = [&](bool armed, unsigned long long sequence, unsigned long long stop) {
++    json_object *value = json_object_new_object();
++    put_string(value, "schema", "furia.gzsitl.actuator-lifecycle");
++    put_string(value, "version", "1.0.0");
++    put_string(value, "identity", "drone-1");
++    put_string(value, "runId", "lifecycle-test");
++    put_string(value, "frameId", "enu-test");
++    put_string(value, "requestId", "drone-1:lifecycle:" + std::to_string(sequence));
++    put_string(value, "signatureAlgorithm", "Ed25519");
++    put_u64(value, "issuedAtMs", 1000);
++    put_u64(value, "expiresAtMs", 1250);
++    put_u64(value, "sequence", sequence);
++    put_u64(value, "stopCommandSequence", stop);
++    json_object_object_add(value, "armed", json_object_new_boolean(armed));
++    resign_grant(value, secret_key);
++    return value;
++  };
++  ActuatorLifecycle state;
++  LifecycleRequest request;
++  json_object *arm = make_request(true, 1, 0);
++  const auto valid = [&](json_object *value, bool stopped, unsigned long long last_stop,
++                         unsigned long long now = 1100) {
++    return validate_lifecycle_request(value, public_hex, "drone-1", "lifecycle-test", "enu-test",
++        state, stopped, last_stop, now, request);
++  };
++  assert(valid(arm, false, 0));
++  state = {request.armed, request.sequence};
++  assert(state.armed);
++  assert(!valid(arm, false, 0)); // replay cannot refresh the latch
++  json_object *disarm = make_request(false, 2, 42);
++  assert(!valid(disarm, false, 42)); // no inference from a revoke or neutral motors
++  assert(!valid(disarm, true, 41)); // requires the exact latest explicit stop
++  assert(!valid(disarm, true, 42, 1250)); // expired
++  assert(valid(disarm, true, 42));
++  put_string(disarm, "runId", "other-run");
++  resign_grant(disarm, secret_key);
++  assert(!valid(disarm, true, 42));
++  put_string(disarm, "runId", "lifecycle-test");
++  put_string(disarm, "identity", "drone-2");
++  resign_grant(disarm, secret_key);
++  assert(!valid(disarm, true, 42));
++  put_string(disarm, "identity", "drone-1");
++  resign_grant(disarm, secret_key);
++  json_object_object_add(disarm, "armed", json_object_new_int(0));
++  assert(!valid(disarm, true, 42)); // strict boolean and signed payload
++  json_object_put(disarm);
++  disarm = make_request(false, 2, 42);
++  put_u64(disarm, "stopCommandSequence", 43);
++  assert(!valid(disarm, true, 43)); // mutation must invalidate its signature
++  json_object_put(disarm);
++  disarm = make_request(false, 2, 42);
++  assert(valid(disarm, true, 42));
++  char directory[] = "runs/actuator-lifecycle-test.XXXXXX";
++  assert(::mkdtemp(directory));
++  assert(::setenv("FURIA_SITL_RUN_ID", "lifecycle-test", 1) == 0);
++  assert(::setenv("GZ_SITL_WORLD_SHA256", std::string(64, 'a').c_str(), 1) == 0);
++  assert(::setenv("FURIA_PRIME_ENU_FRAME_ID", "enu-test", 1) == 0);
++  assert(record_lifecycle_state(directory, "drone-1", "isr", request, disarm));
++  std::ifstream input(std::string(directory) + "/drone-1.armed-state.json");
++  std::string row;
++  assert(std::getline(input, row));
++  json_object *saved = json_tokener_parse(row.c_str());
++  bool armed = true;
++  assert(saved && get_boolean(saved, "armed", armed) && !armed);
++  json_object_put(saved);
++  input.close();
++  ::unlink((std::string(directory) + "/drone-1.armed-state.json").c_str());
++  ::unlink((std::string(directory) + "/actuator-lifecycle.jsonl").c_str());
++  ::rmdir(directory);
++  json_object_put(arm);
++  json_object_put(disarm);
++}
++
+ void set_typed_task(json_object *grant, const std::string &kind,
+                     const std::string &operation, const std::string &capability,
+                     const unsigned char *secret_key) {
+@@ -707,6 +786,7 @@ int main() {
+   assert(!allow_exclusive_writer_set(false, no_publishers, {{"process-a", "node-a"}}, authority_error));
+ 
+   assert(sodium_init() >= 0);
++  test_explicit_actuator_lifecycle();
+   unsigned char seed[crypto_sign_SEEDBYTES];
+   std::memset(seed, 0x42, sizeof(seed));
+   unsigned char public_key[crypto_sign_PUBLICKEYBYTES];
+diff --git a/tools/gz-sitl-applier/gz-sitl-applier.cc b/tools/gz-sitl-applier/gz-sitl-applier.cc
+index cdd3097..75c2562 100644
+--- a/tools/gz-sitl-applier/gz-sitl-applier.cc
++++ b/tools/gz-sitl-applier/gz-sitl-applier.cc
+@@ -23,6 +23,7 @@
+ #include "command-input.hh"
+ #include "gazebo-cli-probe.hh"
+ #include "execution-auth.hh"
++#include "actuator-lifecycle.hh"
+ #include "neutral-actuator.hh"
+ #include "roster.hh"
+ #include "writer-policy.hh"
+@@ -117,6 +118,11 @@ int main(int argc, char **argv) {
+   }
+ 
+   const char *neutral_dir = std::getenv("FURIA_GZ_APPLIER_NEUTRAL_DIR");
++  const bool lifecycle_required = std::getenv("FURIA_GZ_APPLIER_REQUIRE_LIFECYCLE") &&
++      std::string(std::getenv("FURIA_GZ_APPLIER_REQUIRE_LIFECYCLE")) == "1";
++  std::vector<ActuatorLifecycle> lifecycle(agents.size());
++  std::vector<bool> explicitly_stopped(agents.size(), false);
++  std::vector<unsigned long long> lifecycle_stop_sequence(agents.size(), 0);
+   if (!record_applier_session_event(neutral_dir, "session-start", agents)) {
+     std::fprintf(stderr, "[applier] session audit start write failed\n");
+     return 3;
+@@ -475,6 +481,7 @@ int main(int argc, char **argv) {
+                 vehicle, command_id, sequence);
+     if (reject_audit_failure()) return false;
+     last_sequence[vehicle] = sequence;
++    explicitly_stopped[agent_index_for_callsign(vehicle, agents.size())] = false;
+     if (!record_authorized_heartbeat(
+             std::getenv("FURIA_GZ_APPLIER_AUTHORIZED_DIR"), vehicle, kind, sequence)) {
+       audit_failed.store(true);
+@@ -530,6 +537,33 @@ int main(int argc, char **argv) {
+     std::unique_ptr<json_object, JsonObjectDeleter> command(parse_complete_command(line));
+     if (!command) { audit_input(line, "rejected", "invalid-json-envelope"); if (reject_audit_failure()) break; continue; }
+ 
++    std::string input_schema;
++    get_string(command.get(), "schema", input_schema);
++    if (input_schema == "furia.gzsitl.actuator-lifecycle") {
++      std::string identity;
++      get_string(command.get(), "identity", identity);
++      const int index = agent_index_for_callsign(identity, agents.size());
++      const char *run = std::getenv("FURIA_SITL_RUN_ID");
++      const char *frame = std::getenv("FURIA_PRIME_ENU_FRAME_ID");
++      const auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
++          std::chrono::system_clock::now().time_since_epoch()).count();
++      LifecycleRequest request;
++      if (!lifecycle_required || index < 0 || !run || !frame || now <= 0 ||
++          !validate_lifecycle_request(command.get(), pinned_key, identity, run, frame,
++              lifecycle[index], explicitly_stopped[index], lifecycle_stop_sequence[index], now, request)) {
++        audit_input(line, "rejected", "invalid-actuator-lifecycle", identity);
++        if (reject_audit_failure()) break;
++        continue;
++      }
++      if (!record_lifecycle_state(neutral_dir, identity, agents[index], request, command.get())) {
++        audit_failed.store(true);
++        break;
++      }
++      lifecycle[index] = {request.armed, request.sequence};
++      audit_input(line, "accepted-lifecycle", request.armed ? "explicit-arm" : "explicit-disarm", identity);
++      if (reject_audit_failure()) break;
++      continue;
++    }
+     auto envelope = inspect_command_envelope(command.get(), agents, last_sequence);
+     if (!envelope.accepted()) {
+       switch (envelope.rejection_detail) {
+@@ -620,6 +654,8 @@ int main(int argc, char **argv) {
+       audit_input(line, "accepted-safe-stop", "valid-stop-published", ident, command_id, sequence);
+       if (reject_audit_failure()) break;
+       last = sequence;
++      explicitly_stopped[idx] = true;
++      lifecycle_stop_sequence[idx] = sequence;
+       if (!record_authorized_heartbeat(
+               std::getenv("FURIA_GZ_APPLIER_AUTHORIZED_DIR"), ident, "stop", sequence)) {
+         audit_failed.store(true);
+@@ -635,6 +671,12 @@ int main(int argc, char **argv) {
+       continue;
+     }
+ 
++    if (lifecycle_required && !lifecycle[idx].armed) {
++      audit_input(line, "rejected", "actuator-lifecycle-disarmed", ident, command_id, sequence);
++      if (reject_audit_failure()) break;
++      continue;
++    }
++
+     std::string decision, kind;
+     bool core_authorized = false;
+     if (schema != "furia.gzsitl.veto-cleared-actuator" ||
+diff --git a/tools/gz-sitl-applier/actuator-lifecycle.hh b/tools/gz-sitl-applier/actuator-lifecycle.hh
+new file mode 100644
+--- /dev/null
++++ b/tools/gz-sitl-applier/actuator-lifecycle.hh
+@@ -0,0 +1,91 @@
++#pragma once
++
++#include <string>
++#include "execution-auth.hh"
++#include "command-freshness.hh"
++#include "audit-records.hh"
++
++namespace {
++
++struct ActuatorLifecycle {
++  bool armed = false;
++  unsigned long long sequence = 0;
++};
++
++struct LifecycleRequest {
++  bool armed = false;
++  unsigned long long sequence = 0;
++  unsigned long long stop_sequence = 0;
++  std::string request_id;
++};
++
++// Lifecycle sequences are independent of the controller's actuator sequence.
++// No unsigned stop, grant expiry or neutral motor sample changes this latch.
++bool validate_lifecycle_request(json_object *command, const char *pinned_key,
++    const std::string &identity, const std::string &run_id, const std::string &frame_id,
++    const ActuatorLifecycle &state, bool explicitly_stopped,
++    unsigned long long last_stop_sequence, unsigned long long observed_at_ms,
++    LifecycleRequest &request) {
++  std::string schema, version, vehicle, run, frame, algorithm, signature_hex;
++  if (!get_string(command, "schema", schema) || schema != "furia.gzsitl.actuator-lifecycle" ||
++      !get_string(command, "version", version) || version != "1.0.0" ||
++      !get_string(command, "identity", vehicle) || vehicle != identity ||
++      !get_string(command, "runId", run) || run != run_id || run_id.empty() ||
++      !get_string(command, "frameId", frame) || frame != frame_id || frame_id.empty() ||
++      !get_boolean(command, "armed", request.armed) ||
++      !get_u64(command, "sequence", request.sequence) || request.sequence <= state.sequence ||
++      !get_u64(command, "stopCommandSequence", request.stop_sequence) ||
++      !get_string(command, "requestId", request.request_id) ||
++      request.request_id != identity + ":lifecycle:" + std::to_string(request.sequence) ||
++      !get_string(command, "signatureAlgorithm", algorithm) || algorithm != "Ed25519" ||
++      !get_string(command, "signature", signature_hex) || signature_hex.size() != 128 ||
++      !assess_command_freshness(command, observed_at_ms).fresh) return false;
++  if (request.armed ? request.stop_sequence != 0 :
++      (!explicitly_stopped || last_stop_sequence == 0 ||
++       request.stop_sequence != last_stop_sequence)) return false;
++  unsigned char public_key[crypto_sign_PUBLICKEYBYTES], signature[crypto_sign_BYTES];
++  if (!decode_core_public_key(pinned_key, public_key) ||
++      sodium_hex2bin(signature, sizeof(signature), signature_hex.c_str(), signature_hex.size(),
++                     nullptr, nullptr, nullptr) != 0) return false;
++  json_object *projection = json_object_new_object();
++  if (!projection) return false;
++  json_object_object_foreach(command, key, value) {
++    if (std::strcmp(key, "signature") != 0)
++      json_object_object_add(projection, key, json_object_get(value));
++  }
++  const std::string canonical = canonical_json(projection);
++  json_object_put(projection);
++  return crypto_sign_verify_detached(signature,
++      reinterpret_cast<const unsigned char *>(canonical.data()), canonical.size(), public_key) == 0;
++}
++
++bool record_lifecycle_state(const char *directory, const std::string &identity,
++    const std::string &model, const LifecycleRequest &request, json_object *signed_request) {
++  if (!directory || !*directory) return false;
++  json_object *row = json_object_new_object();
++  if (!row) return false;
++  json_object_object_add(row, "contract", json_object_new_string("furia.gzsitl.actuator-lifecycle-state"));
++  json_object_object_add(row, "version", json_object_new_string("1.0.0"));
++  json_object_object_add(row, "source", json_object_new_string("gz-sitl-applier"));
++  json_object_object_add(row, "vehicleId", json_object_new_string(identity.c_str()));
++  json_object_object_add(row, "modelId", json_object_new_string(model.c_str()));
++  json_object_object_add(row, "sequence", json_object_new_uint64(request.sequence));
++  json_object_object_add(row, "armed", json_object_new_boolean(request.armed));
++  json_object_object_add(row, "requestId", json_object_new_string(request.request_id.c_str()));
++  json_object_object_add(row, "stopCommandSequence", json_object_new_uint64(request.stop_sequence));
++  json_object_object_add(row, "request", signed_request ? json_object_get(signed_request) : json_object_new_object());
++  bool result = add_run_context_and_timestamp(row);
++  const char *serialized = json_object_to_json_string_ext(row, JSON_C_TO_STRING_PLAIN);
++  if (result && serialized) {
++    const std::string payload(serialized);
++    // A transition is acknowledged only after its audit and latest-state file
++    // are durable. Failures leave the latch unchanged and stop command intake.
++    result = append_audit_line_sync(std::string(directory) + "/actuator-lifecycle.jsonl", payload, 8192) &&
++        write_private_file_atomically(std::string(directory) + "/" + identity + ".armed-state.json",
++            payload + "\n", std::to_string(request.sequence));
++  } else result = false;
++  json_object_put(row);
++  return result;
++}
++
++}  // namespace

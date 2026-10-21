@@ -1,6 +1,6 @@
 # Damn Vulnerable Drone
 
-The Damn Vulnerable Drone is an intentionally vulnerable drone hacking simulator based on the popular ArduPilot/MAVLink architecture, providing a realistic environment for hands-on drone hacking.
+The Damn Vulnerable Drone is an intentionally vulnerable drone hacking simulator. Its native flight profile runs Antoine, a Rust flight controller, with Gazebo Harmonic and NATS. The legacy Docker profiles still provide the original ArduPilot/MAVLink lab.
 
 <p align="center">
   <img src="https://github.com/nicholasaleks/Damn-Vulnerable-Drone/blob/master/simulator/mgmt/static/images/Damn-Vulnerable-Drone-Banner.png?raw=true" alt="Damn Vulnerable Drone Logo"/>
@@ -38,7 +38,7 @@ The Damn Vulnerable Drone is an intentionally vulnerable drone hacking simulator
 
 ## What is the Damn Vulnerable Drone?
 
-The Damn Vulnerable Drone is a virtually simulated environment designed for offensive security professionals to safely learn and practice drone hacking techniques. It simulates real-world [ArduPilot](https://ardupilot.org/) & [MAVLink](https://mavlink.io/en/) drone architectures and vulnerabilities, offering a hands-on experience in exploiting drone systems. 
+The Damn Vulnerable Drone is a virtual environment for safely studying drone security. Its native profile runs the Rust-based Antoine controller with Gazebo Harmonic and NATS. Separate legacy profiles retain the original [ArduPilot](https://ardupilot.org/) and [MAVLink](https://mavlink.io/en/) lab.
 
 ## Why was it built?
 
@@ -50,23 +50,21 @@ The Damn Vulnerable Drone platform is open-source and available at no cost and w
 
 ## How does it work?
 
-The Damn Vulnerable Drone platform operates on the principle of [Software-in-the-Loop (SITL)](https://ardupilot.org/dev/docs/sitl-simulator-software-in-the-loop.html), a simulation technique that allows users to run drone software as if it were executing on an actual drone, thereby replicating authentic drone behaviors and responses.
-
-ArduPilot's SITL allows for the execution of the drone's firmware within a virtual environment, mimicking the behavior of a real drone without the need for physical hardware. This simulation is further enhanced with Gazebo, a dynamic 3D robotics simulator, which provides a realistic environment and physics engine for the drone to interact with. Together, ArduPilot's SITL and Gazebo lay the foundation for a sophisticated and authentic drone simulation experience.
+The native profile uses software-in-the-loop simulation. Antoine runs as a local controller, while Gazebo provides the simulated aircraft and environment and NATS carries local control and state messages. The legacy Docker profiles continue to provide the older ArduPilot/MAVLink architecture.
 
 While the current Damn Vulnerable Drone setup doesn't mirror every drone architecture or configuration, the integrated tactics, techniques and scenarios are broadly applicable across various drone systems, models and communication protocols.
 
 ## Features
 
-- **Docker-based Environment**: Runs in a completely virtualized docker-based setup, making it accessible and safe for drone hacking experimentation.
-- **Simulated Wireless Networking**: Simulated Wifi (802.11) interfaces to practice wireless drone attacks.
-- **Onboard Camera Streaming & Gimbal**: Simulated RTSP drone onboard camera stream with gimbal and companion computer integration.
-- **Companion Computer Web Interface**: Companion Computer configuration management via web interface and simulated serial connection to Flight Controller.
-- **QGroundControl/MAVProxy Integration**: One-click QGroundControl UI launching (only supported on x86 architecture) with MAVProxy GCS integration.
-- **MAVLink Router Integration**: Telemetry forwarding via MAVLink Router on the Companion Computer Web Interface.
-- **Dynamic Flight Logging**: Fully dynamic Ardupilot flight bin logs stored on a simulated SD Card.
-- **Management Web Console**: Simple to use simulator management web console used to trigger scenarios and drone flight states.
-- **Comprehensive Hacking Scenarios**: Ideal for practicing a wide range of drone hacking techniques, from basic reconnaissance to advanced exploitation.
+- **Multiple Local Profiles**: Native Antoine/Gazebo/NATS profile plus legacy Docker-based ArduPilot modes.
+- **Simulated Wireless Networking**: Available in the legacy Docker profiles only; the native Antoine profile is loopback-only and has no Wi-Fi network.
+- **Camera Streaming & Gimbal**: Legacy Docker simulation features; the native Antoine X500 declares a camera sensor, but its current headless flight profile does not expose a camera stream or gimbal.
+- **Companion Computer Web Interface**: Available in the legacy Docker profiles only.
+- **QGroundControl/MAVProxy Integration**: Available in the legacy Docker profiles; the native Antoine profile uses its own bounded flight proof.
+- **MAVLink Router Integration**: Available in the legacy Companion Computer profile; it is not part of the Antoine/NATS path.
+- **Flight Evidence**: Antoine native runs collect controller, actuator, and Gazebo pose evidence; legacy ArduPilot runs retain their existing logging.
+- **Management Web Console**: The Docker management UI controls the legacy simulator; the native Antoine research console indexes findings and run evidence without starting or commanding flights.
+- **Security Research Scenarios**: Legacy guides target their documented MAVLink, Wi-Fi, or ROS 2 stacks. Antoine/NATS scenarios are listed separately and only marked active when their local interfaces are launched.
 - **Detailed Walkthroughs**: If you need help hacking against a particular scenario you can leverage the detailed walkthrough documentation as a spoiler.
 
 # Installation
@@ -152,7 +150,216 @@ The following instructions are meant to be executed on the latest version of [Ka
 
 ---
 
-## Pull or Build Docker Container Images
+## Native Antoine Flight Profile
+
+### Quick commands
+
+From the repository root, run `make` to see the common lab commands. The
+shortest swarm workflow is:
+
+```bash
+make doctor           # check external checkouts and required commands
+make swarm-smoke       # wiring check; no controller flight
+make swarm-flight      # two-drone flight and separation evidence
+make swarm-live        # same flight with Gazebo's 3D GUI
+make swarm-vee         # scripted V formation (also rendezvous/split)
+make swarm-bridge      # one MAVLink telemetry bridge per drone
+make test-swarm        # planner, evaluator, and MAVLink probe tests
+make swarm-3           # three-drone scaling run
+make swarm-5           # five-drone scaling run
+make swarm-blackhole   # bounded, controller-local state suppression
+make qgc-gazebo        # interactive QGC ↔ MAVLink ↔ NATS ↔ Antoine ↔ Gazebo
+make qgc-gazebo-status PROFILE_RECEIPT=/path/to/receipt.json
+make qgc-gazebo-stop PROFILE_RECEIPT=/path/to/receipt.json
+make qgc-gazebo-check  # verify GCS-style frames reach the bridge audit
+make mavlink-gazebo-flight-check # exercise controls and verify Gazebo pose truth
+make attack-waypoint   # one bounded setpoint mutation
+make attack-replay     # one bounded setpoint replay
+make observe-nats      # read-only, capped NATS observation
+make probe-gps         # signed-GPS tampering probe
+```
+
+The fault target defaults to `drone-2`, starts after 30 seconds, and lasts two
+seconds. Change the bounded fault with `ANTOINE_SWARM_FAULT_CALLSIGN`,
+`ANTOINE_SWARM_FAULT_AFTER_MS`, and `ANTOINE_SWARM_FAULT_SECONDS`; this is a
+controller-consumer experiment, not NATS packet loss. Set
+`ANTOINE_SWARM_SPACING_M` to change lane spacing, or run
+`make swarm-flight ANTOINE_SWARM_SIZE=4` for a four-drone flight.
+
+For a selected-vehicle positive-control run, set
+`ANTOINE_SWARM_AUTH_POSITIVE_TARGET=drone-2` (and optionally
+`ANTOINE_SWARM_AUTH_POSITIVE_DELTA_M=2`). The runner adds one separated waypoint
+to that vehicle's fixed local-authority route and records the exact grant and
+actuator target. This remains a planned mission command, not an interactive
+QGroundControl or live NATS control path. The report separately checks target
+route progress, target pose, and peer stability; unsuccessful or ambiguous pose
+evidence does not qualify the positive-control bead. Qualified run
+`antoine-swarm-flight-20261020T211214Z-24266` measured 1.852 m of progress from
+the selected vehicle's prior waypoint, 0.227 m target error, and 0.082 m peer
+drift, with signed final disarm states and an integrity-verified evidence
+manifest. The authority's simulation clock differs from Gazebo's world clock;
+the report uses Gazebo pose time for physical effect and binds it to the matching
+run, callsign, signed grant sequence, and actuator records. See
+`research/findings.md`.
+
+`ANTOINE_SWARM_FAULT=state-stream-timing` remains a read-only receive-timing
+observation. `make swarm-blackhole` runs a bounded controller-only state-stream
+partition: a run-local relay drops one callsign's forwarded state messages while
+the local authority continues to observe the original Gazebo state subject.
+The controller watchdog enters and exits zero-velocity hold; the report binds
+the sequence and simulation-time gap to per-vehicle Gazebo poses and actuator
+windows, authority progress during the fault, and minimum separation. Run
+`antoine-swarm-flight-20261020T213831Z-70888` dropped 111 messages over 2.011 s,
+recovered at the next source sequence, retained 8.114 m minimum separation,
+passed both flight proofs and the qualified baseline gates, and verified its
+evidence manifest. This is an application delivery-edge fault in local
+simulation; it does not model shared-network packet loss or claim hardware
+safety or actuator neutralization during the watchdog hold.
+
+Swarm behaviours are fixed per-vehicle waypoint plans chosen before launch with
+`ANTOINE_SWARM_BEHAVIOR=lanes|column|vee|rendezvous|split`. The runner writes the
+plan to `research-swarm-plan.json`, launches one independent local authority per
+vehicle, and then measures the final Gazebo poses against that plan. Non-lane
+behaviours fly a three-point path: climb to a per-vehicle transit altitude layer,
+cross lanes at that layer, then descend at the separated final slot. The planner
+records a synchronized path-clearance estimate and rejects plans below a 1 m lab
+floor. That swarm profile is static scheduling, not dynamic collision
+avoidance. The runner derives its
+flight-time budget from the longest planned path. At the default 8 m spacing,
+final slots are at least 5 m apart, matching S1's default minimum separation,
+but this profile does not start S1 or enforce its ORCA3D avoidance.
+`make swarm-vee`, `make swarm-rendezvous`, and `make swarm-split` are shortcuts.
+
+Automatic flights explicitly arm and disarm a software latch in the sole
+Gazebo actuator applier using signed, run-bound lifecycle requests. The final
+report verifies the requests and independent state/stop audits; revoked grants
+or zero motor outputs alone never count as disarm. Each run builds the patched
+applier and Antoine from isolated source snapshots and archives their build
+inputs. This lifecycle measures the simulator's actuator authority, not a
+physical landing or hardware motor state.
+
+Set `ANTOINE_SWARM_MAVLINK=1` (or run `make swarm-bridge`) to start one local
+MAVLink bridge per callsign and verify per-vehicle telemetry fan-out, distinct
+system IDs, and checksummed frames at `research-mavlink-swarm.json`. The bridge
+is read-only in the swarm path: it observes MAVLink telemetry and does not give a
+GCS control of the multi-drone flight. For interactive control of a single
+Gazebo X500, run `make qgc-gazebo`; this starts a separate run-owned profile and
+opens Gazebo with the Antoine flight scene and QGroundControl, then routes bounded MAVLink
+commands through Antoine's local test authority. Set `ANTOINE_GZ_FLIGHT_GUI=0`
+to disable the Gazebo window. The profile
+supports arm, takeoff, modes, position targets, missions, RTL, land and disarm,
+with Gazebo poses as independent flight evidence. This is a software simulation
+using a local test authority, not Core-authorized or hardware flight. See
+[`research/qgroundcontrol-antoine.md`](research/qgroundcontrol-antoine.md).
+
+Use
+`make console-start`, `make console-status`, and `make console-stop` for the
+local evidence console. `make validate` runs the focused lint and
+scenario-catalog checks; it does not start simulations.
+
+`make swarm-live` opens Gazebo's 3D client on the same private run partition
+as the two-drone server. Orbit or pan the scene while both X500s follow their
+separate scripted paths. For three or five aircraft, run
+`make swarm-live ANTOINE_SWARM_SIZE=3` or `=5`. The terminal prints the run's
+evidence directory; keep the run open until the flight completes. Each run
+also saves a top-down trajectory SVG and raw Gazebo pose samples.
+
+To review completed flights, run `make console-start`, then open
+<http://127.0.0.1:8001/attacks/research>. Swarm paths are shown on the page and
+can be opened full size with **View swarm trajectory**. The SVG is a static
+X/Y plot; use the live Gazebo view to see the 3D flight. Stop the evidence
+console with `make console-stop` when done. On a headless host, run
+`make swarm-flight` and review its saved trajectory in the console. To give a
+slower visual run more time, use `make swarm-live SWARM_LIVE_SECONDS=90`.
+
+On the configured development host, start the Antoine Gazebo/NATS flight proof with:
+
+```bash
+./start.sh --mode antoine
+```
+
+This also starts the loopback-only research console at
+<http://127.0.0.1:8001/attacks/research>. The console stops when the native
+flight launcher exits. To inspect saved evidence outside a flight, run
+`./research/console.sh start`, then `./research/console.sh stop`;
+`./status.sh` reports its state, and `./stop.sh` stops it safely.
+
+This runs the host-installed Gazebo Harmonic build from `~/Work/gz-macOS` with
+Antoine from `~/Work/antoine`, the `durandal-gz-swarm-sim` plant/applier, and the
+Furia C2 Gazebo state bridge. It builds Antoine into this checkout's
+`.cargo-target/antoine-gz` and writes run evidence under
+`build_logs/antoine-gz/`. Press Ctrl-C to stop an active run; its launcher
+cleans up only processes created for that run.
+
+Override checkout locations with `ANTOINE_ROOT`, `AGR_SIM`, `AGR_C2_SCRIPTS`,
+and `GZ_BIN`. The proof run uses Antoine's local test authority and a fixed
+waypoint profile. It demonstrates local Gazebo motion and actuator
+neutralization; it does not claim Core/Prime/Vigie authority or preserve the
+old MAVLink GCS flight stages. `./status.sh` reports the active Antoine
+launcher, and `./stop.sh` asks only this checkout's recorded launcher to stop.
+Ctrl-C in the launch terminal remains supported.
+
+To use the legacy ArduPilot/MAVLink lab, choose `--mode lite` or `--mode full`.
+Those profiles remain separate from the native Antoine path.
+
+The old attack guides target MAVLink, Wi-Fi, or ROS 2 components and do not
+apply unchanged to Antoine. A scenario-by-scenario crosswalk and eight
+local Antoine/NATS guides are under
+[`research/antoine-scenario-adaptation.md`](research/antoine-scenario-adaptation.md)
+and the local Attack Scenarios page. Antoine guides are labeled as runner-backed, partial coverage, or research plans in the attack index. The Antoine Research console is at
+`/attacks/research`. Native attack guides are limited to the
+loopback broker and Gazebo test profile; unsupported legacy components are
+identified instead of being presented as active attack paths.
+
+The initial vulnerability study results and evidence are in
+[`research/findings.md`](research/findings.md). Bounded local runs are available
+with `./research/run-antoine-baseline.sh`,
+`./research/run-antoine-scenario.sh waypoint-injection`,
+`./research/run-antoine-replay.sh`, and
+`./research/run-antoine-observation.sh`. To check two separated X500 models,
+their `drone-1` / `drone-2` NATS state streams, and neutral actuator startup,
+run `./research/run-antoine-two-drone-smoke.sh`. This smoke does not start
+Antoine controllers or test coordinated flight. To fly both vehicles under
+separate Antoine controllers and capture per-drone flight evaluations, run
+`./research/run-antoine-two-drone-flight.sh`. It defaults to two vehicles; use
+`ANTOINE_SWARM_SIZE=3` or `5` for bounded scaling runs, and
+`ANTOINE_SWARM_SPACING_M=6` to change parallel-lane spacing. Reports include
+each vehicle's flight gates and all-pairs minimum separation. It uses local
+demo authorities and does not test formation control or collision avoidance. The bounded
+signed-GPS tampering probe is `./research/run-antoine-sensor-tampering.sh`; it uses a
+public test key only inside its local run, verifies the source-bound forwarder receipt and reuses the
+simulation checkout's canonical Cargo target directory when the receipt is
+current,
+and retains no signature value in the public report. The signed-GPS runner does
+not load the camera renderer, because rendering reduces controller tick rate
+during flight. Run the camera-only rehearsal separately with
+`./research/run-antoine-camera-observation.sh`: it builds a run-local camera
+world, starts no Antoine controller, uses an isolated Gazebo partition, and
+captures at most five frame dimensions and payload sizes. The latest run
+received five 640×360 frames on the local Gazebo Transport topic; pixel data is
+discarded. This proves same-host topic readability in the camera rehearsal,
+not remote, ROS 2, Wi-Fi, or GCS video exposure.
+The legacy Docker management UI also indexes local evidence at
+`/attacks/research`. For attack comparisons, pass a successful baseline proof report or its
+`research-baseline-summary.json` to `ANTOINE_BASELINE_REPORT` when running the
+injection scenario. Comparisons are marked eligible only when the physics
+engine, authority scope, flight, pose, and actuator gates match and pass.
+Completed runners produce redacted manifests with evidence digests; export
+comparable measurements with `uv run --project research python research/export_research_csv.py`.
+The `research/pyproject.toml` and `research/uv.lock` pin the host research
+environment. Every runner captures source/input provenance before launch and
+after the run, including the three Antoine executables and sensor-forwarder
+receipt; missing or changed inputs keep classification inconclusive. The
+manifest verifier reports evidence digests separately from its optional local
+Ed25519 signature. Initialize a key with
+`uv run --project research python research/sign_evidence_manifest.py init-key`,
+then set `DVD_RESEARCH_SIGNING_KEY` before launching a runner to sign completed
+manifests. Pin the generated `.pub` file with
+`DVD_RESEARCH_TRUSTED_PUBLIC_KEY` for trusted verification in the CSV exporter
+and management UI. Private keys stay outside run artifacts; unsigned runs are
+labelled explicitly and are never described as attested.
+
+## Pull or Build Legacy Docker Container Images
 
 You can either pull prebuilt images from Docker Hub or build them locally.
 Choose the appropriate docker-compose file depending on whether you want Full Mode or Lite Mode.
@@ -227,7 +434,7 @@ If you ever want to check the status of your simulator you can run the status sc
 
 ### Wi-Fi Mode 
 
-"Wi-Fi Mode" (`--wifi`) allows for the most realistic virtual drone hacking simulation. It deploys a virtually simulated wireless network that you can interact with. This virtual wifi network acts as the data-link connection between the Ground Station and Drone Companion Computer, allowing for interesting scenarios from your attacker machine. When you deploy the Damn Vulnerable Drone using Wi-Fi Mode you will have access to the "Drone_Wifi" SSID and 192.168.13.0/24 network. There are two wifi modes supported WEP and WPA2.
+The legacy Docker profiles' "Wi-Fi Mode" (`--wifi`) deploys a simulated wireless network between their Ground Station and Companion Computer. It exposes the `Drone_Wifi` SSID and `192.168.13.0/24` network with WEP or WPA2. It is not available in the native Antoine profile.
 
 > [!WARNING]  
 > The 10.13.0.0/24 network is used to run the simulator infrastructure, should you attack this network, especially the simulator container on `10.13.0.5` this could cause your instance of Damn Vulnerable Drone to crash, warranting a potentially lengthy rebuild. 
@@ -242,7 +449,7 @@ Unlike "Wi-Fi Mode" you are not limited to only running "Non-Wi-Fi Mode" within 
 
 ## Architecture
 
-The Damn Vulnerable Drone simulation and core drone architectural components are integrated within Docker containers, providing a stable, isolated environment for each component of the drone system. Docker facilitates easy setup, consistent performance across different systems, and simplifies the process of simulating complex drone architectures and scenarios.
+The legacy ArduPilot architecture and its ground station, companion computer, and simulated Wi-Fi components run in Docker containers. The native Antoine profile instead runs Antoine, Gazebo, and NATS on the host; it does not include those legacy services. The diagrams and component table below describe the legacy Docker architecture.
 
 Below is a high-level overview of the Damn Vulnerable Drone architecture:
 
@@ -260,7 +467,7 @@ Below is a high-level overview of the Damn Vulnerable Drone architecture:
 
 ## Flight States
 
-The Damn Vulnerable Drone has a range of flight states. Each flight state can be trigger by clicking on their buttons in the UI (http://localhost:8000). The ability to simulate these various flight states allows users to test and exploit different aspects of the drones operations. By clicking these states, you are essentially triggering the GCS to issue commands to the drone.
+The legacy Docker management UI at `http://localhost:8000` offers flight states by asking its Ground Control Station to command the ArduPilot vehicle. These controls do not operate the native Antoine profile, whose current launcher runs a fixed bounded proof.
 
 <p align="center">
   <img src="https://github.com/nicholasaleks/Damn-Vulnerable-Drone/blob/master/simulator/mgmt/static/images/flight-states.png?raw=true" alt="Damn Vulnerable Drone Flight States"/>
@@ -282,6 +489,8 @@ Simulates the drone's emergency protocols, automatically returning to a home loc
 This state involves the handling of all data collected during the flight, including telemetry and logs, making it an important phase for understanding data exfiltration and integrity attacks.
 
 # Attack Scenarios
+
+The existing attack guides target the legacy MAVLink, Wi-Fi, and ROS 2 components unless a guide is explicitly listed under the native Antoine/NATS category in the running management UI. See the Antoine scenario crosswalk for current native coverage.
 
 The full list of Damn Vulnerable Drone attack scenarios and detailed walkthroughs can be found in the project's wiki here: [https://github.com/nicholasaleks/Damn-Vulnerable-Drone/wiki/Attack-Scenarios](https://github.com/nicholasaleks/Damn-Vulnerable-Drone/wiki/Attack-Scenarios)
 

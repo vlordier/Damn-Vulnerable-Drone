@@ -1,0 +1,26 @@
+name: ShellCheck
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Install ShellCheck
+        run: sudo apt-get update && sudo apt-get install --yes shellcheck
+
+      - name: Lint tracked shell scripts
+        run: git ls-files -z -- '*.sh' | xargs -0 --no-run-if-empty shellcheck --external-sources --shell=bash --enable=all --severity=style
+      - name: Check shell formatting
+        uses: mfinelli/setup-shfmt@v3
+      - run: git ls-files -z -- '*.sh' | xargs -0 --no-run-if-empty shfmt --diff --indent 2 --case-indent

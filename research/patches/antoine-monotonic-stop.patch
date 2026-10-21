@@ -1,0 +1,82 @@
+diff --git a/sitl/antoine-sitl/src/bin/antoine_gz_local_authority.rs b/sitl/antoine-sitl/src/bin/antoine_gz_local_authority.rs
+index b1ff82bb5f..ff3d622cdd 100644
+--- a/sitl/antoine-sitl/src/bin/antoine_gz_local_authority.rs
++++ b/sitl/antoine-sitl/src/bin/antoine_gz_local_authority.rs
+@@ -802,7 +802,8 @@ struct Observations {
+     actuator_commands: Vec<serde_json::Value>,
+     stop_commands: Vec<serde_json::Value>,
+     stop_events: Vec<serde_json::Value>,
+-    active_stop_started_at_ms: Option<u64>,
++    clock_origin: Instant,
++    active_stop_started_at_ms: Option<(u64, u64)>,
+     grant_accepts: u64,
+     grant_renewals: u64,
+     /// Highest lease sequence a renewal has succeeded for, used to tell a
+@@ -824,6 +825,7 @@ impl Observations {
+             actuator_commands: Vec::new(),
+             stop_commands: Vec::new(),
+             stop_events: Vec::new(),
++            clock_origin: Instant::now(),
+             active_stop_started_at_ms: None,
+             grant_accepts: 0,
+             grant_renewals: 0,
+@@ -1263,6 +1265,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+                     continue;
+                 };
+                 let mut observations = observations.lock().await;
++                let received_at_monotonic_ms =
++                    observations.clock_origin.elapsed().as_millis() as u64;
+                 // The actuator envelopes carry `schema`, not `contract`.
+                 match command.get("schema").and_then(serde_json::Value::as_str) {
+                     Some("furia.gzsitl.veto-cleared-actuator") => {
+@@ -1277,7 +1281,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+                         if observations.actuator_commands.len() < 20_000 {
+                             observations.actuator_commands.push(command);
+                         }
+-                        if let Some(started_at_unix_ms) =
++                        if let Some((started_at_unix_ms, started_at_monotonic_ms)) =
+                             observations.active_stop_started_at_ms.take()
+                         {
+                             let last_stop = observations.stop_events.iter().rev().find(|event| {
+@@ -1308,9 +1312,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+                                 "callsign": callsign,
+                                 "eventSequence": event_sequence,
+                                 "atUnixMs": received_at_unix_ms,
++                                "clockSource": "authority-process-monotonic",
++                                "atMonotonicMs": received_at_monotonic_ms,
+                                 "stopSequence": stop_sequence,
+                                 "holdStartedAtUnixMs": started_at_unix_ms,
+-                                "holdDurationMs": received_at_unix_ms.saturating_sub(started_at_unix_ms),
++                                "holdStartedAtMonotonicMs": started_at_monotonic_ms,
++                                "holdDurationMs": received_at_monotonic_ms.saturating_sub(started_at_monotonic_ms),
++                                "holdWallDurationMs": received_at_unix_ms.saturating_sub(started_at_unix_ms),
+                                 "recoveryActuatorSequence": recovery_actuator_sequence,
+                                 "recoveryGrantSequence": recovery_grant_sequence,
+                             });
+@@ -1329,13 +1337,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+                         let event_sequence = observations.stop_events.len() + 1;
+                         let start = *observations
+                             .active_stop_started_at_ms
+-                            .get_or_insert(received_at_unix_ms);
++                            .get_or_insert((received_at_unix_ms, received_at_monotonic_ms));
+                         let event = serde_json::json!({
+                             "event": "observed-stop",
+                             "runId": run_id,
+                             "callsign": callsign,
+                             "eventSequence": event_sequence,
+                             "atUnixMs": received_at_unix_ms,
++                            "clockSource": "authority-process-monotonic",
++                            "atMonotonicMs": received_at_monotonic_ms,
+                             "stopSequence": command.get("sequence").cloned().unwrap_or(serde_json::Value::Null),
+                             "stopCommandId": command.get("commandId").cloned().unwrap_or(serde_json::Value::Null),
+                             "reason": reason,
+@@ -1346,7 +1356,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
+                             "vigieAdmissionSequence": command.pointer("/observation/vigieAdmissionSequence").or_else(|| command.pointer("/observation/gateDiagnostic/vigieAdmissionSequence")).cloned().unwrap_or(serde_json::Value::Null),
+                             "controllerHoldStartedAtUnixMs": command.pointer("/observation/holdStartedAtUnixMs").cloned().unwrap_or(serde_json::Value::Null),
+                             "controllerHoldDurationMsAtPublication": command.pointer("/observation/holdDurationMsAtPublication").cloned().unwrap_or(serde_json::Value::Null),
+-                            "actuatorHoldStartedAtUnixMs": start,
++                            "actuatorHoldStartedAtUnixMs": start.0,
++                            "actuatorHoldStartedAtMonotonicMs": start.1,
+                         });
+                         if observations.stop_commands.len() < 20_000 {
+                             observations.stop_commands.push(command);

@@ -1,0 +1,54 @@
+diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
+index 743e306c9a..246a9ce04d 100644
+--- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
++++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
+@@ -1432,6 +1432,10 @@ fn load_signing_seed(
+ }
+ 
+ /// `--plant gz`: Antoine's control law over the external Gazebo plant.
++fn battery_after_drain(remaining_pct: f64, drain_pct_per_s: f64, elapsed_s: f64) -> f64 {
++    (remaining_pct - drain_pct_per_s * elapsed_s).max(0.0)
++}
++
+ #[allow(clippy::too_many_arguments)]
+ async fn run_gz_plant(
+     client: async_nats::Client,
+@@ -1440,6 +1444,7 @@ async fn run_gz_plant(
+     home_lon: f64,
+     home_alt_msl: f64,
+     hz: f64,
++    battery_drain_pct_per_s: f64,
+     kind: String,
+     _waypoints: Vec<[f64; 3]>,
+     world_frame_id: String,
+@@ -2330,7 +2335,7 @@ async fn run_gz_plant(
+         let plant_state = { *shared.lock().await };
+         if let Some(st) = plant_state {
+             let (lat, lon, alt_m) = enu_to_geo(home_lat, home_lon, st.pos_enu);
+-            battery_pct = (battery_pct - 0.5 * dt).max(0.0);
++            battery_pct = battery_after_drain(battery_pct, battery_drain_pct_per_s, dt);
+             if let Some(publisher) = health_publisher.as_mut() {
+                 let gps = { gps_fix.lock().await.clone() };
+                 if let Some(health) = publisher.next_envelope(
+@@ -3024,6 +3029,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
+             home_lon,
+             home_alt_msl,
+             hz,
++            battery_drain,
+             kind,
+             waypoints,
+             world_frame_id,
+@@ -3194,6 +3200,13 @@ mod tests {
+     use ed25519_dalek::Verifier;
+     use std::fs;
+ 
++    #[test]
++    fn gazebo_plant_honors_configured_battery_drain_rate() {
++        assert_eq!(battery_after_drain(100.0, 0.0, 600.0), 100.0);
++        assert_eq!(battery_after_drain(100.0, 0.5, 2.0), 99.0);
++        assert_eq!(battery_after_drain(0.5, 1.0, 2.0), 0.0);
++    }
++
+     #[path = "../tests/vigie_replay_process.rs"]
+     mod vigie_replay_process;
+ 

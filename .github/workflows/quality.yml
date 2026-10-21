@@ -1,0 +1,59 @@
+name: Code Quality
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: research/pyproject.toml
+      - name: Lint Python code
+        run: |
+          uv run --project research --group lint ruff check research
+          uv run --project research --group lint ruff check --select F,I --ignore F841 simulator/mgmt companion-computer/interface ground-control-station/stages
+      - name: Check Python formatting
+        run: |
+          uv run --project research --group lint ruff format --check research
+
+  structured-data:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate YAML syntax
+        run: |
+          ruby -e 'require "yaml"; ARGV.each { |path| YAML.load_file(path, aliases: true) }' docker-compose.yaml docker-compose-lite.yaml .github/workflows/*.yml simulator/mgmt/templates/pages/attacks/**/*.yaml
+      - name: Validate tracked JSON
+        run: |
+          while IFS= read -r -d '' file; do python -m json.tool "$file" >/dev/null; done < <(git ls-files -z '*.json')
+
+  dockerfiles:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Lint Dockerfiles
+        uses: hadolint/hadolint-action@v3.1.0
+        with:
+          recursive: true
+          failure-threshold: error
+
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Check JavaScript syntax
+        run: |
+          while IFS= read -r -d '' file; do node --check "$file"; done < <(git ls-files -z '*.js' | grep -zvE '(^|/)(include|static)/|\.min\.js$')

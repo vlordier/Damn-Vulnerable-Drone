@@ -1,0 +1,299 @@
+diff --git a/src/FirmwarePlugin/FirmwarePlugin.cc b/src/FirmwarePlugin/FirmwarePlugin.cc
+index 203271d9..b95a2589 100644
+--- a/src/FirmwarePlugin/FirmwarePlugin.cc
++++ b/src/FirmwarePlugin/FirmwarePlugin.cc
+@@ -6,6 +6,8 @@
+ #include <QtCore/QSettings>
+ #include <QtCore/QStandardPaths>
+ #include <QtCore/QThread>
++#include <QtCore/QTimer>
++#include <QtMath>
+ 
+ #include "AppMessages.h"
+ #include "AutoPilotPlugin.h"
+@@ -42,6 +44,38 @@ FirmwarePlugin::~FirmwarePlugin()
+     qCDebug(FirmwarePluginLog) << this;
+ }
+ 
++bool FirmwarePlugin::_isGenericQuadVehicle(const Vehicle *vehicle) const
++{
++    return vehicle && _autopilotType() == MAV_AUTOPILOT_GENERIC &&
++           vehicle->vehicleType() == MAV_TYPE_QUADROTOR && vehicle->id() == 1 &&
++           vehicle->defaultComponentId() == MAV_COMP_ID_AUTOPILOT1;
++}
++
++double FirmwarePlugin::minimumTakeoffAltitudeMeters(Vehicle *vehicle) const
++{
++    return _isGenericQuadVehicle(vehicle) ? 0.4 : 3.048;
++}
++
++bool FirmwarePlugin::isCapable(const Vehicle *vehicle, FirmwareCapabilities capabilities) const
++{
++    if (!_isGenericQuadVehicle(vehicle)) {
++        return false;
++    }
++    constexpr FirmwareCapabilities antoineCapabilities = static_cast<FirmwareCapabilities>(
++        SetFlightModeCapability | PauseVehicleCapability | GuidedModeCapability |
++        TakeoffVehicleCapability | GuidedTakeoffCapability);
++    return (capabilities & antoineCapabilities) == capabilities;
++}
++
++QStringList FirmwarePlugin::flightModes(Vehicle *vehicle) const
++{
++    if (!_isGenericQuadVehicle(vehicle)) {
++        return {};
++    }
++    return {QStringLiteral("Stabilize"), QStringLiteral("Guided"), QStringLiteral("Auto"),
++            QStringLiteral("Hold"), QStringLiteral("RTL"), QStringLiteral("Land")};
++}
++
+ AutoPilotPlugin *FirmwarePlugin::autopilotPlugin(Vehicle *vehicle) const
+ {
+     return new GenericAutoPilotPlugin(vehicle, vehicle);
+@@ -49,7 +83,14 @@ AutoPilotPlugin *FirmwarePlugin::autopilotPlugin(Vehicle *vehicle) const
+ 
+ QString FirmwarePlugin::flightMode(uint8_t base_mode, uint32_t custom_mode) const
+ {
+-    Q_UNUSED(custom_mode);
++    if (base_mode & MAV_MODE_FLAG_CUSTOM_MODE_ENABLED) {
++        static const QStringList modes = {QStringLiteral("Stabilize"), QStringLiteral("Guided"),
++                                          QStringLiteral("Auto"), QStringLiteral("Hold"),
++                                          QStringLiteral("RTL"), QStringLiteral("Land")};
++        if (custom_mode < static_cast<uint32_t>(modes.size())) {
++            return modes.at(static_cast<qsizetype>(custom_mode));
++        }
++    }
+ 
+     struct Bit2Name {
+         const uint8_t baseModeBit;
+@@ -85,12 +126,17 @@ QString FirmwarePlugin::flightMode(uint8_t base_mode, uint32_t custom_mode) cons
+ 
+ bool FirmwarePlugin::setFlightMode(const QString &flightMode, uint8_t *base_mode, uint32_t *custom_mode) const
+ {
+-    Q_UNUSED(flightMode);
+-    Q_UNUSED(base_mode);
+-    Q_UNUSED(custom_mode);
+-
+-    qCWarning(FirmwarePluginLog) << "FirmwarePlugin::setFlightMode called on base class, not supported";
+-
++    static const QStringList modes = {QStringLiteral("Stabilize"), QStringLiteral("Guided"),
++                                      QStringLiteral("Auto"), QStringLiteral("Hold"),
++                                      QStringLiteral("RTL"), QStringLiteral("Land")};
++    for (qsizetype i = 0; i < modes.size(); ++i) {
++        if (flightMode.compare(modes.at(i), Qt::CaseInsensitive) == 0) {
++            *base_mode = MAV_MODE_FLAG_CUSTOM_MODE_ENABLED;
++            *custom_mode = static_cast<uint32_t>(i);
++            return true;
++        }
++    }
++    qCWarning(FirmwarePluginLog) << "Unknown generic quad flight mode" << flightMode;
+     return false;
+ }
+ 
+@@ -117,39 +163,97 @@ QString FirmwarePlugin::missionCommandOverrides(QGCMAVLink::VehicleClass_t vehic
+ 
+ void FirmwarePlugin::setGuidedMode(Vehicle *vehicle, bool guidedMode) const
+ {
+-    Q_UNUSED(vehicle);
+-    Q_UNUSED(guidedMode);
++    if (_isGenericQuadVehicle(vehicle)) {
++        vehicle->setFlightMode(guidedMode ? QStringLiteral("Guided") : QStringLiteral("Hold"));
++        return;
++    }
+     QGC::showAppMessage(guided_mode_not_supported_by_vehicle);
+ }
+ 
+ void FirmwarePlugin::pauseVehicle(Vehicle *vehicle) const
+ {
+-    Q_UNUSED(vehicle);
++    if (_isGenericQuadVehicle(vehicle)) {
++        vehicle->setFlightMode(QStringLiteral("Hold"));
++        return;
++    }
+     QGC::showAppMessage(guided_mode_not_supported_by_vehicle);
+ }
+ 
+ void FirmwarePlugin::guidedModeRTL(Vehicle *vehicle, bool smartRTL) const
+ {
+-    Q_UNUSED(vehicle);
+     Q_UNUSED(smartRTL);
++    if (_isGenericQuadVehicle(vehicle)) {
++        vehicle->setFlightMode(QStringLiteral("RTL"));
++        return;
++    }
+     QGC::showAppMessage(guided_mode_not_supported_by_vehicle);
+ }
+ 
+ void FirmwarePlugin::guidedModeLand(Vehicle *vehicle) const
+ {
+-    Q_UNUSED(vehicle);
++    if (_isGenericQuadVehicle(vehicle)) {
++        vehicle->setFlightMode(QStringLiteral("Land"));
++        return;
++    }
+     QGC::showAppMessage(guided_mode_not_supported_by_vehicle);
+ }
+ 
+ void FirmwarePlugin::guidedModeTakeoff(Vehicle *vehicle, double takeoffAltRel) const
+ {
+-    Q_UNUSED(vehicle);
+-    Q_UNUSED(takeoffAltRel);
++    if (_isGenericQuadVehicle(vehicle)) {
++        if (!qIsFinite(takeoffAltRel) || takeoffAltRel < 0.4 || takeoffAltRel > 3.0) {
++            QGC::showAppMessage(QStringLiteral("Antoine SITL takeoff altitude must be between 0.4 and 3 metres."));
++            return;
++        }
++        if (!vehicle->armed()) {
++            vehicle->setArmed(true, true);
++        }
++        vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_NAV_TAKEOFF, true,
++                                static_cast<float>(qQNaN()), static_cast<float>(qQNaN()),
++                                static_cast<float>(qQNaN()), static_cast<float>(qQNaN()),
++                                static_cast<float>(qQNaN()), static_cast<float>(qQNaN()),
++                                static_cast<float>(takeoffAltRel));
++        return;
++    }
+     QGC::showAppMessage(guided_mode_not_supported_by_vehicle);
+ }
+ 
+ bool FirmwarePlugin::guidedModeGotoLocation(Vehicle *vehicle, const QGeoCoordinate &gotoCoord, double forwardFlightLoiterRadius) const
+ {
++    if (_isGenericQuadVehicle(vehicle)) {
++        Q_UNUSED(forwardFlightLoiterRadius);
++        const QGeoCoordinate home = vehicle->homePosition();
++        if (!home.isValid() || !gotoCoord.isValid()) {
++            QGC::showAppMessage(QStringLiteral("Antoine SITL needs a valid home position for local position commands."));
++            return false;
++        }
++        const double distance = home.distanceTo(gotoCoord);
++        const double bearing = qDegreesToRadians(home.azimuthTo(gotoCoord));
++        const double north = distance * qCos(bearing);
++        const double east = distance * qSin(bearing);
++        const double relativeAltitude = vehicle->coordinate().altitude() - home.altitude();
++        if (qAbs(north) > 3.0 || qAbs(east) > 3.0 || relativeAltitude < 0.0 || relativeAltitude > 3.0) {
++            QGC::showAppMessage(QStringLiteral("Antoine SITL position targets are limited to 3 metres from home and 0–3 metres altitude."));
++            return false;
++        }
++        SharedLinkInterfacePtr link = vehicle->vehicleLinkManager()->primaryLink().lock();
++        if (!link) {
++            return false;
++        }
++        mavlink_message_t message{};
++        mavlink_msg_set_position_target_local_ned_pack_chan(
++            static_cast<uint8_t>(MAVLinkProtocol::instance()->getSystemId()),
++            static_cast<uint8_t>(MAVLinkProtocol::getComponentId()), link->mavlinkChannel(), &message,
++            static_cast<uint32_t>(qgcApp()->msecsSinceBoot()), static_cast<uint8_t>(vehicle->id()),
++            static_cast<uint8_t>(vehicle->defaultComponentId()), MAV_FRAME_LOCAL_NED, 0x0DF8,
++            static_cast<float>(north), static_cast<float>(east), static_cast<float>(-relativeAltitude),
++            0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f, 0.f);
++        vehicle->setFlightMode(QStringLiteral("Guided"));
++        QTimer::singleShot(100, vehicle, [vehicle, link, message]() {
++            vehicle->sendMessageOnLinkThreadSafe(link.get(), message);
++        });
++        return true;
++    }
+     Q_UNUSED(vehicle);
+     Q_UNUSED(gotoCoord);
+     Q_UNUSED(forwardFlightLoiterRadius);
+@@ -225,8 +329,12 @@ void FirmwarePlugin::startTakeoff(Vehicle*) const
+     QGC::showAppMessage(guided_mode_not_supported_by_vehicle);
+ }
+ 
+-void FirmwarePlugin::startMission(Vehicle*) const
++void FirmwarePlugin::startMission(Vehicle *vehicle) const
+ {
++    if (_isGenericQuadVehicle(vehicle)) {
++        vehicle->sendMavCommand(vehicle->defaultComponentId(), MAV_CMD_MISSION_START, true);
++        return;
++    }
+     QGC::showAppMessage(guided_mode_not_supported_by_vehicle);
+ }
+ 
+diff --git a/src/FirmwarePlugin/FirmwarePlugin.h b/src/FirmwarePlugin/FirmwarePlugin.h
+index 706cc2a5..44f3bf2f 100644
+--- a/src/FirmwarePlugin/FirmwarePlugin.h
++++ b/src/FirmwarePlugin/FirmwarePlugin.h
+@@ -125,11 +125,11 @@ class FirmwarePlugin : public QObject
+     virtual void initializeVehicle(Vehicle* /*vehicle*/) {}
+ 
+     /// @return true: Firmware supports all specified capabilites
+-    virtual bool isCapable(const Vehicle* /*vehicle*/, FirmwareCapabilities /*capabilities*/) const { return false; }
++    virtual bool isCapable(const Vehicle* vehicle, FirmwareCapabilities capabilities) const;
+ 
+     /// Returns the list of available flight modes for the Fly View dropdown. This may or may not be the full
+     /// list available from the firmware. Call will be made again if advanced mode changes.
+-    virtual QStringList flightModes(Vehicle* /*vehicle*/) const { return QStringList(); }
++    virtual QStringList flightModes(Vehicle* vehicle) const;
+ 
+     /// Returns the name for this flight mode. Flight mode names must be human readable as well as audio speakable.
+     ///     @param base_mode Base mode from mavlink HEARTBEAT message
+@@ -208,7 +208,7 @@ class FirmwarePlugin : public QObject
+     virtual bool guidedModeROI(Vehicle *vehicle, const QGeoCoordinate &roiCenterCoord, double relativeAltitudeMeters) const;
+ 
+     /// @return The minimum takeoff altitude (relative) for guided takeoff.
+-    virtual double minimumTakeoffAltitudeMeters(Vehicle* /*vehicle*/) const { return 3.048; }
++    virtual double minimumTakeoffAltitudeMeters(Vehicle* vehicle) const;
+ 
+     /// @return The maximum horizontal groundspeed for a multirotor.
+     virtual double maximumHorizontalSpeedMultirotorMetersSecond(Vehicle* /*vehicle*/) const { return NAN; }
+@@ -450,6 +450,7 @@ class FirmwarePlugin : public QObject
+ 
+     QVariantList _toolIndicatorList;
+     QVariantList _modeIndicatorList;
++    bool _isGenericQuadVehicle(const Vehicle* vehicle) const;
+ };
+ 
+ /*===========================================================================*/
+diff --git a/src/Toolbar/MainStatusIndicator.qml b/src/Toolbar/MainStatusIndicator.qml
+index ce7f8610..0f7c6cb1 100644
+--- a/src/Toolbar/MainStatusIndicator.qml
++++ b/src/Toolbar/MainStatusIndicator.qml
+@@ -9,6 +9,11 @@ RowLayout {
+     spacing:    ScreenTools.defaultFontPixelWidth
+ 
+     property var    _activeVehicle:     QGroundControl.multiVehicleManager.activeVehicle
++    // This local Antoine build also connects to the native software SITL, which
++    // deliberately has no QGC parameter store. Keep its basic arm control
++    // available without claiming support for generic aircraft in general.
++    property bool   _antoineGenericQuad: _activeVehicle && _activeVehicle.genericFirmware &&
++                                         _activeVehicle.vehicleType === MAVLinkEnums.MAV_TYPE_QUADROTOR
+     property var    _guidedController:  globals.guidedControllerFlyView
+     property bool   _armed:             _activeVehicle ? _activeVehicle.armed : false
+     property real   _margins:           ScreenTools.defaultFontPixelWidth
+@@ -287,16 +292,17 @@ RowLayout {
+                 heading:            qsTr("Commands")
+                 showDividers:       false
+                 // Stop controls must stay reachable without parameters
+-                visible:            parametersReady || _guidedController.showEmergencyStop || _guidedController.showDisarm || _rebootRequired
++                visible:            parametersReady || _antoineGenericQuad || _guidedController.showEmergencyStop || _guidedController.showDisarm || _rebootRequired
+ 
+                 RowLayout {
+                     spacing:            ScreenTools.defaultFontPixelWidth
+ 
+                     QGCDelayButton {
+                         objectName: "mainStatusArmButton"
+-                        enabled:    _armed || _guidedController.showArm
+-                        text:       _armed ? qsTr("Disarm") : qsTr("Arm")
+-                        visible:    _armed ? _guidedController.showDisarm : parametersReady
++                        enabled:    _armed || _guidedController.showArm || _antoineGenericQuad
++                        text:       _armed ? (_antoineGenericQuad ? qsTr("Disarm Antoine SITL") : qsTr("Disarm"))
++                                           : (_antoineGenericQuad ? qsTr("Arm Antoine SITL") : qsTr("Arm"))
++                        visible:    _armed ? _guidedController.showDisarm : (parametersReady || _antoineGenericQuad)
+ 
+                         onActivated: {
+                             _activeVehicle.armed = !_armed
+diff --git a/src/Utilities/Network/CMakeLists.txt b/src/Utilities/Network/CMakeLists.txt
+index 91c49fd0..c0b60c8e 100644
+--- a/src/Utilities/Network/CMakeLists.txt
++++ b/src/Utilities/Network/CMakeLists.txt
+@@ -22,6 +22,10 @@ target_link_libraries(
+     PRIVATE Qt6::HttpServer QGCCompression QGCLogging
+ )
+ 
++if(TARGET Qt6::Bluetooth)
++    target_link_libraries(QGCNetwork PRIVATE Qt6::Bluetooth)
++endif()
++
+ target_precompile_headers(
+     QGCNetwork
+     PRIVATE

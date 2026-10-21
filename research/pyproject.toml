@@ -1,0 +1,65 @@
+[project]
+name = "dvd-research-console"
+version = "0.1.0"
+description = "Host environment for the local Damn Vulnerable Drone research console"
+requires-python = ">=3.8,<3.13"
+dependencies = [
+    "docker>=7.0,<8",
+    "flask>=3.0,<4",
+    "flask-cors>=4.0,<6",
+    "flask-sqlalchemy>=3.1,<4",
+    "pynacl>=1.5,<2",
+    "python-socketio[client]>=5.11,<6",
+    "pyyaml>=6.0,<7",
+    "requests>=2.31,<3",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.uv]
+
+[dependency-groups]
+lint = [
+    "ruff>=0.11,<1",
+]
+
+mavlink-check = [
+    "nats-py>=2.9,<3",
+    "pymavlink>=2.4.41,<3",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = [
+    "../simulator/mgmt/templates/pages/attacks/injection/ros2_rogue_publisher.py",
+    "../simulator/gzweb/webify_models.py",
+    "../simulator/gzweb/webify_models_v2.py",
+    "../simulator/gzweb/get_local_models.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"research/**/*.py" = ["E501"]
+
+[tool.ruff.lint.extend-per-file-ignores]
+"../simulator/mgmt/**/*.py" = ["E402", "E501", "BLE001", "S110", "TRY401", "RUF012", "RUF059"]
+"../companion-computer/interface/**/*.py" = ["E402", "E501", "BLE001", "S110", "TRY401", "RUF012", "RUF059", "UP006", "UP035", "UP045", "LOG015", "PLW0602", "G201", "UP022", "F841", "EXE001"]
+"../ground-control-station/stages/**/*.py" = ["E501", "BLE001", "S110", "TRY401", "RUF012", "RUF059", "UP031", "PLR1722"]
+"../simulator/gzweb/**/*.py" = ["E501", "S603", "S607", "S314", "UP031", "PLR1722", "E722", "UP010"]
+"../simulator/gzweb/webify_models.py" = ["ALL"]
+"../simulator/gzweb/webify_models_v2.py" = ["ALL"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.setuptools.packages.find]
+include = ["dvd_research*"]
+
+
