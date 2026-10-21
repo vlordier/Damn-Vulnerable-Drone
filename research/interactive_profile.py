@@ -438,6 +438,8 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         overall_status = "stale" if stale else "partial"
     elif stale or foreign:
         overall_status = "stale" if stale else "partial"
+    elif telemetry.get("armed") is None:
+        overall_status = "partial"
     elif missing_owned:
         overall_status = "partial"
     else:

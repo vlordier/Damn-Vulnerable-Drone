@@ -288,11 +288,22 @@ class InteractiveProfileTests(unittest.TestCase):
 
             run.side_effect = result_for
             result = interactive_profile.inspect(self.receipt)
+            telemetry.pop("armed")
+            _identity.side_effect = [
+                "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+                "qgc-process",
+                "supervisor-process",
+            ]
+            unknown_armed = interactive_profile.inspect(self.receipt)
         self.assertEqual(result["telemetry"]["status"], "fresh")
         self.assertEqual(result["telemetry"]["protocol"], "antoine-gz")
         self.assertFalse(result["armed"])
         self.assertEqual(result["status"], "recorded")
         self.assertEqual(result["qgcPeerRouting"]["status"], "configured-unverified")
+        self.assertEqual(unknown_armed["telemetry"]["status"], "fresh")
+        self.assertIsNone(unknown_armed["armed"])
+        self.assertEqual(unknown_armed["status"], "partial")
+        self.assertIn("did not provide", unknown_armed["armedReason"])
 
     @patch(
         "interactive_profile.process_identity",
