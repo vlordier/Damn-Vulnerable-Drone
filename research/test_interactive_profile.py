@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import contextlib
 import io
 import json
@@ -22,6 +23,12 @@ class InteractiveProfileTests(unittest.TestCase):
         )
         self.port_status_mock = self.port_status.start()
         self.addCleanup(self.port_status.stop)
+        self.heartbeat = patch(
+            "interactive_profile.sample_bridge_heartbeat",
+            return_value={"status": "unverified", "reason": "no latest audit frame"},
+        )
+        self.heartbeat.start()
+        self.addCleanup(self.heartbeat.stop)
         self.receipt = Path(self.temp.name) / "interactive-profile-receipt.json"
         bridge_identity = Path(self.temp.name) / ".bridge.identity"
         bridge_identity.write_text("run-local supervisor marker\n", encoding="utf-8")
@@ -318,16 +325,117 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertFalse(result["armed"])
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["bridgeHeartbeat"]["status"], "unverified")
-        self.assertIn("do not confirm", result["bridgeHeartbeat"]["reason"])
+        self.assertEqual(result["bridgeHeartbeat"]["reason"], "no latest audit frame")
         self.assertEqual(result["qgcPeerRouting"]["status"], "configured-unverified")
         self.assertEqual(result["gazeboPoseRecorder"]["status"], "fresh")
         self.assertEqual(result["gazeboPoseRecorder"]["poseName"], "isr")
-        self.assertIn("not observed", result["qgcPeerRouting"]["reason"])
+        self.assertIn("no corroborated fresh heartbeat", result["qgcPeerRouting"]["reason"])
         self.assertAlmostEqual(result["gazeboPoseRecorder"]["simulationTimeAdvanceSeconds"], 0.1)
         self.assertEqual(unknown_armed["telemetry"]["status"], "fresh")
         self.assertIsNone(unknown_armed["armed"])
         self.assertEqual(unknown_armed["status"], "partial")
         self.assertIn("did not provide", unknown_armed["armedReason"])
+
+    def test_audit_heartbeat_is_read_with_last_for_and_bound_to_run_callsign(self) -> None:
+        self.heartbeat.stop()
+        envelope = {
+            "schema": "furia.mavlink.frame",
+            "version": "1.0.0",
+            "callsign": "drone-1",
+            "direction": "gcs_to_antoine",
+            "received_at_unix_ms": int(interactive_profile.time.time() * 1000),
+            "source": "127.0.0.1:53000",
+            "message_id": 0,
+        }
+        output = json.dumps({"data": base64.b64encode(json.dumps(envelope).encode()).decode()})
+        with patch("interactive_profile.subprocess.run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = output
+            result = interactive_profile.sample_bridge_heartbeat(
+                json.loads(self.receipt.read_text(encoding="utf-8"))
+            )
+
+        self.assertEqual(result["status"], "observed")
+        command = run.call_args.args[0]
+        self.assertEqual(
+            command[-5:],
+            [
+                "stream",
+                "get",
+                "ANTOINE_MAVLINK",
+                "--last-for=furia.mavlink.command.drone-1",
+                "--json",
+            ],
+        )
+        self.assertIn("stream", command)
+        self.assertNotIn("sub", command)
+        self.assertNotIn("publish", command)
+
+    def test_audit_heartbeat_rejects_stale_and_non_heartbeat_frames(self) -> None:
+        self.heartbeat.stop()
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        envelope = {
+            "schema": "furia.mavlink.frame",
+            "version": "1.0.0",
+            "callsign": "drone-1",
+            "direction": "gcs_to_antoine",
+            "received_at_unix_ms": 1,
+            "source": "127.0.0.1:53000",
+            "message_id": 0,
+        }
+        with patch("interactive_profile.subprocess.run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = json.dumps({"data": json.dumps(envelope)})
+            stale = interactive_profile.sample_bridge_heartbeat(receipt)
+            envelope["received_at_unix_ms"] = int(interactive_profile.time.time() * 1000)
+            envelope["message_id"] = 76
+            run.return_value.stdout = json.dumps({"data": json.dumps(envelope)})
+            other_frame = interactive_profile.sample_bridge_heartbeat(receipt)
+
+        self.assertEqual(stale["status"], "stale")
+        self.assertEqual(other_frame["status"], "unverified")
+
+    def test_status_observes_configured_path_only_with_live_recorded_qgc(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        self.add_supervisor_process(receipt)
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with (
+            patch(
+                "interactive_profile.process_identity",
+                side_effect={
+                    9001: receipt["processes"]["mavlinkBridge"]["identity"],
+                    9002: "qgc-process",
+                    9003: "supervisor-process",
+                }.get,
+            ),
+            patch(
+                "interactive_profile.sample_bridge_heartbeat", return_value={"status": "observed"}
+            ),
+            patch(
+                "interactive_profile.subprocess.run",
+                return_value=type("Result", (), {"returncode": 1})(),
+            ),
+        ):
+            result = interactive_profile.inspect(self.receipt)
+
+        self.assertEqual(result["qgcPeerRouting"]["status"], "observed")
+        self.assertIn("not authenticated", result["qgcPeerRouting"]["reason"])
+
+    def test_status_does_not_attribute_heartbeat_to_qgc_without_live_process(self) -> None:
+        with (
+            patch("interactive_profile.process_identity", return_value=None),
+            patch(
+                "interactive_profile.sample_bridge_heartbeat", return_value={"status": "observed"}
+            ),
+            patch(
+                "interactive_profile.subprocess.run",
+                return_value=type("Result", (), {"returncode": 1})(),
+            ),
+        ):
+            result = interactive_profile.inspect(self.receipt)
+
+        self.assertEqual(result["bridgeHeartbeat"]["status"], "observed")
+        self.assertEqual(result["qgcPeerRouting"]["status"], "unverified")
 
     def test_pose_recorder_rejects_nonadvancing_simulation_time(self) -> None:
         flight_directory = Path(self.temp.name) / "flight-proof"

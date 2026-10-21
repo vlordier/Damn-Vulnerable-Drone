@@ -159,11 +159,15 @@ messages have the expected schema, protocol, and callsign, and their finite
 simulation timestamps advance. Missing, malformed, mismatched, or
 non-advancing telemetry leaves armed state unknown and the profile partial.
 `qgcPeerRouting` distinguishes the bridge's identity-pinned peer
-configuration from an observed QGC heartbeat; status does not claim that a
-configured peer has actually sent traffic. Neither a receipt nor a live PID is
-a complete flight-health claim. Status validates the configured TCP/UDP port
-values and requires all three configured listeners; an invalid value or failed
-port probe leaves the profile partial.
+configuration from a fresh heartbeat in the run-owned `ANTOINE_MAVLINK` audit.
+Status reads the latest subject message with a bounded, read-only JetStream
+lookup and requires a loopback `gcs_to_antoine` heartbeat no more than two
+seconds old, plus a live process matching the recorded QGC identity. This
+shows that the configured path carried a heartbeat while QGC was running; UDP
+source addresses do not authenticate which local process sent it. Neither a
+receipt nor a live PID is a complete flight-health claim. Status validates the
+configured TCP/UDP port values and requires all three configured listeners;
+an invalid value or failed port probe leaves the profile partial.
 
 QGC's toolbar `Ready`/`Not Ready` label is computed in
 `src/Toolbar/MainStatusIndicator.qml`. For an unarmed vehicle, QGC first checks

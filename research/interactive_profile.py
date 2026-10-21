@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import math
 import os
@@ -20,6 +21,7 @@ STOP_POLL_SECONDS = 0.1
 TELEMETRY_TIMEOUT_SECONDS = 1.5
 POSE_RECORDER_MAX_AGE_SECONDS = 1.5
 POSE_RECORDER_MAX_FUTURE_SECONDS = 0.25
+MAVLINK_HEARTBEAT_MAX_AGE_SECONDS = 2.0
 PROFILE_CONTRACT = "damn-vulnerable-drone.interactive-profile"
 PROFILE_VERSION = "1.0.0"
 
@@ -234,6 +236,95 @@ def read_nats_messages(port: int, subject: str) -> tuple[list[Any], dict[str, st
         return [json.loads(line) for line in result.stdout.splitlines() if line.strip()], None
     except (json.JSONDecodeError, TypeError):
         return [], {"status": "invalid", "reason": f"NATS returned non-JSON data for {subject}"}
+
+
+def sample_bridge_heartbeat(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Read the latest persisted GCS heartbeat without creating a consumer."""
+    callsign = receipt.get("callsign")
+    ports = receipt.get("ports")
+    port = ports.get("nats") if isinstance(ports, dict) else None
+    if _callsign_error(callsign) or not isinstance(port, int) or isinstance(port, bool):
+        return {"status": "unverified", "reason": "run receipt lacks a valid callsign or NATS port"}
+    subject = f"furia.mavlink.command.{callsign}"
+    try:
+        result = subprocess.run(
+            [
+                "nats",
+                "--no-context",
+                "--server",
+                f"nats://127.0.0.1:{port}",
+                "stream",
+                "get",
+                "ANTOINE_MAVLINK",
+                f"--last-for={subject}",
+                "--json",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=TELEMETRY_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return {
+            "status": "unverified",
+            "reason": "bounded read of the run-owned MAVLink audit failed",
+        }
+    if result.returncode != 0:
+        return {
+            "status": "unverified",
+            "reason": "no latest run-owned MAVLink audit frame is available",
+        }
+    try:
+        message = json.loads(result.stdout)
+        if isinstance(message, dict) and isinstance(message.get("message"), dict):
+            message = message["message"]
+        if not isinstance(message, dict):
+            raise ValueError("audit message is not an object")
+        data = message.get("data")
+        if isinstance(data, str):
+            try:
+                decoded = base64.b64decode(data, validate=True).decode("utf-8")
+                envelope = json.loads(decoded)
+            except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
+                envelope = json.loads(data)
+        elif isinstance(data, dict):
+            envelope = data
+        else:
+            raise ValueError("audit message data is missing")
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {"status": "invalid", "reason": "latest MAVLink audit frame is malformed"}
+    if (
+        not isinstance(envelope, dict)
+        or envelope.get("schema") != "furia.mavlink.frame"
+        or envelope.get("version") != "1.0.0"
+        or envelope.get("callsign") != callsign
+        or envelope.get("direction") != "gcs_to_antoine"
+        or envelope.get("message_id") != 0
+    ):
+        return {
+            "status": "unverified",
+            "reason": "latest audit frame is not this callsign's GCS heartbeat",
+        }
+    received_ms = envelope.get("received_at_unix_ms")
+    if (
+        not isinstance(received_ms, (int, float))
+        or isinstance(received_ms, bool)
+        or not math.isfinite(received_ms)
+    ):
+        return {"status": "invalid", "reason": "GCS heartbeat audit timestamp is invalid"}
+    age = time.time() - received_ms / 1000.0
+    if age < -POSE_RECORDER_MAX_FUTURE_SECONDS or age > MAVLINK_HEARTBEAT_MAX_AGE_SECONDS:
+        return {"status": "stale", "reason": "latest GCS heartbeat audit frame is not fresh"}
+    source = envelope.get("source")
+    if not isinstance(source, str) or not source.startswith("127.0.0.1:"):
+        return {"status": "unverified", "reason": "GCS heartbeat did not arrive from loopback"}
+    return {
+        "status": "observed",
+        "source": source,
+        "ageSeconds": max(0.0, age),
+        "messageId": 0,
+        "reason": "fresh loopback GCS heartbeat is present in the run-owned JetStream audit",
+    }
 
 
 def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -522,13 +613,24 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         and f"--qgc-peer {expected_qgc_peer}" in bridge_identity
         and f"--qgc-bind {expected_bridge_bind}" in bridge_identity
     )
+    heartbeat = sample_bridge_heartbeat(receipt)
+    bridge_heartbeat = heartbeat
+    qgc_process = checks.get("qgcUserProcess", {})
+    qgc_identity_matches = (
+        isinstance(qgc_process, dict)
+        and qgc_process.get("alive") is True
+        and qgc_process.get("identityMatches") is True
+    )
+    path_observed = heartbeat.get("status") == "observed" and routing_configured
     qgc_peer_routing = {
-        "status": "configured-unverified" if routing_configured else "unverified",
-        "reason": "bridge command identity pins the peer, but a QGC-originated heartbeat is not observed by status",
-    }
-    bridge_heartbeat = {
-        "status": "unverified",
-        "reason": "process identity and UDP bind do not confirm an outgoing MAVLink heartbeat",
+        "status": "observed"
+        if path_observed and qgc_identity_matches
+        else ("configured-unverified" if routing_configured else "unverified"),
+        "reason": (
+            "fresh loopback heartbeat traversed the configured bridge while the recorded QGC process was alive; UDP source process is not authenticated"
+            if path_observed and qgc_identity_matches
+            else "configured bridge peer has no corroborated fresh heartbeat from a live recorded QGC process"
+        ),
     }
     gazebo_pose_recorder = sample_gazebo_pose_recorder(receipt)
     required_independent_evidence_verified = (
