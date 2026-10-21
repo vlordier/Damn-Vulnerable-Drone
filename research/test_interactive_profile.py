@@ -132,6 +132,16 @@ class InteractiveProfileTests(unittest.TestCase):
             result["processes"]["mavlinkBridge"]["error"], "identity-probe-unavailable"
         )
 
+    def test_process_identity_treats_ps_error_as_unavailable_not_absent(self) -> None:
+        with patch(
+            "interactive_profile.subprocess.run",
+            return_value=type(
+                "Result", (), {"returncode": 2, "stdout": "", "stderr": "ps error"}
+            )(),
+        ):
+            with self.assertRaisesRegex(OSError, "ps error"):
+                interactive_profile.process_identity(9001)
+
     def test_status_rejects_boolean_port_without_probing_it(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         receipt["ports"]["nats"] = True

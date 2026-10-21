@@ -64,6 +64,9 @@ def process_identity(pid: int) -> str | None:
         check=False,
     )
     value = result.stdout.strip()
+    if result.returncode > 1:
+        detail = result.stderr.strip() or f"ps exited with status {result.returncode}"
+        raise OSError(f"cannot inspect process {pid}: {detail}")
     return value if result.returncode == 0 and value else None
 
 
