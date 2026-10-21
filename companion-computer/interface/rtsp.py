@@ -18,18 +18,17 @@ default RELIABLE subscription would silently fail to bind.
 """
 import threading
 
+import gi
 import rclpy
+from cv_bridge import CvBridge
 from rclpy.logging import LoggingSeverity
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
-import cv2
-from cv_bridge import CvBridge
-import gi
 
 gi.require_version('Gst', '1.0')
 gi.require_version('GstRtspServer', '1.0')
 gi.require_version('GLib', '2.0')
-from gi.repository import Gst, GstRtspServer, GLib
+from gi.repository import GLib, Gst, GstRtspServer
 
 Gst.init(None)
 
@@ -57,7 +56,7 @@ class SensorFactory(GstRtspServer.RTSPMediaFactory):
             self.cv_image = self.bridge.imgmsg_to_cv2(data, 'bgr8')
         except Exception as e:
             self.node.get_logger().error(
-                'Error converting ROS Image message to OpenCV image: {}'.format(e)
+                f'Error converting ROS Image message to OpenCV image: {e}'
             )
 
     def do_create_element(self, url):

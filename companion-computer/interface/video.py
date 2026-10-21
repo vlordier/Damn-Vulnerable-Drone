@@ -20,12 +20,12 @@ Humble gazebo_ros_pkgs camera plugin's default profile.
 import threading
 import time
 
+import cv2
 import rclpy
+from cv_bridge import CvBridge
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
-from cv_bridge import CvBridge
-import cv2
 
 
 class VideoStreamer:

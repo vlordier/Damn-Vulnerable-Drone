@@ -1,5 +1,7 @@
-from pymavlink import mavutil
 import time
+
+from pymavlink import mavutil
+
 
 def set_rtl_altitude(master, rtl_alt_cm):
     """Set the RTL altitude."""

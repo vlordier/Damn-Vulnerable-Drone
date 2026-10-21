@@ -1,5 +1,6 @@
-from pymavlink import mavutil
 import time
+
+from pymavlink import mavutil
 
 connection_string = "udp:0.0.0.0:14550"  # Replace with your connection string
 
@@ -32,7 +33,7 @@ def connect_to_drone(connection_string, timeout=30, retries=5):
         except TimeoutError as e:
             print(str(e))
         except Exception as e:
-            print(f"Unexpected error: {str(e)}")
+            print(f"Unexpected error: {e!s}")
         
         time.sleep(5)  # Wait before retrying
 

@@ -1,16 +1,17 @@
 from __future__ import annotations
 
-from pathlib import Path
-import os
 import json
 import logging
+import os
+import queue
 import subprocess
 import threading
 import time
 from logging.handlers import RotatingFileHandler
-from typing import Optional
-import queue
+from pathlib import Path
 
+import mavlink_connection
+from extensions import db
 from flask import (
     Flask,
     flash,
@@ -28,13 +29,10 @@ from flask_login import (
     login_user,
     logout_user,
 )
-from flask_socketio import SocketIO, emit
 from flask_sock import Sock
-
-from extensions import db
-import mavlink_connection
-from mavlink_connection import initialize_socketio, listen_to_mavlink
+from flask_socketio import SocketIO, emit
 from gimbal_bridge import start_gimbal_bridge
+from mavlink_connection import initialize_socketio, listen_to_mavlink
 from models import TelemetryStatus, UdpDestination, User
 from routes.camera import camera_bp
 from routes.logs import logs_bp
@@ -96,7 +94,7 @@ def _ws_publish(payload: dict) -> None:
 # ---------------------------------------------------------------------------
 
 @login_manager.user_loader
-def load_user(user_id: str) -> Optional[User]:
+def load_user(user_id: str) -> User | None:
     return User.query.get(int(user_id))
 
 
@@ -110,7 +108,7 @@ def configure_logging(app: Flask) -> None:
     app.logger.addHandler(file_handler)
 
 
-def get_host_gateway_ip() -> Optional[str]:
+def get_host_gateway_ip() -> str | None:
     try:
         out = subprocess.check_output(
             ["getent", "ahostsv4", "host.docker.internal"],
@@ -211,7 +209,7 @@ def create_app() -> Flask:
     # -------------------- Socket.IO --------------------
 
     @socketio.on("connect")
-    def handle_connect(auth):  # noqa: D401, ANN001
+    def handle_connect(auth):
         telemetry_status = TelemetryStatus.query.first()
         if not telemetry_status:
             telemetry_status = TelemetryStatus(status="Not Connected")
@@ -228,7 +226,7 @@ def create_app() -> Flask:
         emit("telemetry_status", {"isTelemetryRunning": telemetry_status.status})
 
     @socketio.on("disconnect")
-    def handle_disconnect():  # noqa: D401
+    def handle_disconnect():
         emit("telemetry_status", {"status": "disconnected"})
 
     # ---- Tee 'mavlink_message' to Flask-Sock --------------------------------

@@ -1,15 +1,12 @@
-from flask import Blueprint, jsonify, request
-import socketio
-from extensions import db
-from models import TelemetryStatus, UdpDestination
-import subprocess
-from pymavlink import mavutil
 import logging
-import threading
+import subprocess
+
 import serial.tools.list_ports
-from flask import render_template
-from mavlink_connection import close_mavlink_connection, set_parameter
+from extensions import db
+from flask import Blueprint, jsonify, render_template, request
 from flask_login import login_required
+from mavlink_connection import set_parameter
+from models import TelemetryStatus, UdpDestination
 
 telemetry_bp = Blueprint('telemetry', __name__)
 
@@ -74,7 +71,7 @@ def start_telemetry():
 
         return jsonify({'status': 'Telemetry started', 'cmd': ' '.join(cmd)})
     except Exception as e:
-        logging.error(f"Failed to start telemetry: {str(e)}")
+        logging.error(f"Failed to start telemetry: {e!s}")
         telemetry_status = "Not connected"
         return jsonify({'error': str(e)}), 500
 
@@ -132,14 +129,7 @@ def get_telemetry_status():
     telemetry_status = TelemetryStatus.query.first()
 
     # Double check status by checking for mavlink-routerd process, if process is running keep status as connected else update status to not connected
-    if telemetry_status and telemetry_status.status == "Connected":
-        try:
-            subprocess.run(["pgrep", "-f", "mavlink-routerd"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        except subprocess.CalledProcessError:
-            telemetry_status.status = "Not Connected"
-            db.session.commit()
-    # else if find "Connecting" status in db, check for mavlink-routerd process, if process is not running update status to not connected
-    elif telemetry_status and telemetry_status.status == "Connecting":
+    if telemetry_status and telemetry_status.status == "Connected" or telemetry_status and telemetry_status.status == "Connecting":
         try:
             subprocess.run(["pgrep", "-f", "mavlink-routerd"], check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         except subprocess.CalledProcessError:

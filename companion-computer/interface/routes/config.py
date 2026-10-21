@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, request
+
 from interface import db
 from interface.models import Config, UdpDestination
 

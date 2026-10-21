@@ -1,11 +1,11 @@
-from flask import Blueprint, jsonify, request, Response, render_template
 import logging
 import threading
-from video import get_streamer
-from flask_login import login_required
 
 import rclpy
+from flask import Blueprint, Response, jsonify, render_template
+from flask_login import login_required
 from geometry_msgs.msg import Vector3
+from video import get_streamer
 
 camera_bp = Blueprint('camera', __name__)
 

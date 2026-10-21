@@ -1,12 +1,9 @@
-import time
-from flask import Blueprint, jsonify, render_template, request, send_from_directory
-from mavlink_connection import create_mavlink_connection, mav_connection
-from pymavlink import mavutil
-import struct
-import subprocess
-import os
 import logging
+import os
+
+from flask import Blueprint, jsonify, render_template, request, send_from_directory
 from flask_login import login_required
+from pymavlink import mavutil
 
 logs_bp = Blueprint('logs', __name__)
 
@@ -127,7 +124,7 @@ def download_bin_log():
                     logger.error("Failed to receive log data or incomplete data received.")
                     break
     except Exception as e:
-        logger.error(f"An error occurred while downloading the file: {str(e)}")
+        logger.error(f"An error occurred while downloading the file: {e!s}")
         return jsonify({'error': 'Failed to download log file due to an error'}), 500
 
     # Check if file exists and serve it

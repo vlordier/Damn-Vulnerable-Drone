@@ -1,5 +1,7 @@
 #!/bin/bash
-# Source the ROS environment (Humble on this branch)
+# Source the ROS environment (Humble on this branch). It is installed in the
+# container image; ShellCheck runs outside that ROS image.
+# shellcheck disable=SC1091
 source /opt/ros/humble/setup.bash
 
 # Start the socat command in the background

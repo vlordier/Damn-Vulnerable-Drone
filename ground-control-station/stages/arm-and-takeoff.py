@@ -1,5 +1,7 @@
-from pymavlink import mavutil
 import time
+
+from pymavlink import mavutil
+
 
 def wait_for_mode(master, mode):
     while True:

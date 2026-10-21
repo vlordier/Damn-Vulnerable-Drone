@@ -1,12 +1,13 @@
-from pymavlink import mavutil
-from flask_socketio import SocketIO
-import serial
-import time
 import math
-from typing import Optional, Dict, Any
+import time
+from typing import Any
+
+import serial
+from flask_socketio import SocketIO
+from pymavlink import mavutil
 
 mav_connection = None
-socketio: Optional[SocketIO] = None
+socketio: SocketIO | None = None
 
 # ---------------- Connection helpers ----------------
 
@@ -26,7 +27,7 @@ def close_mavlink_connection():
 
 # ---------------- Internal utils ----------------
 
-def _normalize_heading_deg(yaw_rad: Optional[float]) -> Optional[float]:
+def _normalize_heading_deg(yaw_rad: float | None) -> float | None:
     if yaw_rad is None:
         return None
     try:
@@ -35,7 +36,7 @@ def _normalize_heading_deg(yaw_rad: Optional[float]) -> Optional[float]:
     except Exception:
         return None
 
-def _src_sysid(msg) -> Optional[int]:
+def _src_sysid(msg) -> int | None:
     try:
         if hasattr(msg, "get_srcSystem"):
             s = msg.get_srcSystem()
@@ -51,7 +52,7 @@ def _src_sysid(msg) -> Optional[int]:
         pass
     return None
 
-def _empty_gauges() -> Dict[str, Any]:
+def _empty_gauges() -> dict[str, Any]:
     return {
         "timestamp": time.time(),
         # attitude
@@ -68,7 +69,7 @@ def _empty_gauges() -> Dict[str, Any]:
         "mode": None, "armed": None,
     }
 
-def _fold_frame_into_gauges(g: Dict[str, Any], msg) -> None:
+def _fold_frame_into_gauges(g: dict[str, Any], msg) -> None:
     mtype = msg.get_type()
     if mtype == "BAD_DATA":
         return
@@ -131,7 +132,7 @@ def _fold_frame_into_gauges(g: Dict[str, Any], msg) -> None:
         if rb is not None and rb != 255:
             g["batt_remaining_pct"] = float(rb)
 
-def _sanitize_gauges(g: Dict[str, Any]) -> Dict[str, Any]:
+def _sanitize_gauges(g: dict[str, Any]) -> dict[str, Any]:
     g = dict(g)
     fix = g.get("gps_fix_type")
 
@@ -274,9 +275,9 @@ def listen_to_mavlink():
         pass
 
     # Map sysid -> MAV_TYPE, and lock to the first QUAD we see
-    sys_types: Dict[int, int] = {}
+    sys_types: dict[int, int] = {}
     allowed_type = mavutil.mavlink.MAV_TYPE_QUADROTOR
-    autopilot_sysid: Optional[int] = None
+    autopilot_sysid: int | None = None
 
     last_emit = 0.0
     emit_period = 0.10  # 10 Hz

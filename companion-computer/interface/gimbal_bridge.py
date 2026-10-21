@@ -24,12 +24,11 @@ to spin its own node concurrently.
 import threading
 
 import rclpy
+from builtin_interfaces.msg import Duration
+from geometry_msgs.msg import Vector3
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
 from trajectory_msgs.msg import JointTrajectory, JointTrajectoryPoint
-from geometry_msgs.msg import Vector3
-from builtin_interfaces.msg import Duration
-
 
 # Tilt (pitch) is gimbal_small_2d::tilt_joint. Pan (yaw) reuses the
 # existing iris_gimbal_mount joint (axis 0 0 1) that attaches the gimbal
