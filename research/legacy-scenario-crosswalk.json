@@ -214,7 +214,7 @@
       "status": "partial",
       "nativeScenarioIds": [],
       "adaptation": "Probe the opt-in native Antoine NATS RTL control with an irrelevant caller-supplied target payload",
-      "gap": "the isolated native flight check shows unsigned direct RTL is accepted without run/task authority and its target payload is ignored in favor of fixed home; independent Gazebo trajectory and actuator evidence are still absent, and this result does not describe the separate Gazebo controller"
+      "gap": "the native and isolated Gazebo checks show unsigned direct RTL is accepted without run/task authority and caller target fields are ignored in favor of authority-captured home; wrong callsign, unsupported return-target control, and out-of-envelope position are rejected, with independent Gazebo pose and actuator evidence. This is the opt-in loopback local test authority, not furia-core or production NATS authorization."
     },
     {
       "source": "injection/ros2-rogue-publisher-injection.yaml",

@@ -173,6 +173,89 @@ class GazeboFlightCheck(FlightCheck):
             f"{self.mode_names[custom_mode]} heartbeat",
         )
 
+    async def direct_control(
+        self,
+        command: dict,
+        *,
+        request_id: str,
+        identity: str | None = None,
+        extra_fields: dict | None = None,
+    ) -> dict:
+        """Publish directly to the local authority, bypassing MAVLink ingress."""
+        envelope = {
+            "schema": "furia.mavlink.control",
+            "version": "1.0.0",
+            "identity": identity or self.callsign,
+            "request_id": request_id,
+            "command": command,
+        }
+        if extra_fields:
+            envelope.update(extra_fields)
+        reply = await self.nc.request(
+            f"furia.mavlink.control.{self.callsign}",
+            json.dumps(envelope).encode(),
+            timeout=2,
+        )
+        response = json.loads(reply.data)
+        response["requestIdMatched"] = response.get("requestId") == request_id
+        assert response["requestIdMatched"], response
+        return response
+
+    def actuator_audit(self) -> list[dict]:
+        """Read independent Gazebo applier output, not Antoine telemetry."""
+        path = self.pose_file.parent / "applier-neutral" / "actuator-output.jsonl"
+        try:
+            with path.open("rb") as stream:
+                stream.seek(max(0, path.stat().st_size - 2_000_000))
+                lines = stream.read().decode("utf-8", errors="replace").splitlines()
+        except OSError:
+            return []
+        records = []
+        for line in lines:
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if (
+                isinstance(record, dict)
+                and record.get("vehicleId") == self.callsign
+                and record.get("actuatorKind") == "motors"
+            ):
+                records.append(record)
+        return records
+
+    async def wait_authorized_motor_output(
+        self,
+        after_sequence: int,
+        expected_target_m: tuple[float, float, float],
+        timeout_s: float = 5.0,
+    ) -> dict:
+        deadline = time.monotonic() + timeout_s
+        expected_target_mm = [round(value * 1000) for value in expected_target_m]
+        while time.monotonic() < deadline:
+            for record in self.actuator_audit():
+                grant = record.get("executionGrant")
+                target = grant.get("targetEnuMm") if isinstance(grant, dict) else None
+                if (
+                    record.get("sequence", -1) > after_sequence
+                    and record.get("neutral") is False
+                    and isinstance(grant, dict)
+                    and grant.get("contract") == "furia.prime.execution-grant"
+                    and isinstance(target, list)
+                    and len(target) == 3
+                    and all(
+                        isinstance(value, (int, float)) and abs(value - expected) <= 250
+                        for value, expected in zip(target, expected_target_mm, strict=True)
+                    )
+                ):
+                    return record
+            await asyncio.sleep(0.1)
+        raise AssertionError(
+            f"no independent authorized motor output matched RTL home cruise target "
+            f"{expected_target_mm}; "
+            f"last records={self.actuator_audit()[-3:]}"
+        )
+
     async def close(self):
         if self.keepalive_task:
             self.keepalive_task.cancel()
@@ -263,20 +346,74 @@ async def run_check() -> dict:
             "AUTO mission terminal waypoint",
         )
 
-        # The upstream local authority's RTL leg tracks home at the current
-        # altitude. Its terminal controller has a 0.75 m hold radius, so the
-        # acceptance mission first exercises a precise return-to-home waypoint
-        # before asking RTL to descend.
-        return_home = await check.wait_pose(
-            lambda point: math.dist(point, (home[0], home[1], home[2] + 0.5)) <= 0.65,
+        attack_start = await check.wait_pose(
+            lambda point: math.dist(point, (home[0] + 2.0, home[1], home[2] + 0.5)) <= 0.65,
             35,
-            "AUTO return-to-home waypoint",
+            "AUTO mission target before direct-NATS boundary probes",
         )
-        await check.set_mode(4)
-        await check.wait_pose(
+        wrong_callsign = await check.direct_control(
+            {"type": "rtl"},
+            request_id="gazebo-rtl-wrong-callsign",
+            identity=f"{callsign}-spoofed",
+        )
+        assert wrong_callsign.get("accepted") is False, wrong_callsign
+        unsupported_return_target = await check.direct_control(
+            {"type": "set_return_target", "payload": {"north_m": 2.0, "east_m": 2.0}},
+            request_id="gazebo-unsupported-return-target",
+        )
+        assert unsupported_return_target.get("accepted") is False, unsupported_return_target
+        assert "unsupported command type" in unsupported_return_target.get("reason", ""), (
+            unsupported_return_target
+        )
+        out_of_envelope = await check.direct_control(
+            {
+                "type": "set_position",
+                "payload": {"north_m": 4.0, "east_m": 0.0, "down_m": -1.0},
+            },
+            request_id="gazebo-position-out-of-envelope",
+        )
+        assert out_of_envelope.get("accepted") is False, out_of_envelope
+        assert out_of_envelope.get("reason") == "position-out-of-lab-envelope", out_of_envelope
+
+        actuator_before_rtl = check.actuator_audit()
+        actuator_sequence_before_rtl = max(
+            (row.get("sequence", -1) for row in actuator_before_rtl), default=-1
+        )
+        caller_return_target = [home[0] + 5.0, home[1] + 5.0, home[2] + 2.0]
+        unsigned_stale_run_rtl = await check.direct_control(
+            {
+                "type": "rtl",
+                "payload": {
+                    "return_target_enu_m": caller_return_target,
+                    "north_m": 2.0,
+                    "east_m": 2.0,
+                    "down_m": -2.0,
+                },
+            },
+            request_id="gazebo-rtl-unsigned-stale-run-target-override",
+            extra_fields={
+                "runId": "stale-run-without-authority",
+                "taskId": "unrelated-task",
+                "executionGrant": {"signature": "expired-untrusted-grant", "expiresAtUnixMs": 0},
+            },
+        )
+        assert unsigned_stale_run_rtl.get("accepted") is True, unsigned_stale_run_rtl
+        assert unsigned_stale_run_rtl.get("mode") == "RTL", unsigned_stale_run_rtl
+        return_cruise = await check.wait_pose(
+            lambda point: (
+                math.dist(point[:2], home[:2]) <= 0.65 and abs(point[2] - attack_start[2]) <= 0.3
+            ),
+            35,
+            "direct unsigned RTL returns to the configured home at cruise altitude",
+        )
+        rtl_home = await check.wait_pose(
             lambda point: math.dist(point, home) <= 0.25,
             35,
-            "RTL to home and ground",
+            "direct unsigned RTL reaches configured home and ground",
+        )
+        rtl_actuator_output = await check.wait_authorized_motor_output(
+            actuator_sequence_before_rtl,
+            (home[0], home[1], attack_start[2]),
         )
         await check.request(check.long(22, p7=0.8), 22)
         await check.wait_pose(lambda point: point[2] >= home[2] + 0.55, 25, "second takeoff")
@@ -303,7 +440,23 @@ async def run_check() -> dict:
             "takeoffPose": takeoff,
             "positionTargetPose": moved,
             "missionEndPose": mission_end,
-            "autoReturnHomePose": return_home,
+            "directNatsRtlProbe": {
+                "boundary": "loopback local Gazebo test authority; not furia-core",
+                "wrongCallsign": wrong_callsign,
+                "unsupportedReturnTarget": unsupported_return_target,
+                "outOfEnvelopePosition": out_of_envelope,
+                "unsignedStaleRunAndGrantRtl": unsigned_stale_run_rtl,
+                "callerReturnTargetEnuM": caller_return_target,
+                "targetSource": "authority-captured home; caller return-target fields were ignored",
+                "trajectoryEvidence": {
+                    "gazeboPoseBeforeRtl": attack_start,
+                    "gazeboCruiseReturnPose": return_cruise,
+                    "gazeboHomePose": rtl_home,
+                },
+                "independentActuatorOutput": rtl_actuator_output,
+                "runTaskGrantFieldsEnforcedByOperatorEnvelope": False,
+                "impactLimit": "requires access to this run's local NATS operator subject; no Core authority claim",
+            },
             "finalGazeboPose": final_pose,
             "finalMavlinkState": final_state,
             "prearmReadyBeforeFlight": initial_state.get("prearm_ready"),
