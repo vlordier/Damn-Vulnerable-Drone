@@ -13,6 +13,32 @@ from pathlib import Path
 
 from flight_check import FlightCheck
 
+POSE_SAMPLE_MAX_AGE_SECONDS = 1.5
+MAVLINK_STATE_MAX_AGE_SECONDS = 1.5
+
+
+def gazebo_timestamp_seconds(value: dict) -> float | None:
+    header = value.get("header")
+    stamp = header.get("stamp") if isinstance(header, dict) else None
+    if not isinstance(stamp, dict):
+        return None
+    sec = stamp.get("sec")
+    nsec = stamp.get("nsec", 0)
+    if isinstance(sec, str) and sec.isascii() and sec.isdecimal():
+        sec = int(sec)
+    if isinstance(nsec, str) and nsec.isascii() and nsec.isdecimal():
+        nsec = int(nsec)
+    if (
+        not isinstance(sec, int)
+        or isinstance(sec, bool)
+        or not isinstance(nsec, int)
+        or isinstance(nsec, bool)
+        or sec < 0
+        or not 0 <= nsec < 1_000_000_000
+    ):
+        return None
+    return sec + nsec / 1_000_000_000
+
 
 def write_failed_report(
     report_path: Path,
@@ -54,6 +80,8 @@ class GazeboFlightCheck(FlightCheck):
         self.agent = agent
         self.raw_telemetry: dict = {}
         self.keepalive_task: asyncio.Task | None = None
+        self.vehicle_state_updated_at: float | None = None
+        self.state_field_updated_at: dict[str, float] = {}
         self.mode_names = {0: "STABILIZE", 1: "GUIDED", 2: "AUTO", 3: "HOLD", 4: "RTL", 5: "LAND"}
 
     async def on_telemetry(self, msg):
@@ -73,11 +101,14 @@ class GazeboFlightCheck(FlightCheck):
     def _update_vehicle_state(self, message) -> None:
         message_type = message.get_type()
         state = dict(self.telemetry)
+        updated_at = time.monotonic()
         if message_type == "HEARTBEAT":
             state["armed"] = bool(message.base_mode & 128)
             state["mode"] = self.mode_names.get(
                 message.custom_mode, f"UNKNOWN_{message.custom_mode}"
             )
+            self.state_field_updated_at["armed"] = updated_at
+            self.state_field_updated_at["mode"] = updated_at
         elif message_type == "GLOBAL_POSITION_INT":
             state["alt_m"] = message.relative_alt / 1000.0
             state["lat_deg"] = message.lat / 1e7
@@ -85,11 +116,16 @@ class GazeboFlightCheck(FlightCheck):
             state["vn_mps"] = message.vx / 100.0
             state["ve_mps"] = message.vy / 100.0
             state["vd_mps"] = message.vz / 100.0
+            for field in ("alt_m", "lat_deg", "lon_deg", "vn_mps", "ve_mps", "vd_mps"):
+                self.state_field_updated_at[field] = updated_at
         elif message_type == "SYS_STATUS":
             state["battery_pct"] = message.battery_remaining
             state["voltage_battery_mv"] = message.voltage_battery
             state["prearm_ready"] = bool(message.onboard_control_sensors_health)
+            self.state_field_updated_at["prearm_ready"] = updated_at
         self.telemetry = state
+        if message_type in {"HEARTBEAT", "GLOBAL_POSITION_INT", "SYS_STATUS"}:
+            self.vehicle_state_updated_at = updated_at
 
     async def recv_messages(self, seconds=0.5):
         end = time.monotonic() + seconds
@@ -109,21 +145,46 @@ class GazeboFlightCheck(FlightCheck):
             except TimeoutError:
                 await asyncio.sleep(0)
 
-    async def wait_state(self, predicate, timeout_s: float, description: str):
-        deadline = time.monotonic() + timeout_s
+    async def wait_state(
+        self,
+        predicate,
+        timeout_s: float,
+        description: str,
+        *,
+        fresh_fields: tuple[str, ...] = (),
+    ):
+        started_at = time.monotonic()
+        deadline = started_at + timeout_s
+
+        def fresh_state_observed() -> bool:
+            if fresh_fields:
+                return all(
+                    self.state_field_updated_at.get(field, 0.0) > started_at
+                    for field in fresh_fields
+                )
+            return (
+                self.vehicle_state_updated_at is not None
+                and self.vehicle_state_updated_at > started_at
+            )
+
         while time.monotonic() < deadline:
-            if predicate(self.telemetry):
+            if fresh_state_observed() and predicate(self.telemetry):
                 return dict(self.telemetry)
             async for _, _message in self.recv_messages(0.1):
-                if predicate(self.telemetry):
+                if fresh_state_observed() and predicate(self.telemetry):
                     return dict(self.telemetry)
         raise AssertionError(f"timed out waiting for {description}: {self.telemetry}")
 
-    def pose(self) -> tuple[float, float, float] | None:
+    def pose_observation(self) -> dict | None:
         try:
-            size = self.pose_file.stat().st_size
+            if self.pose_file.is_symlink():
+                return None
+            file_stat = self.pose_file.stat()
+            age = time.time() - file_stat.st_mtime
+            if age < -0.25 or age > POSE_SAMPLE_MAX_AGE_SECONDS:
+                return None
             with self.pose_file.open("rb") as stream:
-                stream.seek(max(0, size - 512_000))
+                stream.seek(max(0, file_stat.st_size - 512_000))
                 lines = stream.read().splitlines()
         except (FileNotFoundError, OSError):
             return None
@@ -132,22 +193,66 @@ class GazeboFlightCheck(FlightCheck):
                 value = json.loads(line)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
-            for item in value.get("pose", []):
+            if not isinstance(value, dict):
+                continue
+            simulation_time = gazebo_timestamp_seconds(value)
+            poses = value.get("pose")
+            if simulation_time is None or not isinstance(poses, list):
+                continue
+            for item in poses:
+                if not isinstance(item, dict):
+                    continue
                 if item.get("name") == self.agent:
                     position = item.get("position", {})
-                    if all(axis in position for axis in ("x", "y", "z")):
-                        return float(position["x"]), float(position["y"]), float(position["z"])
+                    if not isinstance(position, dict):
+                        continue
+                    coordinates = [position.get(axis) for axis in ("x", "y", "z")]
+                    if any(
+                        isinstance(axis, bool)
+                        or not isinstance(axis, (int, float))
+                        or not math.isfinite(axis)
+                        for axis in coordinates
+                    ):
+                        continue
+                    return {
+                        "simulationTimeSeconds": simulation_time,
+                        "position": tuple(float(axis) for axis in coordinates),
+                        "fileAgeSeconds": max(0.0, age),
+                    }
         return None
+
+    def pose(self) -> tuple[float, float, float] | None:
+        observation = self.pose_observation()
+        return observation["position"] if observation is not None else None
 
     async def wait_pose(self, predicate, timeout_s: float, description: str):
         deadline = time.monotonic() + timeout_s
         last = None
+        previous_simulation_time = None
         while time.monotonic() < deadline:
-            last = self.pose()
-            if last is not None and predicate(last):
-                return last
+            observation = self.pose_observation()
+            if observation is not None:
+                simulation_time = observation["simulationTimeSeconds"]
+                last = observation["position"]
+                if (
+                    previous_simulation_time is not None
+                    and simulation_time < previous_simulation_time
+                ):
+                    raise AssertionError(
+                        f"Gazebo simulation time moved backwards while waiting for {description}: "
+                        f"{previous_simulation_time} -> {simulation_time}"
+                    )
+                if (
+                    previous_simulation_time is not None
+                    and simulation_time > previous_simulation_time
+                ):
+                    if predicate(last):
+                        return last
+                previous_simulation_time = simulation_time
             await asyncio.sleep(0.1)
-        raise AssertionError(f"timed out waiting for Gazebo pose {description}: {last}")
+        raise AssertionError(
+            f"timed out waiting for an advancing Gazebo pose {description}: {last}"
+        )
 
     async def wait_settled_home(self, home: tuple[float, float, float], timeout_s=8.0):
         """Require fresh MAVLink state and Gazebo truth to stay settled before disarm."""
@@ -155,13 +260,38 @@ class GazeboFlightCheck(FlightCheck):
         settled_since = None
         last_state = {}
         last_pose = None
+        last_pose_simulation_time = None
         while time.monotonic() < deadline:
             async for _, _message in self.recv_messages(0.1):
                 pass
             last_state = dict(self.telemetry)
-            last_pose = self.pose()
+            pose_observation = self.pose_observation()
+            last_pose = pose_observation["position"] if pose_observation is not None else None
+            if (
+                pose_observation is not None
+                and last_pose_simulation_time is not None
+                and pose_observation["simulationTimeSeconds"] < last_pose_simulation_time
+            ):
+                raise AssertionError(
+                    "Gazebo simulation time moved backwards during settled-home verification"
+                )
+            current_time = time.monotonic()
+            state_is_fresh = (
+                self.vehicle_state_updated_at is not None
+                and 0.0
+                <= current_time - self.vehicle_state_updated_at
+                <= MAVLINK_STATE_MAX_AGE_SECONDS
+            )
+            pose_is_advancing = pose_observation is not None and (
+                last_pose_simulation_time is None
+                or pose_observation["simulationTimeSeconds"] > last_pose_simulation_time
+            )
+            if pose_observation is not None:
+                last_pose_simulation_time = pose_observation["simulationTimeSeconds"]
             settled = (
-                last_state.get("armed") is True
+                state_is_fresh
+                and pose_is_advancing
+                and last_state.get("armed") is True
                 and last_state.get("alt_m", 999.0) <= 0.20
                 and abs(last_state.get("vn_mps", 999.0)) <= 0.15
                 and abs(last_state.get("ve_mps", 999.0)) <= 0.15
@@ -202,6 +332,7 @@ class GazeboFlightCheck(FlightCheck):
             lambda state: state.get("mode") == self.mode_names[custom_mode],
             4,
             f"{self.mode_names[custom_mode]} heartbeat",
+            fresh_fields=("mode",),
         )
 
     async def direct_control(
@@ -310,6 +441,7 @@ async def run_check() -> dict:
             lambda state: state.get("prearm_ready") is True,
             5,
             "Gazebo model pre-arm-ready SYS_STATUS",
+            fresh_fields=("prearm_ready",),
         )
         initial_state = dict(check.telemetry)
         initial = await check.wait_pose(lambda point: True, 3, "initial pose")
@@ -325,10 +457,20 @@ async def run_check() -> dict:
 
         await check.request(check.long(400, p1=1.0), 400)
         armed = True
-        await check.wait_state(lambda state: state.get("armed") is True, 4, "armed heartbeat")
+        await check.wait_state(
+            lambda state: state.get("armed") is True,
+            4,
+            "armed heartbeat",
+            fresh_fields=("armed",),
+        )
 
         await check.request(check.long(22, p7=1.0), 22)
-        await check.wait_state(lambda state: state.get("mode") == "GUIDED", 4, "GUIDED mode")
+        await check.wait_state(
+            lambda state: state.get("mode") == "GUIDED",
+            4,
+            "GUIDED mode",
+            fresh_fields=("mode",),
+        )
         takeoff = await check.wait_pose(
             lambda point: point[2] >= home[2] + 0.75, 30, "takeoff above 0.75 m"
         )
@@ -370,7 +512,12 @@ async def run_check() -> dict:
         assert mission_state.get("missionUploaded") is True, mission_state
         assert len(mission_state.get("waypoints", [])) == len(waypoints), mission_state
         await check.request(check.long(300), 300)
-        await check.wait_state(lambda state: state.get("mode") == "AUTO", 4, "AUTO mode")
+        await check.wait_state(
+            lambda state: state.get("mode") == "AUTO",
+            4,
+            "AUTO mode",
+            fresh_fields=("mode",),
+        )
         mission_end = await check.wait_pose(
             lambda point: math.dist(point, (home[0] + 2.0, home[1], home[2] + 0.5)) <= 1.0,
             40,
@@ -516,7 +663,10 @@ async def run_check() -> dict:
         await check.disarm_after_settle(home)
         armed = False
         final_state = await check.wait_state(
-            lambda state: state.get("armed") is False, 5, "disarmed heartbeat"
+            lambda state: state.get("armed") is False,
+            5,
+            "disarmed heartbeat",
+            fresh_fields=("armed",),
         )
         final_pose = await check.wait_pose(
             lambda point: math.dist(point, home) <= 0.25, 3, "disarmed on ground"
