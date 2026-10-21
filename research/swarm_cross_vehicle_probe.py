@@ -146,6 +146,37 @@ def target_plan(run_dir: Path, callsign: str) -> tuple[str, list[float]]:
     return model, [float(value) for value in target]
 
 
+def pose_simulation_time(stamp: object) -> float | None:
+    """Parse a ROS timestamp without accepting booleans or fractional fields."""
+    if not isinstance(stamp, dict):
+        return None
+
+    def integer_field(value: object) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+            return int(value)
+        if isinstance(value, str):
+            try:
+                return int(value)
+            except ValueError:
+                return None
+        return None
+
+    seconds = integer_field(stamp.get("sec"))
+    nanoseconds = integer_field(stamp.get("nsec"))
+    if (
+        seconds is None
+        or seconds < 0
+        or nanoseconds is None
+        or not 0 <= nanoseconds < 1_000_000_000
+    ):
+        return None
+    return seconds + nanoseconds / 1_000_000_000
+
+
 def vehicle_effect_snapshot(run_dir: Path, models: dict[str, str]) -> dict:
     """Capture bounded independent pose and applier state for every vehicle."""
     pose_path = run_dir / "gazebo-pose.jsonl"
@@ -171,10 +202,10 @@ def vehicle_effect_snapshot(run_dir: Path, models: dict[str, str]) -> dict:
         try:
             frame = json.loads(line)
             stamp = frame["header"]["stamp"]
-            sim_time = int(stamp.get("sec", 0)) + int(stamp.get("nsec", 0)) / 1e9
+            sim_time = pose_simulation_time(stamp)
         except (json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError):
             continue
-        if not math.isfinite(sim_time):
+        if sim_time is None or not math.isfinite(sim_time):
             continue
         poses = frame.get("pose")
         if not isinstance(poses, list):
@@ -360,10 +391,10 @@ def pose_window_at_target(
         try:
             frame = json.loads(line)
             stamp = frame["header"]["stamp"]
-            timestamp = int(stamp.get("sec", 0)) + int(stamp.get("nsec", 0)) / 1e9
+            timestamp = pose_simulation_time(stamp)
         except (json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError):
             continue
-        if not math.isfinite(timestamp):
+        if timestamp is None or not math.isfinite(timestamp):
             continue
         poses = frame.get("pose")
         if not isinstance(poses, list):

@@ -13,6 +13,7 @@ from swarm_cross_vehicle_probe import (
     compare_effect_snapshots,
     controller_decision,
     mutate_setpoint,
+    pose_simulation_time,
     pose_window_at_target,
     vehicle_effect_snapshot,
     write_report,
@@ -218,6 +219,19 @@ class MutationTests(unittest.TestCase):
 
 
 class PoseTruthTests(unittest.TestCase):
+    def test_pose_timestamp_rejects_boolean_fractional_and_invalid_nanoseconds(self) -> None:
+        for stamp in (
+            {"sec": True, "nsec": 0},
+            {"sec": 1.5, "nsec": 0},
+            {"sec": 1, "nsec": True},
+            {"sec": 1, "nsec": 1_000_000_000},
+            {"sec": -1, "nsec": 0},
+        ):
+            with self.subTest(stamp=stamp):
+                self.assertIsNone(pose_simulation_time(stamp))
+
+        self.assertEqual(pose_simulation_time({"sec": "10", "nsec": 250_000_000}), 10.25)
+
     def test_report_replacement_failure_preserves_previous_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             report_path = Path(directory) / "report.json"
@@ -296,7 +310,12 @@ class PoseTruthTests(unittest.TestCase):
                     stream.write(
                         json.dumps(
                             {
-                                "header": {"stamp": {"sec": "10", "nsec": index * 20_000_000}},
+                                "header": {
+                                    "stamp": {
+                                        "sec": str(10 + index * 20_000_000 // 1_000_000_000),
+                                        "nsec": index * 20_000_000 % 1_000_000_000,
+                                    }
+                                },
                                 "pose": [
                                     {
                                         "name": "fpv-a",
