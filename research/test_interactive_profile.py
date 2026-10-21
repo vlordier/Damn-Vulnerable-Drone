@@ -90,6 +90,8 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["runIdentityValidation"]["status"], "invalid")
         self.assertEqual(result["processValidation"]["status"], "not-checked")
+        self.assertEqual(result["bridgeHeartbeat"]["status"], "unverified")
+        self.assertEqual(result["gazeboPoseRecorder"]["status"], "unverified")
 
     def test_status_rejects_invalid_callsign_before_probes(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
@@ -106,6 +108,9 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["telemetry"]["status"], "invalid")
         self.assertIn("single NATS subject token", result["telemetry"]["reason"])
+        self.assertEqual(result["bridgeHeartbeat"]["status"], "unverified")
+        self.assertEqual(result["qgcPeerRouting"]["status"], "unverified")
+        self.assertEqual(result["gazeboPoseRecorder"]["status"], "unverified")
 
     def test_stop_rejects_unsupported_receipt_before_process_inspection(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
@@ -298,8 +303,13 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["telemetry"]["status"], "fresh")
         self.assertEqual(result["telemetry"]["protocol"], "antoine-gz")
         self.assertFalse(result["armed"])
-        self.assertEqual(result["status"], "recorded")
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["bridgeHeartbeat"]["status"], "unverified")
+        self.assertIn("do not confirm", result["bridgeHeartbeat"]["reason"])
         self.assertEqual(result["qgcPeerRouting"]["status"], "configured-unverified")
+        self.assertEqual(result["gazeboPoseRecorder"]["status"], "unverified")
+        self.assertIn("not observed", result["qgcPeerRouting"]["reason"])
+        self.assertIn("does not inspect", result["gazeboPoseRecorder"]["reason"])
         self.assertEqual(unknown_armed["telemetry"]["status"], "fresh")
         self.assertIsNone(unknown_armed["armed"])
         self.assertEqual(unknown_armed["status"], "partial")

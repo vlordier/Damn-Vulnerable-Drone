@@ -255,9 +255,17 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
             "processes": {},
             "status": "partial",
             "telemetry": {"status": "unavailable", "reason": "run identity failed"},
+            "bridgeHeartbeat": {
+                "status": "unverified",
+                "reason": "run identity failed; bridge heartbeat was not inspected",
+            },
             "qgcPeerRouting": {
                 "status": "unverified",
                 "reason": "run identity failed; routing was not inspected",
+            },
+            "gazeboPoseRecorder": {
+                "status": "unverified",
+                "reason": "run identity failed; pose evidence was not inspected",
             },
             "armed": None,
             "armedReason": "run identity failed; armed state is unknown",
@@ -281,9 +289,17 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
             "processes": {},
             "status": "partial",
             "telemetry": {"status": "invalid", "reason": callsign_error},
+            "bridgeHeartbeat": {
+                "status": "unverified",
+                "reason": "callsign is invalid; bridge heartbeat was not inspected",
+            },
             "qgcPeerRouting": {
                 "status": "unverified",
                 "reason": "callsign is invalid; routing was not inspected",
+            },
+            "gazeboPoseRecorder": {
+                "status": "unverified",
+                "reason": "callsign is invalid; pose evidence was not inspected",
             },
             "armed": None,
             "armedReason": "callsign is invalid; armed state is unknown",
@@ -402,6 +418,23 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         and f"--qgc-peer {expected_qgc_peer}" in bridge_identity
         and f"--qgc-bind {expected_bridge_bind}" in bridge_identity
     )
+    qgc_peer_routing = {
+        "status": "configured-unverified" if routing_configured else "unverified",
+        "reason": "bridge command identity pins the peer, but a QGC-originated heartbeat is not observed by status",
+    }
+    bridge_heartbeat = {
+        "status": "unverified",
+        "reason": "process identity and UDP bind do not confirm an outgoing MAVLink heartbeat",
+    }
+    gazebo_pose_recorder = {
+        "status": "unverified",
+        "reason": "status does not inspect independent Gazebo pose-recorder evidence",
+    }
+    required_independent_evidence_verified = (
+        bridge_heartbeat["status"] == "observed"
+        and qgc_peer_routing["status"] == "observed"
+        and gazebo_pose_recorder["status"] == "verified"
+    )
     owned_processes = [
         item
         for name, item in checks.items()
@@ -440,6 +473,8 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         overall_status = "stale" if stale else "partial"
     elif telemetry.get("armed") is None:
         overall_status = "partial"
+    elif not required_independent_evidence_verified:
+        overall_status = "partial"
     elif missing_owned:
         overall_status = "partial"
     else:
@@ -476,10 +511,9 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         },
         "status": overall_status,
         "telemetry": telemetry,
-        "qgcPeerRouting": {
-            "status": "configured-unverified" if routing_configured else "unverified",
-            "reason": "bridge command identity pins the peer, but a QGC-originated heartbeat is not observed by status",
-        },
+        "bridgeHeartbeat": bridge_heartbeat,
+        "qgcPeerRouting": qgc_peer_routing,
+        "gazeboPoseRecorder": gazebo_pose_recorder,
         "armed": telemetry.get("armed") if telemetry.get("status") == "fresh" else None,
         "armedReason": (
             "from fresh callsign-bound Antoine telemetry"
