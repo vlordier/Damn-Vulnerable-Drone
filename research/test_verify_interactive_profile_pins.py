@@ -89,6 +89,64 @@ class InteractiveProfilePinTests(unittest.TestCase):
         result = verify(self.receipt, self.pins)
         self.assertEqual(result["status"], "missing")
 
+    def test_unavailable_checkout_is_verified_by_exact_reviewed_snapshot(self) -> None:
+        unavailable = {
+            "name": "gazeboAssets",
+            "classification": "unavailable",
+            "revision": None,
+            "reason": "source path is missing or is not a Git checkout",
+        }
+        snapshots = {
+            "antoine": {
+                "path": "antoine-source-snapshot",
+                "receiptSha256": "receipt-a",
+                "snapshotManifestSha256": "manifest-a",
+                "fileCount": 142,
+            },
+            "gazebo": {
+                "path": "gazebo-source-snapshot",
+                "receiptSha256": "receipt-g",
+                "snapshotManifestSha256": "manifest-g",
+                "fileCount": 279,
+            },
+        }
+        self.receipt["source"]["gazeboAssets"] = unavailable
+        self.receipt["sourceSnapshots"] = snapshots
+        self.pins["source"]["gazeboAssets"] = dict(unavailable)
+        self.pins["sourceSnapshots"] = snapshots
+
+        result = verify(self.receipt, self.pins)
+        self.assertEqual(result["status"], "verified")
+
+    def test_unavailable_checkout_snapshot_change_is_incompatible(self) -> None:
+        unavailable = {
+            "name": "gazeboAssets",
+            "classification": "unavailable",
+            "revision": None,
+            "reason": "source path is missing or is not a Git checkout",
+        }
+        snapshots = {
+            "gazebo": {
+                "path": "gazebo-source-snapshot",
+                "receiptSha256": "receipt-g",
+                "snapshotManifestSha256": "manifest-g",
+                "fileCount": 279,
+            }
+        }
+        self.receipt["source"]["gazeboAssets"] = unavailable
+        self.receipt["sourceSnapshots"] = snapshots
+        self.pins["source"]["gazeboAssets"] = dict(unavailable)
+        self.pins["sourceSnapshots"] = {
+            "gazebo": {**snapshots["gazebo"], "snapshotManifestSha256": "other"}
+        }
+
+        result = verify(self.receipt, self.pins)
+        self.assertEqual(result["status"], "incompatible")
+        self.assertIn(
+            "sourceSnapshots.gazebo.snapshotManifestSha256 differs from reviewed pin",
+            result["incompatible"],
+        )
+
     def test_unreviewed_pins_are_not_accepted(self) -> None:
         self.pins["review"]["status"] = "unreviewed"
         result = verify(self.receipt, self.pins)

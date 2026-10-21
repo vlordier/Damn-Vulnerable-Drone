@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from create_interactive_profile_pin_candidate import create_candidate
+from create_interactive_profile_pin_candidate import create_candidate, validate_run_evidence
 from verify_interactive_profile_pins import verify
 
 
@@ -67,6 +70,104 @@ class InteractiveProfilePinCandidateTests(unittest.TestCase):
         del self.receipt["source"]["antoine"]["trackedDiffSha256"]
         with self.assertRaisesRegex(ValueError, "source digests are incomplete"):
             create_candidate(self.receipt, self.comparison)
+
+    def test_candidate_allows_unavailable_checkout_when_snapshot_is_pinned(self) -> None:
+        self.receipt["source"]["gazeboAssets"] = {
+            "name": "gazeboAssets",
+            "classification": "unavailable",
+            "revision": None,
+            "reason": "source path is missing or is not a Git checkout",
+        }
+        self.receipt["sourceSnapshots"] = {
+            "antoine": {
+                "path": "antoine-source-snapshot",
+                "receiptSha256": "receipt-a",
+                "snapshotManifestSha256": "manifest-a",
+                "fileCount": 142,
+            },
+            "gazebo": {
+                "path": "gazebo-source-snapshot",
+                "receiptSha256": "receipt-g",
+                "snapshotManifestSha256": "manifest-g",
+                "fileCount": 279,
+            },
+        }
+
+        candidate = create_candidate(self.receipt, self.comparison)
+        self.assertEqual(candidate["sourceSnapshots"], self.receipt["sourceSnapshots"])
+        self.assertEqual(candidate["review"]["status"], "unreviewed")
+        self.assertEqual(verify(self.receipt, candidate)["status"], "missing")
+
+        candidate["review"] = {
+            "status": "reviewed",
+            "reviewer": "operator",
+            "reviewedAtUtc": "2026-10-21T12:00:00Z",
+        }
+        self.assertEqual(verify(self.receipt, candidate)["status"], "verified")
+
+    def test_candidate_rejects_unavailable_checkout_without_snapshot(self) -> None:
+        self.receipt["source"]["gazeboAssets"] = {
+            "name": "gazeboAssets",
+            "classification": "unavailable",
+            "revision": None,
+        }
+        with self.assertRaisesRegex(ValueError, "source state is unavailable"):
+            create_candidate(self.receipt, self.comparison)
+
+    def test_headless_candidate_omits_only_absent_qgc_artifacts(self) -> None:
+        self.receipt["profile"] = "headless-antoine-gazebo-mavlink"
+        self.receipt["artifacts"] = {
+            "qgroundcontrolBinarySha256": None,
+            "qgcSettingsSha256": None,
+            "bridgeBinarySha256": "bridge-a",
+        }
+        candidate = create_candidate(self.receipt, self.comparison)
+        self.assertEqual(candidate["artifacts"], {"bridgeBinarySha256": "bridge-a"})
+        candidate["review"] = {
+            "status": "reviewed",
+            "reviewer": "operator",
+            "reviewedAtUtc": "2026-10-21T12:00:00Z",
+        }
+        self.assertEqual(verify(self.receipt, candidate)["status"], "verified")
+
+    def test_headless_candidate_requires_passing_disarmed_acceptance(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_directory = Path(temporary)
+            receipt = {
+                "runId": run_directory.name,
+                "runDirectory": str(run_directory),
+                "profile": "headless-antoine-gazebo-mavlink",
+                "callsign": "drone-1",
+            }
+            report_path = run_directory / "gazebo-mavlink-acceptance.json"
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "dvd.gazebo-mavlink-flight-check.v1",
+                        "passed": True,
+                        "callsign": "drone-1",
+                        "finalMavlinkState": {"armed": False},
+                        "finalGazeboPose": [0.0, 0.0, 0.15],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            validate_run_evidence(receipt, run_directory)
+
+            report_path.write_text(
+                json.dumps(
+                    {
+                        "schema": "dvd.gazebo-mavlink-flight-check.v1",
+                        "passed": False,
+                        "callsign": "drone-1",
+                        "finalMavlinkState": {"armed": False},
+                        "finalGazeboPose": [0.0, 0.0, 0.15],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "passing disarmed Gazebo acceptance"):
+                validate_run_evidence(receipt, run_directory)
 
 
 if __name__ == "__main__":

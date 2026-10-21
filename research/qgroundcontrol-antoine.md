@@ -367,9 +367,17 @@ acceptance when combined with the archived Gazebo/C2 bundle.
 
 Create a non-overwriting candidate from a stable run with
 `make qgc-gazebo-pin-candidate PROFILE_RECEIPT=... PROFILE_COMPARISON=... PROFILE_PIN_CANDIDATE=...`.
-The candidate command requires matching run IDs, a stable pre/post comparison,
-and complete source, artifact, and toolchain values. It writes the candidate
-with review status `unreviewed`; it cannot make a verified pin file.
+The candidate command requires matching run IDs and a stable pre/post
+comparison; headless candidates also require a passing flight report with a
+disarmed final MAVLink state and recorded final Gazebo pose. It rehashes the
+run-owned source snapshot files before recording their pins. It records complete
+source, artifact, and toolchain values. If a
+source checkout is unavailable, it can use the matching run-owned source
+snapshot only when that snapshot has a verified manifest, receipt digest, and
+file count; the verifier then compares those snapshot pins exactly. For a
+headless profile, absent QGC binary and settings hashes are omitted because no
+QGC process or settings file belongs to that run. Every candidate remains
+`unreviewed`; the command cannot make a verified pin file.
 
 Inspect the candidate's revisions, dirty-state hashes, artifacts, and toolchain
 against the source and build review. Then explicitly set its `review` object to
@@ -378,8 +386,9 @@ save it as the reviewed pin file. Compare a captured interactive receipt using
 `make qgc-gazebo-verify PROFILE_RECEIPT=... PROFILE_PINS=...`.
 The pin file uses contract `damn-vulnerable-drone.interactive-profile-pins`
 version `1.0.0`, and contains `profile`, `source`, `artifacts`, and `toolchain`
-sections copied only after a reviewer accepts those values. Dirty source pins
-must include the exact worktree-status, tracked-diff, and dirty-file digests.
+sections copied only after a reviewer accepts those values. It also carries
+`sourceSnapshots` when the receipt has archived bundles. Dirty source pins must
+include the exact worktree-status, tracked-diff, and dirty-file digests.
 The verifier reports `verified`, `dirty-unreviewed`, `incompatible`, or
 `missing`; it never creates or updates reviewed pins. Pinning dirty digests
 identifies the reviewed checkout state but does not establish that its changes

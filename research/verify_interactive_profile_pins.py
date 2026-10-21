@@ -16,6 +16,10 @@ DIRTY_SOURCE_FIELDS = (
     "trackedDiffSha256",
     "dirtyFilesSha256",
 )
+SOURCE_SNAPSHOT_FOR = {"antoine": "antoine", "gazeboAssets": "gazebo"}
+SNAPSHOT_FIELDS = ("path", "receiptSha256", "snapshotManifestSha256", "fileCount")
+HEADLESS_PROFILE = "headless-antoine-gazebo-mavlink"
+HEADLESS_OPTIONAL_ARTIFACTS = {"qgroundcontrolBinarySha256", "qgcSettingsSha256"}
 
 
 def verify(receipt: Any, pins: Any) -> dict[str, Any]:
@@ -38,6 +42,12 @@ def verify(receipt: Any, pins: Any) -> dict[str, Any]:
     _validate_review(pins.get("review"), missing)
     if receipt.get("version") != "1.0.0":
         missing.append("receipt version is missing or unsupported")
+    source_snapshots_match = _compare_source_snapshots(
+        receipt.get("sourceSnapshots"),
+        pins.get("sourceSnapshots"),
+        missing,
+        incompatible,
+    )
     profile = receipt.get("profile")
     expected_profile = pins.get("profile")
     if not isinstance(profile, str) or not profile:
@@ -55,6 +65,8 @@ def verify(receipt: Any, pins: Any) -> dict[str, Any]:
         incompatible,
         dirty_unreviewed,
         check_dirty=True,
+        source_snapshots_match=source_snapshots_match,
+        source_snapshots=receipt.get("sourceSnapshots"),
     )
     _compare_mapping(
         "artifacts",
@@ -63,6 +75,7 @@ def verify(receipt: Any, pins: Any) -> dict[str, Any]:
         missing,
         incompatible,
         dirty_unreviewed,
+        allow_absent_qgc=profile == HEADLESS_PROFILE,
     )
     _compare_mapping(
         "toolchain",
@@ -84,6 +97,41 @@ def verify(receipt: Any, pins: Any) -> dict[str, Any]:
     return _result(status, missing, incompatible, dirty_unreviewed)
 
 
+def _compare_source_snapshots(
+    actual: Any,
+    expected: Any,
+    missing: list[str],
+    incompatible: list[str],
+) -> bool:
+    if actual is None and expected is None:
+        return False
+    if not isinstance(actual, dict) or not actual:
+        missing.append("receipt source snapshots are missing")
+        return False
+    if not isinstance(expected, dict) or not expected:
+        missing.append("reviewed source snapshot pins are missing")
+        return False
+    if set(actual) != set(expected):
+        missing.append("source snapshot pin names do not match receipt")
+        return False
+    matches = True
+    for name, actual_record in actual.items():
+        expected_record = expected.get(name)
+        if not isinstance(actual_record, dict) or not isinstance(expected_record, dict):
+            missing.append(f"sourceSnapshots.{name} record is malformed")
+            matches = False
+            continue
+        for field in SNAPSHOT_FIELDS:
+            actual_value = actual_record.get(field)
+            expected_value = expected_record.get(field)
+            if actual_value is None or expected_value is None:
+                missing.append(f"sourceSnapshots.{name}.{field} is missing")
+                matches = False
+            elif actual_value != expected_value:
+                incompatible.append(f"sourceSnapshots.{name}.{field} differs from reviewed pin")
+    return matches
+
+
 def _compare_mapping(
     label: str,
     actual: Any,
@@ -93,6 +141,9 @@ def _compare_mapping(
     dirty_unreviewed: list[str],
     *,
     check_dirty: bool = False,
+    source_snapshots_match: bool = False,
+    source_snapshots: Any = None,
+    allow_absent_qgc: bool = False,
 ) -> None:
     if not isinstance(actual, dict) or not actual:
         missing.append(f"receipt {label} are missing")
@@ -100,13 +151,21 @@ def _compare_mapping(
     if not isinstance(expected, dict) or not expected:
         missing.append(f"reviewed {label} pins are missing")
         return
-    if set(actual) != set(expected):
+    actual_values = dict(actual)
+    expected_values = dict(expected)
+    if label == "artifacts" and allow_absent_qgc:
+        for name in HEADLESS_OPTIONAL_ARTIFACTS:
+            if actual_values.get(name) is None:
+                actual_values.pop(name, None)
+            if expected_values.get(name) is None:
+                expected_values.pop(name, None)
+    if set(actual_values) != set(expected_values):
         missing.append(f"{label} pin names do not match receipt")
         return
 
     if label != "source":
-        for name, actual_value in actual.items():
-            expected_value = expected.get(name)
+        for name, actual_value in actual_values.items():
+            expected_value = expected_values.get(name)
             if actual_value is None or expected_value is None:
                 missing.append(f"{label}.{name} is missing")
             elif not isinstance(actual_value, str) or not isinstance(expected_value, str):
@@ -119,6 +178,30 @@ def _compare_mapping(
         expected_record = expected.get(name)
         if not isinstance(actual_record, dict) or not isinstance(expected_record, dict):
             missing.append(f"{label}.{name} record is malformed")
+            continue
+        if check_dirty and actual_record.get("classification") == "unavailable":
+            snapshot_name = SOURCE_SNAPSHOT_FOR.get(name)
+            snapshots = source_snapshots if isinstance(source_snapshots, dict) else {}
+            if (
+                not source_snapshots_match
+                or snapshot_name is None
+                or snapshot_name not in snapshots
+            ):
+                missing.append(
+                    f"source.{name} is unavailable and lacks a matching reviewed source snapshot"
+                )
+                continue
+            # The original checkout metadata is unavailable, but this profile's
+            # complete run-owned source bundle is content-pinned and verified.
+            for field, actual_value in actual_record.items():
+                expected_value = expected_record.get(field)
+                if actual_value is None:
+                    if expected_value is not None:
+                        incompatible.append(f"source.{name}.{field} differs from reviewed pin")
+                elif expected_value is None:
+                    missing.append(f"source.{name}.{field} is missing from reviewed pin")
+                elif actual_value != expected_value:
+                    incompatible.append(f"source.{name}.{field} differs from reviewed pin")
             continue
         if check_dirty and actual_record.get("classification") not in {
             "clean",
