@@ -10,6 +10,17 @@ permissions:
   contents: read
 
 jobs:
+  research-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: research/pyproject.toml
+      - name: Run research tests
+        run: uv run --project research python -m unittest discover -s research -p 'test_*.py' -v
+
   python:
     runs-on: ubuntu-latest
     steps:

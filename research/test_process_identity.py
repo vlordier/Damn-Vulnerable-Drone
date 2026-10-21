@@ -1,6 +1,8 @@
 """Tests for atomic process-identity signaling."""
 
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -178,6 +180,25 @@ class SignalOwnedProcessTests(unittest.TestCase):
                 )
 
         open_pidfd.assert_not_called()
+
+    @unittest.skipUnless(
+        sys.platform == "linux"
+        and hasattr(process_identity.os, "pidfd_open")
+        and hasattr(process_identity.signal, "pidfd_send_signal"),
+        "requires Linux pidfd support",
+    )
+    def test_linux_pidfd_signal_stops_the_recorded_process(self):
+        child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
+        try:
+            process_identity.record(child.pid, self.identity_path)
+            process_identity.signal_owned_process(
+                child.pid, self.identity_path, process_identity.signal.SIGTERM
+            )
+            self.assertEqual(child.wait(timeout=5), -process_identity.signal.SIGTERM)
+        finally:
+            if child.poll() is None:
+                child.terminate()
+                child.wait(timeout=5)
 
 
 if __name__ == "__main__":
