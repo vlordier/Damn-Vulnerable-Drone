@@ -860,6 +860,7 @@ async fn qgc_to_antoine_nats(
                 continue;
             }
             if count == 0 {
+                mission_upload = None;
                 let accepted = clear_mission(
                     &client,
                     &command_subject,
@@ -909,6 +910,7 @@ async fn qgc_to_antoine_nats(
                 gcs.send_to(&ack, source).await?;
                 continue;
             }
+            mission_upload = None;
             let accepted = clear_mission(
                 &client,
                 &command_subject,
