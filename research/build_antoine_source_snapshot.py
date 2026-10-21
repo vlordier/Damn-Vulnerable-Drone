@@ -24,6 +24,22 @@ BINARIES = (
 )
 
 
+def add_stable_rust_path_remaps(environment: dict[str, str], source_root: Path) -> None:
+    """Normalize embedded source/cache paths while preserving caller Rust flags."""
+    encoded_flags = environment.get("CARGO_ENCODED_RUSTFLAGS")
+    flags = (
+        encoded_flags.split("\x1f") if encoded_flags else environment.get("RUSTFLAGS", "").split()
+    )
+    cargo_home = Path(environment.get("CARGO_HOME", Path.home() / ".cargo")).resolve()
+    flags.extend(
+        (
+            f"--remap-path-prefix={source_root.resolve(strict=True)}=.",
+            f"--remap-path-prefix={cargo_home}=/cargo",
+        )
+    )
+    environment["CARGO_ENCODED_RUSTFLAGS"] = "\x1f".join(flags)
+
+
 def _run(command: list[str], *, cwd: Path, environment: dict[str, str]) -> None:
     subprocess.run(command, cwd=cwd, env=environment, check=True)
 
@@ -57,6 +73,7 @@ def build_snapshot(snapshot_dir: Path, target_dir: Path, rustup_toolchain: str) 
         PYTHONPATH=str(root),
         RUSTUP_TOOLCHAIN=rustup_toolchain,
     )
+    add_stable_rust_path_remaps(environment, snapshot_dir)
     manifest = root / "sitl/antoine-sitl/Cargo.toml"
     _run(
         [

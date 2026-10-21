@@ -49,6 +49,41 @@ def write_snapshot(snapshot: Path) -> None:
 
 
 class AntoineSnapshotBuildTests(unittest.TestCase):
+    def test_stable_rust_path_remaps_preserve_existing_encoded_flags(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source snapshot"
+            source.mkdir()
+            environment = {
+                "CARGO_HOME": str(Path(temporary) / "cargo cache"),
+                "CARGO_ENCODED_RUSTFLAGS": "-C\x1fdebuginfo=0",
+                "RUSTFLAGS": "-C debuginfo=1",
+            }
+
+            builder.add_stable_rust_path_remaps(environment, source)
+
+            self.assertEqual(
+                environment["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"),
+                [
+                    "-C",
+                    "debuginfo=0",
+                    f"--remap-path-prefix={source.resolve()}=.",
+                    f"--remap-path-prefix={Path(environment['CARGO_HOME']).resolve()}=/cargo",
+                ],
+            )
+
+    def test_stable_rust_path_remaps_encode_source_root_with_spaces(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source snapshot"
+            source.mkdir()
+            environment = {"CARGO_HOME": str(Path(temporary) / "cargo")}
+
+            builder.add_stable_rust_path_remaps(environment, source)
+
+            self.assertIn(
+                f"--remap-path-prefix={source.resolve()}=.",
+                environment["CARGO_ENCODED_RUSTFLAGS"].split("\x1f"),
+            )
+
     def test_tampered_bundle_is_rejected_before_build_target_creation(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             run_dir = Path(temporary) / "run"
@@ -88,7 +123,14 @@ class AntoineSnapshotBuildTests(unittest.TestCase):
             commands = []
 
             def run(command, *, cwd, environment):
-                commands.append((command, cwd, environment["CARGO_TARGET_DIR"]))
+                commands.append(
+                    (
+                        command,
+                        cwd,
+                        environment["CARGO_TARGET_DIR"],
+                        environment["CARGO_ENCODED_RUSTFLAGS"],
+                    )
+                )
                 if command[0] == "uv" and command[5] == "build":
                     binary_dir = cwd / ".cargo-target/antoine-sitl-build-receipt/debug"
                     binary_dir.mkdir(parents=True)
@@ -108,7 +150,13 @@ class AntoineSnapshotBuildTests(unittest.TestCase):
             ).resolve()
             self.assertTrue(commands)
             self.assertTrue(
-                all(Path(command_target) == expected_target for _, _, command_target in commands)
+                all(Path(command_target) == expected_target for _, _, command_target, _ in commands)
+            )
+            self.assertTrue(
+                all(
+                    f"--remap-path-prefix={snapshot.resolve()}=." in encoded_flags.split("\x1f")
+                    for _, _, _, encoded_flags in commands
+                )
             )
             self.assertEqual(result["sourceSnapshot"]["fileCount"], 3)
 

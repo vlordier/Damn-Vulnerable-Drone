@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from build_antoine_source_snapshot import add_stable_rust_path_remaps
 from create_interactive_profile_receipt import snapshot_record
 from gazebo_version import gazebo_version
 from record_antoine_run_build import sha256
@@ -103,6 +104,7 @@ def rebuild(run_dir: Path, output_dir: Path, rustup_toolchain: str) -> dict[str,
         PYTHONPATH=str(antoine_root),
         RUSTUP_TOOLCHAIN=rustup_toolchain,
     )
+    add_stable_rust_path_remaps(environment, source_snapshot)
     receipt_tool = antoine_root / "scripts/antoine_sitl_build_receipt.py"
     for operation in ("build", "verify"):
         subprocess.run(
