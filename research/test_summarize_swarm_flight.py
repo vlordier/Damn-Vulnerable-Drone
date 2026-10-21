@@ -1385,6 +1385,32 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["exitCode"], 2)
 
+    def test_command_rate_probe_status_is_bound_into_aggregate_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-rate-probe-test"
+            build_run(run_dir, "lanes")
+            config_path = run_dir / "research-swarm-config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            config["fault"] = "command-rate"
+            write_json(config_path, config)
+            probe = {
+                "contract": "damn-vulnerable-drone.antoine-setpoint-rate-probe",
+                "version": "1.0.0",
+                "runId": run_dir.name,
+                "status": "inconclusive",
+                "publishedMessages": 40,
+                "rejectedMessages": 38,
+            }
+            write_json(run_dir / "research-swarm-rate-disruption.json", probe)
+            result = run_summary(run_dir)
+        self.assertTrue(result["rateProbeRequested"])
+        self.assertEqual(result["rateProbeObservation"], probe)
+        self.assertEqual(result["probeStatus"], "inconclusive")
+        self.assertEqual(result["status"], "inconclusive")
+        self.assertTrue(
+            result["evidenceArtifacts"]["research-swarm-rate-disruption.json"]["available"]
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

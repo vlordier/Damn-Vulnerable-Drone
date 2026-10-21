@@ -1556,6 +1556,7 @@ def main() -> int:
             "research-swarm-config.json",
             "research-provenance-comparison.json",
             "research-cross-vehicle-authorization.json",
+            "research-swarm-rate-disruption.json",
             "research-gazebo-source-snapshot.json",
             "research-antoine-build-receipt.json",
             "research-antoine-process-launches.tsv",
@@ -1828,6 +1829,20 @@ def main() -> int:
         fault_observation = json.loads(fault_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         fault_observation = None
+    rate_probe_requested = config.get("fault") == "command-rate"
+    rate_probe_path = run_dir / "research-swarm-rate-disruption.json"
+    try:
+        rate_probe_observation = json.loads(rate_probe_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        rate_probe_observation = None
+    if (
+        not isinstance(rate_probe_observation, dict)
+        or rate_probe_observation.get("contract")
+        != "damn-vulnerable-drone.antoine-setpoint-rate-probe"
+        or rate_probe_observation.get("runId") != run_dir.name
+        or rate_probe_observation.get("status") not in {"passed", "failed", "inconclusive"}
+    ):
+        rate_probe_observation = None
     mavlink_path = run_dir / "research-mavlink-swarm.json"
     try:
         mavlink_observation = json.loads(mavlink_path.read_text(encoding="utf-8"))
@@ -2002,6 +2017,12 @@ def main() -> int:
             or authorization_observation.get("status") == "inconclusive"
             else "failed"
         )
+    if rate_probe_requested:
+        requested_probe_results.append(
+            rate_probe_observation["status"]
+            if rate_probe_observation is not None
+            else "inconclusive"
+        )
     probe_status = (
         "not_requested"
         if not requested_probe_results
@@ -2085,6 +2106,8 @@ def main() -> int:
         "poseStreamQuality": pose_stream_quality,
         "vehiclePairs": pair_results,
         "faultObservation": fault_observation,
+        "rateProbeRequested": rate_probe_requested,
+        "rateProbeObservation": rate_probe_observation,
         "trajectoryVisualization": "research-swarm-trajectory.svg"
         if trajectory_available
         else None,

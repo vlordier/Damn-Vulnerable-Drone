@@ -589,7 +589,7 @@ if [[ "${FAULT:-none}" == state-stream-partition || "${FAULT:-none}" == controll
   FAULT_STATUS=$?
   set -e
 fi
-if [[ "${FAULT:-none}" == state-blackhole || "${FAULT:-none}" == command-rate ]]; then
+if [[ "${FAULT:-none}" == state-blackhole ]]; then
   uv run --project "${PROJECT_ROOT}/research" python - "${RUN_DIR}/research-swarm-fault.json" "${RUN_ID}" "${FAULT}" "${FAULT_NOTE}" <<'PY'
 import json, pathlib, sys, time
 path, run_id, fault, note = sys.argv[1:]
