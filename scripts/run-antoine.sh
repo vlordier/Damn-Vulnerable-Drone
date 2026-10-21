@@ -405,9 +405,10 @@ if [[ -n "$REQUESTED_RUN_DIR" ]]; then
     export ANTOINE_SITL_BUILD_RECEIPT="$RUNTIME_ANTOINE_ROOT/.cargo-target/antoine-sitl-build-receipt/antoine_sitl_nats.build.json"
     export CARGO_NET_OFFLINE=true
     NATIVE_BUILD_RECEIPT_ARGS=(--native-build-receipt "$ANTOINE_SITL_BUILD_RECEIPT")
-    if ! PYTHONPATH="$RUNTIME_ANTOINE_ROOT${PYTHONPATH:+:$PYTHONPATH}" uv run --no-project --script \
-        "$RUNTIME_ANTOINE_ROOT/scripts/antoine_sitl_build_receipt.py" \
-        build --root "$RUNTIME_ANTOINE_ROOT" --receipt "$ANTOINE_SITL_BUILD_RECEIPT" \
+    if ! uv run --no-project python "$PROJECT_ROOT/research/verify_antoine_native_receipt.py" \
+        --root "$RUNTIME_ANTOINE_ROOT" \
+        --snapshot-root "$(dirname "$RUNTIME_ANTOINE_ROOT")" \
+        --receipt "$ANTOINE_SITL_BUILD_RECEIPT" \
         >>"$ANTOINE_BUILD_LOG" 2>&1; then
       echo "Antoine native source-bound build failed; see $ANTOINE_BUILD_LOG." >&2
       tail -40 "$ANTOINE_BUILD_LOG" >&2
