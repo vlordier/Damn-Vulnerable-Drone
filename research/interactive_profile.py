@@ -245,11 +245,16 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         for name, item in checks.items()
         if isinstance(item, dict) and "pid" in item and not name.lower().startswith("qgc")
     ]
-    if (
-        receipt.get("status") == "stopped"
+    run_owned_ports = [checks.get("natsPort"), checks.get("bridgeUdpBindPort")]
+    stopped = (
+        bool(owned_processes)
         and all(not item["alive"] for item in owned_processes)
+        and all(
+            isinstance(item, dict) and item.get("listening") is False for item in run_owned_ports
+        )
         and not foreign
-    ):
+    )
+    if stopped:
         overall_status = "stopped"
     elif telemetry.get("status") != "fresh":
         overall_status = "stale" if stale else "partial"
@@ -319,13 +324,6 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         status in {"stopped", "already-stopped", "preserved-user-owned"}
         for status in results.values()
     )
-    if complete:
-        receipt["status"] = "stopped"
-        receipt["stoppedAtUtc"] = datetime.now(UTC).isoformat()
-        receipt["stopResults"] = results
-        receipt_path.write_text(
-            json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-        )
     return {
         "runId": receipt.get("runId"),
         "status": "stopped" if complete else "partial",

@@ -242,9 +242,6 @@ class InteractiveProfileTests(unittest.TestCase):
     def test_status_reports_confirmed_stop_without_claiming_current_telemetry(
         self, _identity
     ) -> None:
-        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
-        receipt["status"] = "stopped"
-        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
         with patch("interactive_profile.subprocess.run") as run:
             run.return_value.returncode = 1
             result = interactive_profile.inspect(self.receipt)
@@ -274,9 +271,6 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "stopped")
         self.assertEqual(result["results"]["mavlinkBridge"], "stopped")
         self.assertEqual(result["results"]["qgcUserProcess"], "preserved-user-owned")
-        updated = json.loads(self.receipt.read_text(encoding="utf-8"))
-        self.assertEqual(updated["status"], "stopped")
-        self.assertIn("stoppedAtUtc", updated)
 
     @patch(
         "interactive_profile.process_identity",
