@@ -532,26 +532,7 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         elif actual != expected:
             results[name] = "identity-mismatch-not-signalled"
         else:
-            os.kill(pid, signal.SIGINT)
-            stop_result = _wait_for_owned_exit(pid, expected)
-            if stop_result == "identity-changed-after-interrupt":
-                # Never signal the changed identity. Give the original
-                # interrupt a bounded chance to finish its exec handoff.
-                stop_result = _wait_for_pid_exit(pid)
-            if stop_result == "timeout":
-                # Background shells can inherit SIGINT as ignored. Recheck
-                # identity before TERM so a reused PID is never signalled.
-                current = process_identity(pid)
-                if current is None:
-                    stop_result = "stopped"
-                elif current != expected:
-                    stop_result = "identity-changed-after-interrupt"
-                else:
-                    os.kill(pid, signal.SIGTERM)
-                    stop_result = _wait_for_owned_exit(pid, expected)
-                    if stop_result == "timeout":
-                        stop_result = "term-sent-stop-unconfirmed"
-            results[name] = stop_result
+            results[name] = _stop_owned_process(pid, expected)
     if missing_required_processes:
         results["requiredProcessRecords"] = "missing:" + ",".join(missing_required_processes)
     results.update(_run_owned_port_statuses(receipt))
@@ -645,6 +626,40 @@ def _persist_stop_result(receipt_path: Path, result: dict[str, Any]) -> dict[str
         if temporary_path is not None:
             temporary_path.unlink(missing_ok=True)
     return report
+
+
+def _stop_owned_process(pid: int, expected: str) -> str:
+    """Stop one identity-matched process, preserving uncertainty as a result."""
+    try:
+        os.kill(pid, signal.SIGINT)
+    except ProcessLookupError:
+        return "already-stopped"
+    except OSError:
+        return "interrupt-failed"
+
+    stop_result = _wait_for_owned_exit(pid, expected)
+    if stop_result == "identity-changed-after-interrupt":
+        # Never signal the changed identity. Give the original interrupt a
+        # bounded chance to finish its exec handoff.
+        return _wait_for_pid_exit(pid)
+    if stop_result != "timeout":
+        return stop_result
+
+    # Background shells can inherit SIGINT as ignored. Recheck identity before
+    # TERM so a reused PID is never signalled.
+    current = process_identity(pid)
+    if current is None:
+        return "stopped"
+    if current != expected:
+        return "identity-changed-after-interrupt"
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        return "already-stopped"
+    except OSError:
+        return "term-failed"
+    stop_result = _wait_for_owned_exit(pid, expected)
+    return "term-sent-stop-unconfirmed" if stop_result == "timeout" else stop_result
 
 
 def _wait_for_owned_exit(pid: int, expected: str) -> str:
