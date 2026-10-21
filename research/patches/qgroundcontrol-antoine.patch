@@ -170,7 +170,7 @@ index 203271d9..b95a2589 100644
 +        const double north = distance * qCos(bearing);
 +        const double east = distance * qSin(bearing);
 +        const double relativeAltitude = vehicle->coordinate().altitude() - home.altitude();
-+        if (qAbs(north) > 3.0 || qAbs(east) > 3.0 || relativeAltitude < 0.0 || relativeAltitude > 3.0) {
++        if (distance > 3.0 || relativeAltitude < 0.0 || relativeAltitude > 3.0) {
 +            QGC::showAppMessage(QStringLiteral("Antoine SITL position targets are limited to 3 metres from home and 0–3 metres altitude."));
 +            return false;
 +        }
