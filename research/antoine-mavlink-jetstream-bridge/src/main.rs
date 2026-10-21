@@ -227,6 +227,17 @@ fn finite_number(value: &serde_json::Value, key: &str) -> Result<f64> {
     Ok(number)
 }
 
+fn unix_millis(value: &serde_json::Value, key: &str) -> Result<u64> {
+    let timestamp = value
+        .get(key)
+        .and_then(serde_json::Value::as_u64)
+        .with_context(|| format!("telemetry {key} must be a nonnegative integer"))?;
+    if timestamp > u64::MAX - MAX_GAZEBO_TELEMETRY_AGE_MS {
+        bail!("telemetry {key} is outside the supported Unix millisecond range");
+    }
+    Ok(timestamp)
+}
+
 fn telemetry_frames(
     value: &serde_json::Value,
     system_id: u8,
@@ -239,7 +250,7 @@ fn telemetry_frames(
 ) -> Result<Vec<Vec<u8>>> {
     let gazebo_plant = value["protocol"].as_str() == Some("antoine-gz");
     let observed_at_ms = if gazebo_plant {
-        Some(finite_number(value, "observedAtUnixMs")? as u64)
+        Some(unix_millis(value, "observedAtUnixMs")?)
     } else {
         None
     };
@@ -1730,6 +1741,33 @@ mod tests {
         .unwrap_err()
         .to_string()
         .contains("future"));
+    }
+
+    #[test]
+    fn gazebo_observation_timestamp_requires_bounded_integer_milliseconds() {
+        let now_ms = unix_ms().unwrap() as u64;
+        let make = |observed_at_unix_ms| {
+            serde_json::json!({
+                "identity":"drone-1","protocol":"antoine-gz",
+                "observedAtUnixMs":observed_at_unix_ms,
+                "lat_deg":48.0002,"lon_deg":0.3564,"alt_m":0.0,
+                "vn_mps":0.0,"ve_mps":0.0,"vd_mps":0.0,
+                "battery_pct":87,"control_authority":"safe-hold"
+            })
+        };
+        for malformed in [
+            serde_json::json!(now_ms as f64 + 0.5),
+            serde_json::json!(-1),
+            serde_json::json!(u64::MAX),
+        ] {
+            let error = telemetry_frames(&make(malformed), 1, 82.0, 48.0002, 0.3564, 0, false, 0)
+                .unwrap_err()
+                .to_string();
+            assert!(
+                error.contains("observedAtUnixMs"),
+                "unexpected error: {error}"
+            );
+        }
     }
 
     #[test]
