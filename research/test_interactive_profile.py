@@ -730,7 +730,59 @@ class InteractiveProfileTests(unittest.TestCase):
         result = interactive_profile.sample_gazebo_pose_recorder(receipt)
 
         self.assertEqual(result["status"], "stale")
-        self.assertIn("two advancing finite pose samples", result["reason"])
+        self.assertIn("two advancing finite vehicle pose samples", result["reason"])
+
+    def test_pose_recorder_selects_vehicle_pose_when_other_models_precede_it(self) -> None:
+        flight_directory = Path(self.temp.name) / "flight-proof"
+        flight_directory.mkdir(exist_ok=True)
+        pose_path = flight_directory / "gazebo-pose.jsonl"
+        samples = []
+        for second in (5, 6):
+            samples.append(
+                {
+                    "header": {"stamp": {"sec": second, "nsec": 0}},
+                    "pose": [
+                        {"name": "ground_plane", "position": {"x": 0, "y": 0, "z": 0}},
+                        {"name": "target_alpha", "position": {"x": 23.95, "y": 16, "z": 0.1}},
+                        {"name": "isr", "position": {"x": 1, "y": 2, "z": 8}},
+                    ],
+                }
+            )
+        pose_path.write_text(
+            "".join(f"{json.dumps(sample)}\n" for sample in samples), encoding="utf-8"
+        )
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["flightRunDirectory"] = str(flight_directory)
+
+        result = interactive_profile.sample_gazebo_pose_recorder(receipt)
+
+        self.assertEqual(result["status"], "fresh")
+        self.assertEqual(result["poseName"], "isr")
+
+    def test_pose_recorder_rejects_advancing_non_vehicle_models(self) -> None:
+        flight_directory = Path(self.temp.name) / "flight-proof"
+        flight_directory.mkdir(exist_ok=True)
+        pose_path = flight_directory / "gazebo-pose.jsonl"
+        samples = [
+            {
+                "header": {"stamp": {"sec": second, "nsec": 0}},
+                "pose": [
+                    {"name": "ground_plane", "position": {"x": 0, "y": 0, "z": 0}},
+                    {"name": "target_alpha", "position": {"x": 23.95, "y": 16, "z": 0.1}},
+                ],
+            }
+            for second in (5, 6)
+        ]
+        pose_path.write_text(
+            "".join(f"{json.dumps(sample)}\n" for sample in samples), encoding="utf-8"
+        )
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["flightRunDirectory"] = str(flight_directory)
+
+        result = interactive_profile.sample_gazebo_pose_recorder(receipt)
+
+        self.assertEqual(result["status"], "stale")
+        self.assertIn("vehicle pose samples", result["reason"])
 
     @patch(
         "interactive_profile.process_identity",

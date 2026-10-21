@@ -32,6 +32,7 @@ PROFILE_CONTRACT = "damn-vulnerable-drone.interactive-profile"
 PROFILE_VERSION = "1.0.0"
 INTERACTIVE_PROFILE = "interactive-antoine-gazebo"
 HEADLESS_PROFILE = "headless-antoine-gazebo-mavlink"
+GAZEBO_VEHICLE_POSE_NAME = "isr"
 
 
 def _load_receipt(receipt_path: Path) -> dict[str, Any]:
@@ -574,7 +575,7 @@ def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
             poses = [message]
         named_pose = None
         for pose in poses:
-            if not isinstance(pose, dict) or not isinstance(pose.get("name"), str):
+            if not isinstance(pose, dict) or pose.get("name") != GAZEBO_VEHICLE_POSE_NAME:
                 continue
             position = pose.get("position")
             if not isinstance(position, dict):
@@ -603,7 +604,7 @@ def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
     ):
         return {
             "status": "stale",
-            "reason": "Gazebo pose stream lacks two advancing finite pose samples",
+            "reason": ("Gazebo pose stream lacks two advancing finite vehicle pose samples"),
         }
     return {
         "status": "fresh",
