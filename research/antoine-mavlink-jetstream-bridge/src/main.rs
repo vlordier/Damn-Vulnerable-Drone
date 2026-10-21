@@ -615,7 +615,17 @@ fn control_command(frame: &FrameInfo, vehicle_system_id: u8) -> Result<Option<se
         20 => bail!("NAV_RETURN_TO_LAUNCH does not accept caller-supplied parameters"),
         21 => serde_json::json!({"type":"land"}),
         176 => {
-            let mode = match p(1) as u32 {
+            if p(0) != 1.0 {
+                bail!("MAV_CMD_DO_SET_MODE requires custom mode enabled");
+            }
+            if params[2..].iter().any(|value| *value != 0.0) {
+                bail!("MAV_CMD_DO_SET_MODE submode and extra parameters are unsupported");
+            }
+            let custom_mode = p(1);
+            if custom_mode.fract() != 0.0 || !(0.0..=5.0).contains(&custom_mode) {
+                bail!("unsupported custom mode");
+            }
+            let mode = match custom_mode as u32 {
                 0 => "STABILIZE",
                 1 => "GUIDED",
                 2 => "AUTO",
@@ -1976,6 +1986,49 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("target mismatch"));
+    }
+
+    #[test]
+    fn do_set_mode_requires_supported_custom_mode_flags_and_parameters() {
+        let mut payload = vec![0_u8; 32];
+        payload[0..4].copy_from_slice(&1.0_f32.to_le_bytes());
+        payload[4..8].copy_from_slice(&4.0_f32.to_le_bytes());
+        payload[28..30].copy_from_slice(&176_u16.to_le_bytes());
+        payload[30] = 1;
+        payload[31] = 1;
+        let frame = |payload| FrameInfo {
+            system_id: 255,
+            component_id: 190,
+            message_id: 76,
+            sequence: 1,
+            payload,
+        };
+        assert_eq!(
+            control_command(&frame(payload.clone()), 1)
+                .unwrap()
+                .unwrap(),
+            serde_json::json!({"type":"set_mode","payload":{"mode":"RTL"}})
+        );
+
+        payload[0..4].copy_from_slice(&0.0_f32.to_le_bytes());
+        assert!(control_command(&frame(payload.clone()), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("custom mode enabled"));
+
+        payload[0..4].copy_from_slice(&1.0_f32.to_le_bytes());
+        payload[4..8].copy_from_slice(&4.5_f32.to_le_bytes());
+        assert!(control_command(&frame(payload.clone()), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported custom mode"));
+
+        payload[4..8].copy_from_slice(&4.0_f32.to_le_bytes());
+        payload[8..12].copy_from_slice(&1.0_f32.to_le_bytes());
+        assert!(control_command(&frame(payload), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("submode and extra parameters"));
     }
 
     fn checksum(bytes: &[u8]) -> u16 {
