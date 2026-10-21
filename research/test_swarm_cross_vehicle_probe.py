@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -12,6 +15,7 @@ from swarm_cross_vehicle_probe import (
     actuator_numeric_vector,
     compare_effect_snapshots,
     controller_decision,
+    main,
     mutate_setpoint,
     pose_simulation_time,
     pose_window_at_target,
@@ -232,6 +236,31 @@ class MutationTests(unittest.TestCase):
 
 
 class PoseTruthTests(unittest.TestCase):
+    def test_new_probe_replaces_a_stale_pass_before_work(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            report_path = run_dir / "research-cross-vehicle-authorization.json"
+            report_path.write_text('{"status":"passed"}\n', encoding="utf-8")
+            argv = [
+                "swarm_cross_vehicle_probe.py",
+                "--server",
+                "nats://127.0.0.1:14224",
+                "--run-dir",
+                str(run_dir),
+                "--mutation",
+                "stale-run",
+            ]
+            with (
+                patch.object(sys, "argv", argv),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                exit_code = main()
+
+            self.assertEqual(exit_code, 2)
+            self.assertEqual(
+                json.loads(report_path.read_text(encoding="utf-8"))["status"], "inconclusive"
+            )
+
     def test_pose_timestamp_rejects_boolean_fractional_and_invalid_nanoseconds(self) -> None:
         for stamp in (
             {"sec": True, "nsec": 0},

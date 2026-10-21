@@ -585,11 +585,14 @@ def main() -> int:
         "targetVehicle": args.target,
         "subject": subject,
         "mutation": args.mutation,
+        "status": "running",
         "publishedMessages": 0,
         "scope": "one live-setpoint mutation on the run-owned IPv4 loopback broker",
         "payloadCarriesExecutionGrant": False,
         "limits": "Local NATS client only; authority grants remain separate; no broker ACL or production/Core claim.",
     }
+    output = run_dir / "research-cross-vehicle-authorization.json"
+    write_report(output, report)
     try:
         if args.mutation == "stale-run":
             _, support = mutate_setpoint({}, args.mutation, args.source, args.target)
@@ -712,7 +715,6 @@ def main() -> int:
                 report["status"] = "inconclusive"
     except (OSError, ValueError, subprocess.SubprocessError, TimeoutError, KeyError) as error:
         report.update({"status": "inconclusive", "error": str(error)})
-    output = run_dir / "research-cross-vehicle-authorization.json"
     write_report(output, report)
     print(output)
     return 0 if report.get("status") == "passed" else 2
