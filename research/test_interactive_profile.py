@@ -114,6 +114,24 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertFalse(result["processes"]["mavlinkBridge"]["identityMatches"])
         self.assertIsNone(result["armed"])
 
+    def test_status_reports_identity_probe_os_error_as_partial(self) -> None:
+        with (
+            patch("interactive_profile.process_identity", side_effect=OSError("ps unavailable")),
+            patch("interactive_profile.subprocess.run") as run,
+            patch(
+                "interactive_profile.read_nats_messages",
+                return_value=([], {"status": "unavailable", "reason": "no telemetry"}),
+            ),
+        ):
+            run.return_value.returncode = 1
+            result = interactive_profile.inspect(self.receipt)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["processes"]["mavlinkBridge"]["alive"], None)
+        self.assertEqual(
+            result["processes"]["mavlinkBridge"]["error"], "identity-probe-unavailable"
+        )
+
     def test_status_rejects_boolean_port_without_probing_it(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         receipt["ports"]["nats"] = True

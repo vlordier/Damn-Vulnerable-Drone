@@ -304,7 +304,16 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
             }
             continue
         pid = process.get("pid")
-        actual = process_identity(pid) if isinstance(pid, int) and pid > 1 else None
+        try:
+            actual = process_identity(pid) if isinstance(pid, int) and pid > 1 else None
+        except OSError:
+            checks[name] = {
+                "pid": pid,
+                "alive": None,
+                "identityMatches": False,
+                "error": "identity-probe-unavailable",
+            }
+            continue
         checks[name] = {
             "pid": pid,
             "alive": actual is not None,
