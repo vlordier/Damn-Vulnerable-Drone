@@ -882,6 +882,16 @@ async fn qgc_to_antoine_nats(
                 gcs.send_to(&ack, source).await?;
                 continue;
             }
+            if let Some((old_source, old_system, old_component, _)) = mission_upload.take() {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    old_system,
+                    old_component,
+                    1,
+                );
+                gcs.send_to(&ack, old_source).await?;
+            }
             mission_upload = Some((
                 source,
                 frame.system_id,

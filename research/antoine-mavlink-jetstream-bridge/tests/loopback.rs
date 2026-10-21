@@ -923,6 +923,33 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         buffer[7], 51,
         "partial upload should request its first item"
     );
+    let replacement_upload = v2_frame(44, 32, 255, &mission_count_payload, 221);
+    gcs.send_to(&replacement_upload, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("superseded mission upload ACK timeout")??;
+    assert_eq!(
+        buffer[7], 47,
+        "superseded upload should be acknowledged as failed"
+    );
+    let (_, superseded_response) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+        &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+    )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(superseded_ack) = superseded_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for superseded upload");
+    };
+    assert_eq!(
+        superseded_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
+    let (_length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("replacement upload mission request timeout")??;
+    assert_eq!(
+        buffer[7], 51,
+        "replacement upload should request its first item"
+    );
     let clear_all = v2_frame(45, 31, 255, &[1, 1, 0], 232);
     gcs.send_to(&clear_all, qgc_bind).await?;
     let (_length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
