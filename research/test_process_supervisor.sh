@@ -57,6 +57,28 @@ wait "${owned_pid}" || true
 kill -TERM "${unrelated_pid}"
 wait "${unrelated_pid}" || true
 
+# Reusing an identity path after a clean stop must not let an old receipt stop
+# the new run through the newly-created FIFO at that path.
+identity="${TEMP_ROOT}/restart.identity"
+"${SUPERVISOR}" run "${identity}" -- sh -c \
+  'trap "exit 0" TERM INT; while :; do sleep 0.05; done' & first_run_pid=$!
+wait_for_file "${identity}"
+cp "${identity}" "${TEMP_ROOT}/previous-run.identity"
+"${SUPERVISOR}" stop "${identity}"
+wait "${first_run_pid}" || true
+"${SUPERVISOR}" run "${identity}" -- sh -c \
+  'trap "exit 0" TERM INT; while :; do sleep 0.05; done' & restarted_pid=$!
+wait_for_file "${identity}"
+if "${SUPERVISOR}" stop "${TEMP_ROOT}/previous-run.identity" >/dev/null 2>&1; then
+  echo "supervisor accepted stale receipt after identity-path reuse" >&2
+  exit 1
+fi
+restarted_child_pid="$(awk -F= '$1 == "child_pid" { print $2; exit }' "${identity}")"
+kill -0 "${restarted_child_pid}"
+"${SUPERVISOR}" stop "${identity}"
+wait "${restarted_pid}" || true
+[[ ! -e "${identity}" && ! -e "${identity}.control" ]]
+
 # Escalation must stop an owned child that deliberately ignores TERM.
 identity="${TEMP_ROOT}/escalation.identity"
 "${SUPERVISOR}" run "${identity}" -- sh -c \
