@@ -254,7 +254,7 @@ def actuator_numeric_vector(values: object) -> list[float] | None:
             or not math.isfinite(float(item))
             for item in candidates
         ):
-            continue
+            return None
         vector.extend(float(item) for item in candidates)
     return vector or None
 

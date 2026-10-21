@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from swarm_cross_vehicle_probe import (
+    actuator_numeric_vector,
     controller_decision,
     mutate_setpoint,
     pose_window_at_target,
@@ -52,6 +53,11 @@ def valid_live_setpoint() -> dict:
 
 class MutationTests(unittest.TestCase):
     PROBE_HASH = "a" * 64
+
+    def test_actuator_vector_rejects_partial_or_nonfinite_values(self) -> None:
+        self.assertIsNone(actuator_numeric_vector({"left": 0.2, "right": "unknown"}))
+        self.assertIsNone(actuator_numeric_vector({"left": [0.2, float("nan")]}))
+        self.assertEqual(actuator_numeric_vector({"left": [0.2, 0.3]}), [0.2, 0.3])
 
     def test_wrong_callsign_changes_only_vehicle_binding_and_freshness_sequence(self) -> None:
         original = valid_live_setpoint()
