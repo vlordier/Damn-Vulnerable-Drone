@@ -574,7 +574,10 @@ fn control_command(frame: &FrameInfo, vehicle_system_id: u8) -> Result<Option<se
         400 if p(0) == 1.0 && p(1) == 0.0 => serde_json::json!({"type":"arm"}),
         400 if p(0) == 0.0 && p(1) == 0.0 => serde_json::json!({"type":"disarm"}),
         22 => serde_json::json!({"type":"takeoff","payload":{"altitude_m":p(6)}}),
-        20 => serde_json::json!({"type":"rtl"}),
+        20 if params.iter().all(|value| *value == 0.0) => {
+            serde_json::json!({"type":"rtl"})
+        }
+        20 => bail!("NAV_RETURN_TO_LAUNCH does not accept caller-supplied parameters"),
         21 => serde_json::json!({"type":"land"}),
         176 => {
             let mode = match p(1) as u32 {
@@ -1625,6 +1628,39 @@ mod tests {
             control_command(&mode, 1).unwrap().unwrap()["payload"]["mode"],
             "RTL"
         );
+    }
+
+    #[test]
+    fn rtl_is_vehicle_bound_and_has_no_caller_supplied_parameters() {
+        let mut payload = vec![0_u8; 32];
+        payload[28..30].copy_from_slice(&20_u16.to_le_bytes());
+        payload[30] = 1;
+        payload[31] = 1;
+        let frame = |payload| FrameInfo {
+            system_id: 255,
+            component_id: 190,
+            message_id: 76,
+            sequence: 1,
+            payload,
+        };
+
+        let rtl = control_command(&frame(payload.clone()), 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(rtl, serde_json::json!({"type":"rtl"}));
+
+        payload[0..4].copy_from_slice(&2.0_f32.to_le_bytes());
+        assert!(control_command(&frame(payload.clone()), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("caller-supplied parameters"));
+
+        payload[0..4].copy_from_slice(&0.0_f32.to_le_bytes());
+        payload[30] = 2;
+        assert!(control_command(&frame(payload), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("target mismatch"));
     }
 
     fn checksum(bytes: &[u8]) -> u16 {

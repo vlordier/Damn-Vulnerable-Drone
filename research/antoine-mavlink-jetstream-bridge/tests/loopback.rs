@@ -502,6 +502,53 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     assert_eq!(audit["direction"], "gcs_to_antoine");
     assert_eq!(audit["message_id"], 76);
 
+    // RTL has a vehicle-bound, targetless native representation. It cannot
+    // carry caller-supplied parameters that could be mistaken for a return
+    // target override.
+    let mut rtl_payload = vec![0_u8; 33];
+    rtl_payload[28..30].copy_from_slice(&20_u16.to_le_bytes());
+    rtl_payload[30] = 1;
+    rtl_payload[31] = 1;
+    let rtl = v2_frame(76, 12, 255, &rtl_payload[..32], 152);
+    gcs.send_to(&rtl, qgc_bind).await?;
+    let command = timeout(Duration::from_secs(2), reply_rx.recv())
+        .await
+        .context("RTL NATS request timeout")?
+        .context("Antoine command subscription ended")?;
+    assert_eq!(command["command"], serde_json::json!({"type":"rtl"}));
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("RTL ACK timeout")??;
+    assert_eq!(buffer[7], 77, "QGC should receive RTL COMMAND_ACK");
+    assert!(length >= 12, "truncated but valid MAVLink ACK frame");
+
+    rtl_payload[0..4].copy_from_slice(&2.0_f32.to_le_bytes());
+    let target_override = v2_frame(76, 13, 255, &rtl_payload[..32], 152);
+    gcs.send_to(&target_override, qgc_bind).await?;
+    assert!(
+        timeout(Duration::from_millis(150), reply_rx.recv())
+            .await
+            .is_err(),
+        "nonzero RTL parameters must not reach the NATS control subject"
+    );
+    assert!(
+        timeout(Duration::from_millis(150), gcs.recv_from(&mut buffer))
+            .await
+            .is_err(),
+        "rejected RTL parameters must not receive a success ACK"
+    );
+
+    rtl_payload[0..4].copy_from_slice(&0.0_f32.to_le_bytes());
+    rtl_payload[30] = 2;
+    let wrong_vehicle_rtl = v2_frame(76, 14, 255, &rtl_payload[..32], 152);
+    gcs.send_to(&wrong_vehicle_rtl, qgc_bind).await?;
+    assert!(
+        timeout(Duration::from_millis(150), reply_rx.recv())
+            .await
+            .is_err(),
+        "wrong-vehicle RTL must not reach the NATS control subject"
+    );
+
     // A valid frame from another local UDP client must not redirect telemetry.
     let probe_heartbeat = v2_frame(0, 11, 255, &[0, 0, 0, 0, 0, 2, 3], 50);
     probe.send_to(&probe_heartbeat, qgc_bind).await?;

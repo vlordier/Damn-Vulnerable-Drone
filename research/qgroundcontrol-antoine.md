@@ -86,6 +86,14 @@ Supported controls:
   applying them, and reads the live mission from Antoine for mission-list
   responses.
 
+The bridge maps `MAV_CMD_NAV_RETURN_TO_LAUNCH` to a targetless `{"type":"rtl"}`
+request. The frame must target this vehicle, and all seven command parameters
+must be zero; the adapter rejects other targets or parameter values before
+publishing. This proves the bridge cannot carry a caller-selected return point.
+It does not prove that a direct NATS producer without run/task authority is
+rejected by the Antoine controller; that boundary still needs an isolated
+controller run and independent trajectory evidence.
+
 The local scenario uses `pymavlink` through the `uv` `mavlink-check` group and
 the Rust bridge's `mavlink` 0.18 common dialect. It starts a separate
 `nats-server`, native SITL, and bridge on temporary loopback ports. It tests
