@@ -129,7 +129,8 @@ commands leave JSON output on stdout; stop also atomically writes
 `interactive-profile-stop-result.json` beside the receipt and returns a nonzero
 status when cleanup is partial. A stopped result also verifies that the
 run-owned NATS and bridge ports are closed; the QGC UDP port is preserved. The
-status command subscribes for at most
+status command requires matching identities for the run supervisor and MAVLink
+bridge, and subscribes for at most
 1.5 seconds to two messages on the run's loopback
 `furia.telemetry.<callsign>` subject. It reports armed state only when both
 messages have the expected schema, protocol, and callsign, and their finite

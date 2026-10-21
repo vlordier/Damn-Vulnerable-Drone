@@ -181,11 +181,39 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["processValidation"]["status"], "invalid")
         self.assertEqual(result["processes"]["mavlinkBridge"]["error"], "invalid-process-record")
 
+    def test_status_requires_supervisor_identity_even_with_fresh_telemetry(self) -> None:
+        telemetry = {
+            "schema": "furia.telemetry",
+            "version": "1.0.0",
+            "protocol": "antoine-gz",
+            "identity": "drone-1",
+            "time_s": 4.0,
+            "armed": False,
+        }
+        with (
+            patch(
+                "interactive_profile.process_identity",
+                return_value="owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+            ),
+            patch("interactive_profile.subprocess.run") as run,
+            patch(
+                "interactive_profile.read_nats_messages",
+                return_value=([{**telemetry, "time_s": 3.9}, telemetry], None),
+            ),
+        ):
+            run.return_value.returncode = 0
+            result = interactive_profile.inspect(self.receipt)
+
+        self.assertEqual(result["telemetry"]["status"], "fresh")
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["processValidation"]["status"], "incomplete")
+
     @patch(
         "interactive_profile.process_identity",
         side_effect=[
             "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
             "qgc-process",
+            "supervisor-process",
         ],
     )
     def test_status_reports_fresh_callsign_bound_armed_state(self, _identity) -> None:
@@ -197,6 +225,10 @@ class InteractiveProfileTests(unittest.TestCase):
             encoding="utf-8",
         )
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["processes"]["antoineGazeboSupervisor"] = {
+            "pid": 9003,
+            "identity": "supervisor-process",
+        }
         receipt["flightRunDirectory"] = str(flight_directory)
         self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
         telemetry = {
@@ -373,6 +405,12 @@ class InteractiveProfileTests(unittest.TestCase):
     def test_status_reports_confirmed_stop_without_claiming_current_telemetry(
         self, _identity
     ) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["processes"]["antoineGazeboSupervisor"] = {
+            "pid": 9003,
+            "identity": "supervisor-process",
+        }
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
         with patch("interactive_profile.subprocess.run") as run:
             run.return_value.returncode = 1
             result = interactive_profile.inspect(self.receipt)

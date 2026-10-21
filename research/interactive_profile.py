@@ -360,6 +360,16 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         for name, item in checks.items()
         if isinstance(item, dict) and "pid" in item and not name.lower().startswith("qgc")
     )
+    required_process_names = ("antoineGazeboSupervisor", "mavlinkBridge")
+    missing_required_processes = [
+        name
+        for name in required_process_names
+        if name not in processes or not isinstance(processes.get(name), dict)
+    ]
+    required_processes_matched = not missing_required_processes and all(
+        checks[name].get("alive") is True and checks[name].get("identityMatches") is True
+        for name in required_process_names
+    )
     telemetry = sample_telemetry(receipt)
     bridge = checks.get("mavlinkBridge", {})
     bridge_process = processes.get("mavlinkBridge", {})
@@ -386,6 +396,7 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
     stopped = (
         process_records_valid
         and ports_valid
+        and not missing_required_processes
         and bool(owned_processes)
         and all(not item["alive"] for item in owned_processes)
         and all(
@@ -396,6 +407,8 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
     if stopped:
         overall_status = "stopped"
     elif not process_records_valid:
+        overall_status = "partial"
+    elif not required_processes_matched:
         overall_status = "partial"
     elif not ports_valid:
         overall_status = "partial"
@@ -425,8 +438,19 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         "receiptStatus": receipt.get("status"),
         "processes": checks,
         "processValidation": {
-            "status": "valid" if process_records_valid else "invalid",
-            "reason": process_error,
+            "status": (
+                "invalid"
+                if not process_records_valid
+                else "valid"
+                if required_processes_matched
+                else "incomplete"
+            ),
+            "reason": process_error
+            or (
+                None
+                if required_processes_matched
+                else "required supervisor and bridge identities must match"
+            ),
         },
         "status": overall_status,
         "telemetry": telemetry,
