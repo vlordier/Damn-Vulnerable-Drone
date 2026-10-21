@@ -642,6 +642,10 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
             .contains(mavlink::dialects::common::MavModeFlag::MAV_MODE_FLAG_SAFETY_ARMED),
         "armed state should be reflected in HEARTBEAT"
     );
+    assert_eq!(
+        heartbeat.custom_mode, 1,
+        "accepted mode should be reflected in HEARTBEAT"
+    );
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
         .context("GLOBAL_POSITION_INT timeout")??;

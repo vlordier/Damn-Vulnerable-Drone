@@ -266,6 +266,29 @@ fn native_telemetry_time_s(
     }
 }
 
+fn telemetry_armed(value: &serde_json::Value, fallback: bool) -> Result<bool> {
+    match value.get("armed") {
+        None => Ok(fallback),
+        Some(value) => value
+            .as_bool()
+            .context("telemetry armed must be a boolean when present"),
+    }
+}
+
+fn telemetry_mode_id(value: &serde_json::Value, fallback: u8) -> Result<u8> {
+    let Some(value) = value.get("mode_id") else {
+        return Ok(fallback);
+    };
+    let mode = value
+        .as_u64()
+        .context("telemetry mode_id must be an unsigned integer when present")?;
+    let mode = u8::try_from(mode).context("telemetry mode_id exceeds the supported range")?;
+    if mode > 5 {
+        bail!("telemetry mode_id is outside the supported mode set");
+    }
+    Ok(mode)
+}
+
 fn telemetry_frames(
     value: &serde_json::Value,
     system_id: u8,
@@ -276,6 +299,9 @@ fn telemetry_frames(
     armed: bool,
     mode: u8,
 ) -> Result<Vec<Vec<u8>>> {
+    if mode > 5 {
+        bail!("telemetry mode is outside the supported mode set");
+    }
     let gazebo_plant = value["protocol"].as_str() == Some("antoine-gz");
     let observed_at_ms = if gazebo_plant {
         Some(unix_millis(value, "observedAtUnixMs")?)
@@ -836,14 +862,20 @@ async fn antoine_nats_telemetry_to_gcs(
         if now.duration_since(last_telemetry) < std::time::Duration::from_millis(100) {
             continue;
         }
-        last_telemetry = now;
-        let telemetry_armed = value["armed"]
-            .as_bool()
-            .unwrap_or(*armed_state.read().await);
-        let telemetry_mode = value["mode_id"]
-            .as_u64()
-            .map(|id| id as u8)
-            .unwrap_or(*mode_state.read().await);
+        let telemetry_armed = match telemetry_armed(&value, *armed_state.read().await) {
+            Ok(armed) => armed,
+            Err(error) => {
+                tracing::warn!(%error, "invalid Antoine armed telemetry");
+                continue;
+            }
+        };
+        let telemetry_mode = match telemetry_mode_id(&value, *mode_state.read().await) {
+            Ok(mode) => mode,
+            Err(error) => {
+                tracing::warn!(%error, "invalid Antoine mode telemetry");
+                continue;
+            }
+        };
         let frames = match telemetry_frames(
             &value,
             config.system_id,
@@ -860,6 +892,7 @@ async fn antoine_nats_telemetry_to_gcs(
                 continue;
             }
         };
+        last_telemetry = now;
         for raw in frames {
             // Model telemetry is live telemetry, not an event log. Publishing it
             // to Core NATS avoids writing a 90 msg/s GPS stream to JetStream.
@@ -1363,34 +1396,34 @@ async fn qgc_to_antoine_nats(
         let accepted = match response {
             Ok(Ok(message)) => {
                 tracing::debug!(request_id, response=%String::from_utf8_lossy(&message.payload), "Antoine control response");
-                serde_json::from_slice::<serde_json::Value>(&message.payload)
-                .ok()
-                .filter(|value| value["requestId"] == request_id)
-                .map(|value| {
-                    if value["accepted"] != true {
-                        tracing::warn!(request_id, reason=?value["reason"], "Antoine rejected MAVLink control request");
-                        return false;
-                    }
-                    if let Some(armed) = value["armed"].as_bool() {
-                        let _ = armed_state.try_write().map(|mut current| *current = armed);
-                    }
-                    if let Some(mode) = value["mode"].as_str() {
-                        let id = match mode {
-                            "STABILIZE" => 0,
-                            "GUIDED" => 1,
-                            "AUTO" => 2,
-                            "HOLD" => 3,
-                            "RTL" => 4,
-                            "LAND" => 5,
-                            _ => 255,
-                        };
-                        if id != 255 {
-                            let _ = mode_state.try_write().map(|mut current| *current = id);
+                match serde_json::from_slice::<serde_json::Value>(&message.payload) {
+                    Ok(value) if value["requestId"] == request_id => {
+                        if value["accepted"] != true {
+                            tracing::warn!(request_id, reason=?value["reason"], "Antoine rejected MAVLink control request");
+                            false
+                        } else {
+                            if let Some(armed) = value["armed"].as_bool() {
+                                *armed_state.write().await = armed;
+                            }
+                            if let Some(mode) = value["mode"].as_str() {
+                                let id = match mode {
+                                    "STABILIZE" => Some(0),
+                                    "GUIDED" => Some(1),
+                                    "AUTO" => Some(2),
+                                    "HOLD" => Some(3),
+                                    "RTL" => Some(4),
+                                    "LAND" => Some(5),
+                                    _ => None,
+                                };
+                                if let Some(id) = id {
+                                    *mode_state.write().await = id;
+                                }
+                            }
+                            true
                         }
                     }
-                    true
-                })
-                .unwrap_or(false)
+                    _ => false,
+                }
             }
             _ => false,
         };
@@ -1680,6 +1713,24 @@ mod tests {
         );
         assert!(native_telemetry_time_s("antoine-nats", &gazebo, None).is_err());
         assert!(native_telemetry_time_s("gazebo-nats", &sample, None).is_err());
+    }
+
+    #[test]
+    fn telemetry_state_fields_reject_malformed_and_out_of_range_values() {
+        assert!(telemetry_armed(&serde_json::json!({"armed":true}), false).unwrap());
+        assert!(!telemetry_armed(&serde_json::json!({}), false).unwrap());
+        assert!(telemetry_armed(&serde_json::json!({"armed":"true"}), false).is_err());
+
+        assert_eq!(
+            telemetry_mode_id(&serde_json::json!({"mode_id":5}), 0).unwrap(),
+            5
+        );
+        assert_eq!(telemetry_mode_id(&serde_json::json!({}), 3).unwrap(), 3);
+        for mode in [6, 256, 257] {
+            assert!(telemetry_mode_id(&serde_json::json!({"mode_id":mode}), 0).is_err());
+        }
+        assert!(telemetry_mode_id(&serde_json::json!({"mode_id":1.0}), 0).is_err());
+        assert!(telemetry_mode_id(&serde_json::json!({"mode_id":-1}), 0).is_err());
     }
 
     #[test]
