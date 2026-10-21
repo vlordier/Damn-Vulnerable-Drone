@@ -961,19 +961,19 @@ async fn qgc_to_antoine_nats(
                 Err(_) => {
                     tracing::warn!(
                         request_id,
-                        "mission query timed out; returning an empty list"
+                        "mission query timed out; returning a mission error"
                     );
-                    Vec::new()
+                    None
                 }
                 Ok(Err(error)) => {
-                    tracing::warn!(request_id, %error, "mission query failed; returning an empty list");
-                    Vec::new()
+                    tracing::warn!(request_id, %error, "mission query failed; returning a mission error");
+                    None
                 }
                 Ok(Ok(response)) => {
                     match serde_json::from_slice::<serde_json::Value>(&response.payload) {
                         Err(error) => {
-                            tracing::warn!(request_id, %error, "mission query returned invalid JSON");
-                            Vec::new()
+                            tracing::warn!(request_id, %error, "mission query returned invalid JSON; returning a mission error");
+                            None
                         }
                         Ok(value)
                             if value["requestId"] != request_id || value["accepted"] != true =>
@@ -982,21 +982,21 @@ async fn qgc_to_antoine_nats(
                                 request_id,
                                 returned_request_id = ?value["requestId"],
                                 accepted = ?value["accepted"],
-                                "mission query response did not match the request"
+                                "mission query response did not match the request; returning a mission error"
                             );
-                            Vec::new()
+                            None
                         }
                         Ok(value) if value["missionUploaded"] != true => {
                             tracing::debug!(request_id, "controller reports no uploaded mission");
-                            Vec::new()
+                            Some(Vec::new())
                         }
                         Ok(value) => {
                             match serde_json::from_value::<Vec<[f64; 3]>>(
                                 value["waypoints"].clone(),
                             ) {
                                 Err(error) => {
-                                    tracing::warn!(request_id, %error, "mission query returned invalid waypoints");
-                                    Vec::new()
+                                    tracing::warn!(request_id, %error, "mission query returned invalid waypoints; returning a mission error");
+                                    None
                                 }
                                 Ok(points)
                                     if points.len() <= 5
@@ -1012,19 +1012,30 @@ async fn qgc_to_antoine_nats(
                                         waypoint_count = points.len(),
                                         "mission query succeeded"
                                     );
-                                    points
+                                    Some(points)
                                 }
                                 Ok(_) => {
                                     tracing::warn!(
                                         request_id,
-                                        "mission query waypoints exceed the local envelope"
+                                        "mission query waypoints exceed the local envelope; returning a mission error"
                                     );
-                                    Vec::new()
+                                    None
                                 }
                             }
                         }
                     }
                 }
+            };
+            let Some(live_waypoints) = live_waypoints else {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    1,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
             };
             uploaded_waypoints = live_waypoints;
             let count = uploaded_waypoints.len() as u16;
