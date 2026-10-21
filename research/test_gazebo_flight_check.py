@@ -56,6 +56,37 @@ class GazeboFailureReportTests(unittest.TestCase):
             self.assertTrue(report["cleanup"]["disarmConfirmed"])
             self.assertEqual(report["auditFrameCount"], 2)
 
+    def test_nats_telemetry_accepts_only_the_gazebo_profile_contract(self) -> None:
+        checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
+        checker.callsign = "drone-1"
+        checker.raw_telemetry = {"identity": "drone-1", "protocol": "antoine-gz"}
+
+        async def deliver(payload: bytes) -> None:
+            await checker.on_telemetry(types.SimpleNamespace(data=payload))
+
+        valid = {
+            "schema": "furia.telemetry",
+            "version": "1.0.0",
+            "identity": "drone-1",
+            "protocol": "antoine-gz",
+        }
+        asyncio.run(deliver(json.dumps(valid).encode()))
+        self.assertEqual(checker.raw_telemetry, valid)
+        self.assertIsNone(checker.telemetry_rejection)
+
+        for invalid in (
+            {**valid, "protocol": "antoine"},
+            {**valid, "version": "2.0.0"},
+            {**valid, "identity": "another-drone"},
+        ):
+            asyncio.run(deliver(json.dumps(invalid).encode()))
+            self.assertEqual(checker.raw_telemetry, valid)
+            self.assertIsNotNone(checker.telemetry_rejection)
+
+        asyncio.run(deliver(b"not-json"))
+        self.assertEqual(checker.raw_telemetry, valid)
+        self.assertEqual(checker.telemetry_rejection, "telemetry is not valid JSON")
+
     def test_pose_observation_requires_fresh_finite_timestamped_vehicle_pose(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             pose_path = Path(directory) / "gazebo-pose.jsonl"

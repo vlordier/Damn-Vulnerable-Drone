@@ -62,6 +62,7 @@ def write_failed_report(
                 "lastGazeboPose": check.pose(),
                 "lastMavlinkState": dict(check.telemetry),
                 "rawGazeboTelemetry": check.raw_telemetry,
+                "telemetryRejection": getattr(check, "telemetry_rejection", None),
                 "auditFrameCount": len(check.audit_frames),
             },
             indent=2,
@@ -79,15 +80,33 @@ class GazeboFlightCheck(FlightCheck):
         self.pose_file = pose_file
         self.agent = agent
         self.raw_telemetry: dict = {}
+        self.telemetry_rejection: str | None = None
         self.keepalive_task: asyncio.Task | None = None
         self.vehicle_state_updated_at: float | None = None
         self.state_field_updated_at: dict[str, float] = {}
         self.mode_names = {0: "STABILIZE", 1: "GUIDED", 2: "AUTO", 3: "HOLD", 4: "RTL", 5: "LAND"}
 
     async def on_telemetry(self, msg):
-        value = json.loads(msg.data)
-        if value.get("identity") == self.callsign:
-            self.raw_telemetry = value
+        try:
+            value = json.loads(msg.data)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self.telemetry_rejection = "telemetry is not valid JSON"
+            return
+        if not isinstance(value, dict):
+            self.telemetry_rejection = "telemetry is not a JSON object"
+            return
+        if (
+            value.get("schema") != "furia.telemetry"
+            or value.get("version") != "1.0.0"
+            or value.get("identity") != self.callsign
+            or value.get("protocol") != "antoine-gz"
+        ):
+            self.telemetry_rejection = (
+                "telemetry schema, Gazebo protocol, or callsign does not match this profile"
+            )
+            return
+        self.raw_telemetry = value
+        self.telemetry_rejection = None
 
     async def start(self):
         await super().start()
@@ -711,6 +730,7 @@ async def run_check() -> dict:
             "auditedMessageIds": sorted(audit_ids),
             "auditFrameCount": len(check.audit_frames),
             "rawGazeboTelemetry": check.raw_telemetry,
+            "telemetryRejection": getattr(check, "telemetry_rejection", None),
         }
     except Exception as failure:
         cleanup = {
