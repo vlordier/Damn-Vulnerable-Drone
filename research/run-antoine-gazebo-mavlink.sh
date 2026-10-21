@@ -203,7 +203,7 @@ if [[ -n "${ANTOINE_RUN_ROOT}" ]]; then
     exit 2
   }
   echo "Verifying the prebuilt sealed Antoine snapshot against this run's source bundle..."
-  uv run --no-project python -c 'import sys; from pathlib import Path; from create_interactive_profile_receipt import snapshot_record; fields=("receiptSha256", "snapshotManifestSha256", "fileCount"); current=snapshot_record(Path(sys.argv[1]).parent, Path(sys.argv[1]), "antoine-source-snapshot.json", "damn-vulnerable-drone.antoine-source-snapshot"); sealed=Path(sys.argv[2]).resolve(strict=True); actual=snapshot_record(sealed.parent, sealed, "antoine-source-snapshot.json", "damn-vulnerable-drone.antoine-source-snapshot"); raise SystemExit(0 if all(current[key] == actual[key] for key in fields) else "prebuilt Antoine source snapshot differs from this run")' \
+  uv run --no-project python "${PROJECT_ROOT}/research/verify_antoine_snapshot_reuse.py" \
     "${ANTOINE_SOURCE_SNAPSHOT}" "$(dirname "${ANTOINE_RUN_ROOT}")"
 else
   ANTOINE_RUN_ROOT="${ANTOINE_SOURCE_SNAPSHOT}/antoine"
