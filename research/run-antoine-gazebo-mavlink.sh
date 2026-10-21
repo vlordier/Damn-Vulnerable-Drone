@@ -320,7 +320,12 @@ echo "Starting the isolated Antoine/Gazebo profile at ${NATS_URL}..."
     ANTOINE_GZ_FLIGHT_NATS_PORT="${NATS_PORT}" \
     ANTOINE_GZ_CARGO_TARGET_DIR="${ANTOINE_TARGET}" \
     GZ_BIN="${GZ_BINARY}" \
-    "${ANTOINE_RUN_ROOT}/scripts/gz_flight_proof.sh" --run-dir "${FLIGHT_RUN_DIR}" --keep
+    uv run --no-project python "${PROJECT_ROOT}/research/verify_antoine_native_receipt.py" \
+      --root "${ANTOINE_RUN_ROOT}" \
+      --snapshot-root "$(dirname "${ANTOINE_RUN_ROOT}")" \
+      --receipt "${ANTOINE_RUN_BUILD_RECEIPT}" \
+      --exec-command -- "${ANTOINE_RUN_ROOT}/scripts/gz_flight_proof.sh" \
+      --run-dir "${FLIGHT_RUN_DIR}" --keep
 ) &
 PROFILE_PID=$!
 PROFILE_CHILD_PID="$(supervised_child_pid "${PROFILE_IDENTITY}")"

@@ -3,13 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from build_antoine_source_snapshot import add_stable_rust_path_remaps
-from verify_antoine_native_receipt import verify_native_receipt
+from verify_antoine_native_receipt import main, verify_native_receipt
 
 
 class AntoineNativeReceiptVerificationTests(unittest.TestCase):
@@ -67,6 +69,45 @@ class AntoineNativeReceiptVerificationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "cannot reconstruct"):
                 verify_native_receipt(self.root, self.snapshot_root, self.receipt)
         run.assert_not_called()
+
+    def test_exec_command_receives_reconstructed_flags(self) -> None:
+        environment = {}
+        add_stable_rust_path_remaps(environment, self.snapshot_root)
+        flags_hash = hashlib.sha256(environment["CARGO_ENCODED_RUSTFLAGS"].encode()).hexdigest()
+        self.write_receipt(flags_hash)
+        with (
+            patch.dict(os.environ, {}, clear=True),
+            patch.object(
+                sys,
+                "argv",
+                [
+                    "verify_antoine_native_receipt.py",
+                    "--root",
+                    str(self.root),
+                    "--snapshot-root",
+                    str(self.snapshot_root),
+                    "--receipt",
+                    str(self.receipt),
+                    "--exec-command",
+                    "--",
+                    "/bin/true",
+                ],
+            ),
+            patch(
+                "verify_antoine_native_receipt.subprocess.run",
+                side_effect=[
+                    subprocess.CompletedProcess([], 0),
+                    subprocess.CompletedProcess([], 0),
+                ],
+            ) as run,
+        ):
+            self.assertEqual(main(), 0)
+        self.assertEqual(run.call_count, 2)
+        self.assertEqual(
+            run.call_args.kwargs["env"]["CARGO_ENCODED_RUSTFLAGS"],
+            environment["CARGO_ENCODED_RUSTFLAGS"],
+        )
+        self.assertEqual(run.call_args.args[0], ["/bin/true"])
 
     def test_symlinked_receipt_is_rejected(self) -> None:
         self.write_receipt("")

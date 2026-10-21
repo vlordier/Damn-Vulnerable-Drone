@@ -14,7 +14,7 @@ from pathlib import Path
 from build_antoine_source_snapshot import add_stable_rust_path_remaps
 
 
-def verify_native_receipt(root: Path, snapshot_root: Path, receipt_path: Path) -> None:
+def verify_native_receipt(root: Path, snapshot_root: Path, receipt_path: Path) -> dict[str, str]:
     """Run Antoine's verifier with the same path remaps used for the sealed build."""
     root = root.resolve(strict=True)
     snapshot_root = snapshot_root.absolute()
@@ -51,6 +51,7 @@ def verify_native_receipt(root: Path, snapshot_root: Path, receipt_path: Path) -
         env=environment,
         check=True,
     )
+    return environment
 
 
 def main() -> int:
@@ -58,9 +59,23 @@ def main() -> int:
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--snapshot-root", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
-    args = parser.parse_args()
+    parser.add_argument(
+        "--exec-command",
+        action="store_true",
+        help="execute the remaining command under the verified build environment",
+    )
+    args, command = parser.parse_known_args()
+    if command and command[0] == "--":
+        command = command[1:]
+    if command and not args.exec_command:
+        parser.error(f"unrecognized arguments: {' '.join(command)}")
     try:
-        verify_native_receipt(args.root, args.snapshot_root, args.receipt)
+        environment = verify_native_receipt(args.root, args.snapshot_root, args.receipt)
+        if args.exec_command and command:
+            completed = subprocess.run(command, cwd=args.root.resolve(), env=environment)
+            return completed.returncode
+        if args.exec_command:
+            parser.error("--exec-command requires a command")
     except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as error:
         print(f"Antoine native receipt verification failed: {error}", file=sys.stderr)
         return 2
