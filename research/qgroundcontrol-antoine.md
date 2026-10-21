@@ -110,7 +110,9 @@ Gazebo actuation.
 source-built Gazebo executables, before running the Antoine or bridge builds.
 If QGC is missing, build it with `make qgc-antoine-build` and then retry. This
 preflight avoids spending time or disk on the SITL build when the desktop client
-required by the profile cannot launch.
+required by the profile cannot launch. It also requires at least 2 GiB free on
+the filesystems holding the QGC/Gazebo executables and both Rust build targets.
+Set `QGC_GAZEBO_MIN_FREE_MIB` to adjust that threshold.
 
 The interactive profile writes `interactive-profile-receipt.json` beside its
 run logs. The receipt records a run ID, callsign, ports, Antoine/Gazebo/QGC

@@ -13,6 +13,7 @@ ANTOINE_BRIDGE_TARGET_DIR ?= /tmp/dvd-antoine-bridge-target
 ANTOINE_QGC_DIR ?= $(HOME)/Work/antoine-qgroundcontrol
 ANTOINE_GZ_CARGO_TARGET_DIR ?= /tmp/antoine-gz-target
 QGC_CONFIG ?= Debug
+QGC_GAZEBO_MIN_FREE_MIB ?= 2048
 ANTOINE_GZ_FLIGHT_GUI ?= 1
 RUSTUP_TOOLCHAIN ?= 1.99.1
 QGC_ANTOINE_PATCH := research/patches/qgroundcontrol-antoine.patch
@@ -306,7 +307,10 @@ qgc-gazebo-preflight: ## Check large interactive-profile prerequisites before st
 	  exit 1; \
 	fi; \
 	[[ -x "$$gz_binary" ]] || { echo "Missing source-built Gazebo executable: $$gz_binary" >&2; exit 1; }; \
-	echo 'Interactive QGC and Gazebo executables are present.'
+	echo 'Interactive QGC and Gazebo executables are present.'; \
+	QGC_GAZEBO_MIN_FREE_MIB="$(QGC_GAZEBO_MIN_FREE_MIB)" ./research/check-free-space.sh \
+	  "$(ANTOINE_GZ_CARGO_TARGET_DIR)" "$(ANTOINE_BRIDGE_TARGET_DIR)" \
+	  "$$qgc_binary" "$$gz_binary"
 
 qgc-gazebo: qgc-gazebo-preflight doctor antoine-gz-battery-test bridge-build ## Start the interactive loopback QGC/Antoine/Gazebo profile
 	ANTOINE_GZ_CARGO_TARGET_DIR="$(ANTOINE_GZ_CARGO_TARGET_DIR)" ANTOINE_GZ_FLIGHT_GUI="$(ANTOINE_GZ_FLIGHT_GUI)" ./research/run-antoine-gazebo-mavlink.sh
