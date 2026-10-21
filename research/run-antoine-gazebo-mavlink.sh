@@ -25,6 +25,9 @@ GUI_PID=""
 PROVENANCE_ENV="${RUN_DIR}/.research-provenance-expected.env"
 RUNTIME_CONFIG="${RUN_DIR}/interactive-profile.json"
 PROFILE_RECEIPT="${RUN_DIR}/interactive-profile-receipt.json"
+PROFILE_IDENTITY="${RUN_DIR}/.antoine-profile.identity"
+BRIDGE_IDENTITY="${RUN_DIR}/.bridge.identity"
+GUI_IDENTITY="${RUN_DIR}/.gazebo-gui.identity"
 QGC_SETTINGS_DIR="${QGC_SETTINGS_DIR:-/tmp/dvd-qgc-antoine-config}"
 QGC_SETTINGS_FILE="${QGC_SETTINGS_DIR}/qgroundcontrol.com/QGroundControl Daily.ini"
 export ANTOINE_QGC_DIR="${ANTOINE_QGC_DIR:-${HOME}/Work/antoine-qgroundcontrol}"
@@ -76,37 +79,34 @@ capture_provenance() {
     "${required_inputs[@]}"
 }
 
-stop_child() {
-  local child_pid="$1"
-  [[ -n "${child_pid}" ]] || return 0
-  kill -INT "${child_pid}" 2>/dev/null || true
-  for _ in $(seq 1 20); do
-    kill -0 "${child_pid}" 2>/dev/null || return 0
-    sleep 0.1
-  done
-  kill -KILL "${child_pid}" 2>/dev/null || true
+record_process() {
+  local name="$1" pid="$2" identity_path="${3:-}"
+  shift 3 || true
+  local -a identity_args=()
+  [[ -z "${identity_path}" ]] || identity_args+=(--supervisor-identity "${identity_path}")
+  uv run --no-project python "${PROJECT_ROOT}/research/record_interactive_process.py" \
+    "${PROFILE_RECEIPT}" "${name}" "${pid}" "${identity_args[@]}" "$@"
 }
 
-record_process() {
-  local name="$1" pid="$2"
-  uv run --no-project python "${PROJECT_ROOT}/research/record_interactive_process.py" \
-    "${PROFILE_RECEIPT}" "${name}" "${pid}"
+supervised_child_pid() {
+  local identity_path="$1" child_pid=""
+  for _ in $(seq 1 100); do
+    child_pid="$(awk -F= '$1 == "child_pid" { print $2; exit }' "${identity_path}" 2>/dev/null || true)"
+    [[ -n "${child_pid}" ]] && break
+    sleep 0.02
+  done
+  [[ "${child_pid}" =~ ^[0-9]+$ ]] || return 1
+  printf '%s\n' "${child_pid}"
 }
 
 cleanup() {
   local status=$?
-  if [[ -n "${GUI_PID}" ]] && kill -0 "${GUI_PID}" 2>/dev/null; then
-    stop_child "${GUI_PID}"
-    wait "${GUI_PID}" 2>/dev/null || true
-  fi
-  if [[ -n "${BRIDGE_PID}" ]] && kill -0 "${BRIDGE_PID}" 2>/dev/null; then
-    kill -TERM "${BRIDGE_PID}" 2>/dev/null || true
-    wait "${BRIDGE_PID}" 2>/dev/null || true
-  fi
-  if [[ -n "${PROFILE_PID}" ]] && kill -0 "${PROFILE_PID}" 2>/dev/null; then
-    kill -TERM "${PROFILE_PID}" 2>/dev/null || true
-    wait "${PROFILE_PID}" 2>/dev/null || true
-  fi
+  [[ -z "${GUI_PID}" ]] || dvd_signal_owned_child "${PROJECT_ROOT}" "${GUI_PID}" "${GUI_IDENTITY}" TERM || true
+  [[ -z "${BRIDGE_PID}" ]] || dvd_signal_owned_child "${PROJECT_ROOT}" "${BRIDGE_PID}" "${BRIDGE_IDENTITY}" TERM || true
+  [[ -z "${PROFILE_PID}" ]] || dvd_signal_owned_child "${PROJECT_ROOT}" "${PROFILE_PID}" "${PROFILE_IDENTITY}" TERM || true
+  [[ -z "${GUI_PID}" ]] || wait "${GUI_PID}" 2>/dev/null || true
+  [[ -z "${BRIDGE_PID}" ]] || wait "${BRIDGE_PID}" 2>/dev/null || true
+  [[ -z "${PROFILE_PID}" ]] || wait "${PROFILE_PID}" 2>/dev/null || true
   if [[ -f "${PROVENANCE_ENV}" ]]; then
     if ! capture_provenance post; then
       echo "Post-run provenance is incomplete; this run is not provenance-qualified." >&2
@@ -220,7 +220,7 @@ uv run --no-project python "${PROJECT_ROOT}/research/create_interactive_profile_
   --bridge-port "${QGC_BIND_PORT}" \
   --output "${PROFILE_RECEIPT}"
 echo "Starting the isolated Antoine/Gazebo profile at ${NATS_URL}..."
-env ANTOINE_GZ_INTERACTIVE_CONTROL=1 \
+dvd_run_owned_child "${PROJECT_ROOT}" "${PROFILE_IDENTITY}" env ANTOINE_GZ_INTERACTIVE_CONTROL=1 \
   ANTOINE_GZ_FLIGHT_GUI=0 \
   ANTOINE_GZ_FLIGHT_WORLD_FILE="${VISIBLE_WORLD}" \
   ANTOINE_GZ_INTERACTIVE_TIMEOUT_SECONDS="${ANTOINE_GZ_INTERACTIVE_TIMEOUT_SECONDS:-3600}" \
@@ -229,6 +229,7 @@ env ANTOINE_GZ_INTERACTIVE_CONTROL=1 \
   GZ_BIN="${HOME}/Work/gz-macOS/ws/install/bin/gz" \
   "${ANTOINE_ROOT}/scripts/gz_flight_proof.sh" --run-dir "${FLIGHT_RUN_DIR}" --keep &
 PROFILE_PID=$!
+PROFILE_CHILD_PID="$(supervised_child_pid "${PROFILE_IDENTITY}")"
 
 ready=0
 for _ in $(seq 1 180); do
@@ -248,7 +249,8 @@ done
 [[ "${ready}" == "1" ]] || { echo "Timed out waiting for run-owned NATS at ${NATS_URL}" >&2; exit 1; }
 
 uv run --no-project python "${PROJECT_ROOT}/research/record_interactive_process.py" \
-  "${PROFILE_RECEIPT}" antoineGazeboSupervisor "${PROFILE_PID}" \
+  "${PROFILE_RECEIPT}" antoineGazeboSupervisor "${PROFILE_CHILD_PID}" \
+  --supervisor-identity "${PROFILE_IDENTITY}" \
   --status ready --run-directory "${RUN_DIR}"
 
 echo "Recording pre-interaction source, build, world, and configuration provenance..."
@@ -257,7 +259,7 @@ capture_provenance pre
 if [[ "${ANTOINE_GZ_FLIGHT_GUI:-1}" == "1" ]]; then
   echo "Starting the framed Gazebo 3D view on the run-owned partition..."
   GZ_INSTALL="$(dirname "$(dirname "${HOME}/Work/gz-macOS/ws/install/bin/gz")")"
-  env GZ_PARTITION="antoine-gz-flight-${PROFILE_PID}" GZ_IP=127.0.0.1 \
+  dvd_run_owned_child "${PROJECT_ROOT}" "${GUI_IDENTITY}" env GZ_PARTITION="antoine-gz-flight-${PROFILE_CHILD_PID}" GZ_IP=127.0.0.1 \
     GZ_CLI="${HOME}/Work/gz-macOS/ws/install/bin/gz" \
     GZ_SIM_RESOURCE_PATH="${HOME}/Work/durandal-gz-swarm-sim/models:${HOME}/Work/antoine/models" \
     DYLD_LIBRARY_PATH="${GZ_INSTALL}/lib:${DYLD_LIBRARY_PATH:-}" \
@@ -265,6 +267,7 @@ if [[ "${ANTOINE_GZ_FLIGHT_GUI:-1}" == "1" ]]; then
     --gui-config "${PROJECT_ROOT}/research/gazebo-qgc-gui.config" \
     >"${RUN_DIR}/gazebo-gui.log" 2>&1 &
   GUI_PID=$!
+  GUI_CHILD_PID="$(supervised_child_pid "${GUI_IDENTITY}")"
   sleep 2
   if ! kill -0 "${GUI_PID}" 2>/dev/null; then
     wait "${GUI_PID}" || true
@@ -273,7 +276,7 @@ if [[ "${ANTOINE_GZ_FLIGHT_GUI:-1}" == "1" ]]; then
   fi
   # `gz` may exec through a Ruby launcher; record identity after that handoff
   # so lifecycle checks match the process that actually remains running.
-  record_process gazeboGui "${GUI_PID}"
+  record_process gazeboGui "${GUI_CHILD_PID}" "${GUI_IDENTITY}"
   echo "Gazebo 3D view: ${RUN_DIR}/gazebo-gui.log"
 fi
 
@@ -282,14 +285,15 @@ if lsof -nP -iUDP:"${QGC_BIND_PORT}" >/dev/null 2>&1; then
   echo "UDP ${QGC_BIND_PORT} is already in use; stop its owner before starting this QGC profile." >&2
   exit 1
 fi
-"${BRIDGE_BIN}" --mode gazebo-nats --callsign "${CALLSIGN}" \
+dvd_run_owned_child "${PROJECT_ROOT}" "${BRIDGE_IDENTITY}" "${BRIDGE_BIN}" --mode gazebo-nats --callsign "${CALLSIGN}" \
   --nats-url "${NATS_URL}" \
   --qgc-bind "127.0.0.1:${QGC_BIND_PORT}" \
   --qgc-peer "127.0.0.1:${QGC_LISTEN_PORT}" \
   --qgc-telemetry-peer "127.0.0.1:${MAVLINK_GAZEBO_CHECK_PORT:-14574}" \
   --system-id 1 --home-alt-msl 82 &
 BRIDGE_PID=$!
-record_process mavlinkBridge "${BRIDGE_PID}"
+BRIDGE_CHILD_PID="$(supervised_child_pid "${BRIDGE_IDENTITY}")"
+record_process mavlinkBridge "${BRIDGE_CHILD_PID}" "${BRIDGE_IDENTITY}"
 
 bridge_ready=0
 for _ in $(seq 1 40); do
@@ -299,7 +303,7 @@ for _ in $(seq 1 40); do
     exit 1
   fi
   bridge_port_pid="$(lsof -tiUDP:"${QGC_BIND_PORT}" 2>/dev/null | tail -1 || true)"
-  if [[ "${bridge_port_pid}" == "${BRIDGE_PID}" ]]; then
+  if [[ "${bridge_port_pid}" == "${BRIDGE_CHILD_PID}" ]]; then
     bridge_ready=1
     break
   fi

@@ -78,6 +78,42 @@ class RecordInteractiveProcessTests(unittest.TestCase):
                 record_process(self.receipt_path, "bridge", 1)
         run.assert_not_called()
 
+    @patch("record_interactive_process.subprocess.run")
+    def test_records_run_local_supervisor_identity_path(self, run):
+        identity_path = Path(self.tempdir.name) / ".bridge.identity"
+        identity_path.write_text("supervisor identity", encoding="utf-8")
+        self.original["runDirectory"] = self.tempdir.name
+        self.receipt_path.write_text(json.dumps(self.original), encoding="utf-8")
+        run.return_value = subprocess.CompletedProcess([], 0, "bridge process\n", "")
+
+        record_process(
+            self.receipt_path,
+            "bridge",
+            42,
+            supervisor_identity_path=identity_path,
+        )
+
+        process_record = json.loads(self.receipt_path.read_text())["processes"]["bridge"]
+        self.assertEqual(process_record["supervisorIdentityPath"], str(identity_path.resolve()))
+
+    @patch("record_interactive_process.subprocess.run")
+    def test_rejects_supervisor_identity_outside_run_directory(self, run):
+        self.original["runDirectory"] = self.tempdir.name
+        self.receipt_path.write_text(json.dumps(self.original), encoding="utf-8")
+        outside_directory = Path(self.tempdir.name) / "outside"
+        outside_directory.mkdir()
+        outside_identity = outside_directory / "foreign.identity"
+        outside_identity.write_text("foreign", encoding="utf-8")
+        run.return_value = subprocess.CompletedProcess([], 0, "bridge process\n", "")
+
+        with self.assertRaisesRegex(ValueError, "inside the run directory"):
+            record_process(
+                self.receipt_path,
+                "bridge",
+                42,
+                supervisor_identity_path=outside_identity,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

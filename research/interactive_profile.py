@@ -7,7 +7,6 @@ import argparse
 import json
 import math
 import os
-import signal
 import subprocess
 import sys
 import tempfile
@@ -306,6 +305,15 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
                 "error": "invalid-process-record",
             }
             continue
+        control_identity = process.get("supervisorIdentityPath")
+        if control_identity is not None and (
+            not isinstance(control_identity, str) or not control_identity
+        ):
+            process_records_valid = False
+            process_error = "supervisor identity path must be a non-empty string"
+        elif control_identity is not None and _supervisor_identity_path(receipt, process) is None:
+            process_records_valid = False
+            process_error = "supervisor identity must be a regular run-local file"
         pid = process.get("pid")
         try:
             actual = process_identity(pid) if isinstance(pid, int) and pid > 1 else None
@@ -549,10 +557,14 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         elif actual != expected:
             results[name] = "identity-mismatch-not-signalled"
         else:
-            try:
-                results[name] = _stop_owned_process(pid, expected)
-            except OSError:
-                results[name] = "identity-probe-unavailable"
+            control_path = _supervisor_identity_path(receipt, process)
+            if control_path is None:
+                results[name] = "supervisor-identity-required-not-signalled"
+            else:
+                try:
+                    results[name] = _stop_supervised_process(pid, expected, control_path)
+                except OSError:
+                    results[name] = "identity-probe-unavailable"
     if missing_required_processes:
         results["requiredProcessRecords"] = "missing:" + ",".join(missing_required_processes)
     results.update(_run_owned_port_statuses(receipt))
@@ -648,38 +660,45 @@ def _persist_stop_result(receipt_path: Path, result: dict[str, Any]) -> dict[str
     return report
 
 
-def _stop_owned_process(pid: int, expected: str) -> str:
-    """Stop one identity-matched process, preserving uncertainty as a result."""
+def _supervisor_identity_path(receipt: dict[str, Any], process: dict[str, Any]) -> Path | None:
+    value = process.get("supervisorIdentityPath")
+    if not isinstance(value, str) or not value:
+        return None
+    candidate = Path(value)
+    run_directory = receipt.get("runDirectory")
+    if not candidate.is_absolute() or candidate.is_symlink() or not isinstance(run_directory, str):
+        return None
     try:
-        os.kill(pid, signal.SIGINT)
-    except ProcessLookupError:
-        return "already-stopped"
-    except OSError:
-        return "interrupt-failed"
+        run_path = Path(run_directory).resolve(strict=True)
+        resolved = candidate.resolve(strict=True)
+        if resolved.parent != run_path or not resolved.is_file():
+            return None
+    except (OSError, RuntimeError):
+        return None
+    return resolved
 
-    stop_result = _wait_for_owned_exit(pid, expected)
-    if stop_result == "identity-changed-after-interrupt":
-        # Never signal the changed identity. Give the original interrupt a
-        # bounded chance to finish its exec handoff.
-        return _wait_for_pid_exit(pid)
-    if stop_result != "timeout":
-        return stop_result
 
-    # Background shells can inherit SIGINT as ignored. Recheck identity before
-    # TERM so a reused PID is never signalled.
-    current = process_identity(pid)
-    if current is None:
-        return "stopped"
-    if current != expected:
-        return "identity-changed-after-interrupt"
+def _stop_supervised_process(pid: int, expected: str, identity_path: Path) -> str:
+    """Request stop through the run-owned supervisor FIFO, never by PID."""
+    supervisor = Path(__file__).resolve().parent / ".process-supervisor"
+    if supervisor.is_symlink() or not supervisor.is_file() or not os.access(supervisor, os.X_OK):
+        return "process-supervisor-unavailable"
     try:
-        os.kill(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return "already-stopped"
+        request = subprocess.run(
+            [str(supervisor), "stop", str(identity_path)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
     except OSError:
-        return "term-failed"
-    stop_result = _wait_for_owned_exit(pid, expected)
-    return "term-sent-stop-unconfirmed" if stop_result == "timeout" else stop_result
+        return "process-supervisor-unavailable"
+    if request.returncode != 0:
+        try:
+            current = process_identity(pid)
+        except OSError:
+            return "identity-probe-unavailable"
+        return "already-stopped" if current is None else "supervisor-stop-rejected"
+    return _wait_for_owned_exit(pid, expected)
 
 
 def _wait_for_owned_exit(pid: int, expected: str) -> str:
@@ -692,15 +711,6 @@ def _wait_for_owned_exit(pid: int, expected: str) -> str:
             return "identity-changed-after-interrupt"
         time.sleep(STOP_POLL_SECONDS)
     return "timeout"
-
-
-def _wait_for_pid_exit(pid: int) -> str:
-    deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
-    while time.monotonic() < deadline:
-        if process_identity(pid) is None:
-            return "stopped-after-identity-change"
-        time.sleep(STOP_POLL_SECONDS)
-    return "identity-changed-after-interrupt"
 
 
 def main() -> int:

@@ -23,6 +23,8 @@ class InteractiveProfileTests(unittest.TestCase):
         self.port_status_mock = self.port_status.start()
         self.addCleanup(self.port_status.stop)
         self.receipt = Path(self.temp.name) / "interactive-profile-receipt.json"
+        bridge_identity = Path(self.temp.name) / ".bridge.identity"
+        bridge_identity.write_text("run-local supervisor marker\n", encoding="utf-8")
         self.receipt.write_text(
             json.dumps(
                 {
@@ -38,6 +40,7 @@ class InteractiveProfileTests(unittest.TestCase):
                         "mavlinkBridge": {
                             "pid": 9001,
                             "identity": "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+                            "supervisorIdentityPath": str(bridge_identity),
                         },
                         "qgcUserProcess": {"pid": 9002, "identity": "qgc-process"},
                     },
@@ -53,6 +56,15 @@ class InteractiveProfileTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+
+    def add_supervisor_process(self, receipt: dict) -> None:
+        identity_path = Path(self.temp.name) / ".antoine.identity"
+        identity_path.write_text("run-local supervisor marker\n", encoding="utf-8")
+        receipt["processes"]["antoineGazeboSupervisor"] = {
+            "pid": 9003,
+            "identity": "supervisor-process",
+            "supervisorIdentityPath": str(identity_path),
+        }
 
     def test_status_rejects_non_object_receipt(self) -> None:
         self.receipt.write_text("[]", encoding="utf-8")
@@ -253,10 +265,7 @@ class InteractiveProfileTests(unittest.TestCase):
             encoding="utf-8",
         )
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
-        receipt["processes"]["antoineGazeboSupervisor"] = {
-            "pid": 9003,
-            "identity": "supervisor-process",
-        }
+        self.add_supervisor_process(receipt)
         receipt["flightRunDirectory"] = str(flight_directory)
         self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
         telemetry = {
@@ -434,10 +443,7 @@ class InteractiveProfileTests(unittest.TestCase):
         self, _identity
     ) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
-        receipt["processes"]["antoineGazeboSupervisor"] = {
-            "pid": 9003,
-            "identity": "supervisor-process",
-        }
+        self.add_supervisor_process(receipt)
         self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
         with patch("interactive_profile.subprocess.run") as run:
             run.return_value.returncode = 1
@@ -475,10 +481,7 @@ class InteractiveProfileTests(unittest.TestCase):
 
     def test_later_partial_stop_replaces_previous_success_report(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
-        receipt["processes"]["antoineGazeboSupervisor"] = {
-            "pid": 9003,
-            "identity": "supervisor-process",
-        }
+        self.add_supervisor_process(receipt)
         self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
         report_path = Path(self.temp.name) / "interactive-profile-stop-result.json"
         with patch("interactive_profile.process_identity", return_value=None):
@@ -547,59 +550,59 @@ class InteractiveProfileTests(unittest.TestCase):
 
     @patch(
         "interactive_profile.process_identity",
-        side_effect=lambda pid: (
-            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651"
-            if pid == 9001
-            else "supervisor-process"
-        ),
+        return_value="owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
     )
-    @patch("interactive_profile.os.kill", side_effect=PermissionError("permission denied"))
-    def test_stop_persists_partial_when_signal_is_rejected(self, kill, _identity) -> None:
-        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
-        receipt["processes"]["antoineGazeboSupervisor"] = {
-            "pid": 9003,
-            "identity": "supervisor-process",
-        }
-        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
-        result = interactive_profile.stop_owned(self.receipt)
+    def test_stop_requests_run_local_supervisor_and_waits_for_owned_process(self, _identity):
+        with (
+            patch(
+                "interactive_profile.subprocess.run",
+                return_value=type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+            ) as run,
+            patch("interactive_profile._wait_for_owned_exit", return_value="stopped"),
+        ):
+            result = interactive_profile.stop_owned(self.receipt)
 
-        self.assertEqual(kill.call_count, 2)
-        kill.assert_any_call(9001, interactive_profile.signal.SIGINT)
-        kill.assert_any_call(9003, interactive_profile.signal.SIGINT)
-        self.assertEqual(result["status"], "partial")
-        self.assertEqual(result["results"]["mavlinkBridge"], "interrupt-failed")
-        persisted = json.loads(
-            (Path(self.temp.name) / "interactive-profile-stop-result.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        self.assertEqual(persisted["status"], "partial")
-        self.assertEqual(persisted["results"]["mavlinkBridge"], "interrupt-failed")
+        self.assertEqual(result["results"]["mavlinkBridge"], "stopped")
+        self.assertEqual(result["results"]["qgcUserProcess"], "preserved-user-owned")
+        args = run.call_args.args[0]
+        self.assertEqual(args[1], "stop")
+        self.assertEqual(args[2], str((Path(self.temp.name) / ".bridge.identity").resolve()))
 
     @patch(
         "interactive_profile.process_identity",
-        side_effect=lambda pid: (
-            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651"
-            if pid == 9001
-            else "supervisor-process"
-        ),
+        return_value="owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
     )
-    @patch("interactive_profile.os.kill", side_effect=ProcessLookupError())
-    def test_stop_records_process_race_as_already_stopped(self, kill, _identity) -> None:
+    def test_stop_rejects_supervisor_identity_outside_run_without_signaling(self, _identity):
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
-        receipt["processes"]["antoineGazeboSupervisor"] = {
-            "pid": 9003,
-            "identity": "supervisor-process",
-        }
+        receipt["processes"]["mavlinkBridge"]["supervisorIdentityPath"] = str(
+            Path(self.temp.name).parent / "foreign.identity"
+        )
         self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
-        result = interactive_profile.stop_owned(self.receipt)
+        with patch("interactive_profile.subprocess.run") as run:
+            result = interactive_profile.stop_owned(self.receipt)
 
-        self.assertEqual(kill.call_count, 2)
-        kill.assert_any_call(9001, interactive_profile.signal.SIGINT)
-        kill.assert_any_call(9003, interactive_profile.signal.SIGINT)
-        self.assertEqual(result["results"]["mavlinkBridge"], "already-stopped")
-        self.assertEqual(result["status"], "stopped")
-        self.assertEqual(result["results"]["mavlinkBridge"], "already-stopped")
+        run.assert_not_called()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(
+            result["results"]["mavlinkBridge"], "supervisor-identity-required-not-signalled"
+        )
+
+    @patch(
+        "interactive_profile.process_identity",
+        return_value="owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+    )
+    def test_legacy_process_record_fails_closed_without_supervisor_identity(self, _identity):
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        del receipt["processes"]["mavlinkBridge"]["supervisorIdentityPath"]
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with patch("interactive_profile.subprocess.run") as run:
+            result = interactive_profile.stop_owned(self.receipt)
+
+        run.assert_not_called()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(
+            result["results"]["mavlinkBridge"], "supervisor-identity-required-not-signalled"
+        )
 
     @patch("interactive_profile.process_identity", side_effect=OSError("ps unavailable"))
     def test_stop_persists_partial_when_process_identity_probe_fails(self, _identity) -> None:
@@ -673,10 +676,7 @@ class InteractiveProfileTests(unittest.TestCase):
         receipt_link = outside / "receipt.json"
         receipt_link.symlink_to(self.receipt)
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
-        receipt["processes"]["antoineGazeboSupervisor"] = {
-            "pid": 9003,
-            "identity": "supervisor-process",
-        }
+        self.add_supervisor_process(receipt)
         self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
 
         with patch("interactive_profile.process_identity", return_value=None):
@@ -688,94 +688,17 @@ class InteractiveProfileTests(unittest.TestCase):
 
     @patch(
         "interactive_profile.process_identity",
-        side_effect=[
-            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
-            None,
-            None,
-        ],
+        return_value="owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
     )
-    @patch("interactive_profile.os.kill")
-    def test_stop_interrupts_only_identity_matched_owned_child(self, kill, _identity) -> None:
-        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
-        receipt["processes"]["antoineGazeboSupervisor"] = {
-            "pid": 9003,
-            "identity": "supervisor-process",
-        }
-        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
-        result = interactive_profile.stop_owned(self.receipt)
-        kill.assert_called_once()
-        self.assertEqual(result["status"], "stopped")
-        self.assertEqual(result["results"]["mavlinkBridge"], "stopped")
-        self.assertEqual(result["results"]["qgcUserProcess"], "preserved-user-owned")
-        report = json.loads(
-            (Path(self.temp.name) / "interactive-profile-stop-result.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        self.assertEqual(report["status"], "stopped")
-        self.assertTrue(report["observedAtUtc"])
+    def test_supervisor_stop_rejection_preserves_partial_result(self, _identity):
+        with patch(
+            "interactive_profile.subprocess.run",
+            return_value=type("Result", (), {"returncode": 1, "stdout": "", "stderr": "stale"})(),
+        ):
+            result = interactive_profile.stop_owned(self.receipt)
 
-    @patch(
-        "interactive_profile.process_identity",
-        side_effect=[
-            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
-            None,
-        ],
-    )
-    @patch("interactive_profile.os.kill")
-    def test_stop_cleans_known_child_but_stays_partial_without_supervisor_record(
-        self, kill, _identity
-    ) -> None:
-        result = interactive_profile.stop_owned(self.receipt)
-
-        kill.assert_called_once_with(9001, interactive_profile.signal.SIGINT)
         self.assertEqual(result["status"], "partial")
-        self.assertEqual(result["results"]["mavlinkBridge"], "stopped")
-        self.assertEqual(
-            result["results"]["requiredProcessRecords"],
-            "missing:antoineGazeboSupervisor",
-        )
-
-    @patch(
-        "interactive_profile.process_identity",
-        side_effect=[
-            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
-            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
-            None,
-        ],
-    )
-    @patch("interactive_profile._wait_for_owned_exit", side_effect=["timeout", "stopped"])
-    @patch("interactive_profile.os.kill")
-    def test_stop_escalates_to_term_after_interrupt_timeout(
-        self, kill, _wait_for_exit, _identity
-    ) -> None:
-        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
-        receipt["processes"]["antoineGazeboSupervisor"] = {
-            "pid": 9003,
-            "identity": "supervisor-process",
-        }
-        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
-        result = interactive_profile.stop_owned(self.receipt)
-        self.assertEqual(result["status"], "stopped")
-        self.assertEqual(kill.call_args_list[0].args, (9001, interactive_profile.signal.SIGINT))
-        self.assertEqual(kill.call_args_list[1].args, (9001, interactive_profile.signal.SIGTERM))
-
-    @patch(
-        "interactive_profile.process_identity",
-        side_effect=[
-            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
-            "changed",
-            None,
-        ],
-    )
-    @patch("interactive_profile.os.kill")
-    def test_stop_reports_partial_after_interrupt_identity_change_without_resignalling(
-        self, kill, _identity
-    ) -> None:
-        result = interactive_profile.stop_owned(self.receipt)
-        kill.assert_called_once_with(9001, interactive_profile.signal.SIGINT)
-        self.assertEqual(result["status"], "partial")
-        self.assertEqual(result["results"]["mavlinkBridge"], "stopped-after-identity-change")
+        self.assertEqual(result["results"]["mavlinkBridge"], "supervisor-stop-rejected")
 
 
 if __name__ == "__main__":

@@ -28,6 +28,12 @@ files instead of a `ps`-then-`kill` check; launch evidence continues to record
 the supervised command's child PID. The interactive MAVLink runner exports the
 compiled supervisor path before invoking the proof launcher.
 
+Interactive profile receipts now retain each process's supervisor identity
+path. The status command still verifies the process PID and command for
+attribution, while stop requests use the run-local FIFO and reject identity
+files outside the run directory. Legacy receipts without supervisor identity
+remain inspectable but are not stopped by signaling a PID.
+
 The supervisor inherits the process environment directly and does not write it
 to disk. Run identities contain only supervisor/child PIDs and the control FIFO
 path; they are private to the current user. The external Antoine proof runner
