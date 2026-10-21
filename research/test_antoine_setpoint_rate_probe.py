@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from antoine_setpoint_rate_probe import (
+    accepted_sequences,
     mutate,
     rejection_sequences,
     validate_limits,
@@ -51,6 +52,18 @@ class SetpointRateProbeTests(unittest.TestCase):
             "ANTOINE_GZ_SETPOINT_RECEIVED callsign=drone-2 sequence=112 payload_sha256=abc",
         ]
         self.assertEqual(rejection_sequences(lines, "drone-2", "drone-1", [110, 111, 112]), {110})
+
+    def test_controller_decisions_correlate_exact_injected_payload_hashes(self) -> None:
+        hashes = {110: "attack-hash-110", 111: "attack-hash-111"}
+        lines = [
+            "ANTOINE_GZ_SETPOINT_RECEIVED callsign=drone-2 sequence=110 payload_sha256=authorized-hash",
+            "ANTOINE_GZ_SETPOINT_RECEIVED callsign=drone-2 sequence=110 payload_sha256=attack-hash-110",
+            "ANTOINE_GZ_SETPOINT_REJECTED callsign=drone-2 reason=current-grant-or-vigie-binding vehicle_id=drone-1 sequence=111 payload_sha256=attack-hash-111",
+        ]
+        self.assertEqual(accepted_sequences(lines, "drone-2", hashes), {110})
+        self.assertEqual(
+            rejection_sequences(lines, "drone-2", "drone-1", [110, 111], hashes), {111}
+        )
 
 
 if __name__ == "__main__":

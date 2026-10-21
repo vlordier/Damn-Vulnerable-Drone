@@ -80,7 +80,11 @@ def capture_setpoint(server: str, subject: str) -> dict:
 
 
 def rejection_sequences(
-    lines: list[str], target: str, source: str, sequences: list[int]
+    lines: list[str],
+    target: str,
+    source: str,
+    sequences: list[int],
+    payload_hashes: dict[int, str] | None = None,
 ) -> set[int]:
     found = set()
     for line in lines:
@@ -90,7 +94,23 @@ def rejection_sequences(
         if f"vehicle_id={source}" not in tokens:
             continue
         for sequence in sequences:
-            if f"sequence={sequence}" in tokens:
+            hash_matches = (
+                payload_hashes is None or f"payload_sha256={payload_hashes.get(sequence)}" in tokens
+            )
+            if f"sequence={sequence}" in tokens and hash_matches:
+                found.add(sequence)
+    return found
+
+
+def accepted_sequences(lines: list[str], target: str, payload_hashes: dict[int, str]) -> set[int]:
+    """Match accepted controller receipts to exact injected payload hashes."""
+    found = set()
+    for line in lines:
+        if f"ANTOINE_GZ_SETPOINT_RECEIVED callsign={target} " not in line:
+            continue
+        tokens = set(line.split())
+        for sequence, payload_hash in payload_hashes.items():
+            if f"sequence={sequence}" in tokens and f"payload_sha256={payload_hash}" in tokens:
                 found.add(sequence)
     return found
 
@@ -157,8 +177,9 @@ async def run(args: argparse.Namespace) -> dict:
         hashlib.sha256(json.dumps(item, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
         for item in payloads
     ]
-    started_ns, published_ns = await publish_burst(args.server, subject, payloads, args.rate_hz)
     expected = [item["sequence"] for item in payloads]
+    payload_hashes = dict(zip(expected, hashes, strict=True))
+    started_ns, published_ns = await publish_burst(args.server, subject, payloads, args.rate_hz)
     observation_deadline = time.monotonic() + 5
     decision_lines: list[str] = []
     rejected: set[int] = set()
@@ -166,19 +187,16 @@ async def run(args: argparse.Namespace) -> dict:
     while time.monotonic() < observation_deadline and len(rejected) < count:
         after_text = controller_log.read_text(encoding="utf-8", errors="replace")
         decision_lines = after_text[len(before_log) :].splitlines()
-        rejected = rejection_sequences(decision_lines, args.target, args.source, expected)
-        accepted = {
-            sequence_number
-            for sequence_number in expected
-            if f"ANTOINE_GZ_SETPOINT_RECEIVED callsign={args.target} sequence={sequence_number} "
-            in "\n".join(decision_lines)
-        }
+        rejected = rejection_sequences(
+            decision_lines, args.target, args.source, expected, payload_hashes
+        )
+        accepted = accepted_sequences(decision_lines, args.target, payload_hashes)
         if len(rejected) < count:
             await asyncio.sleep(0.05)
     after_effect = vehicle_effect_snapshot(run_dir, models)
     now_ns = time.time_ns()
     missing = sorted(set(expected) - rejected)
-    status = "passed" if len(rejected) == count and not accepted else "inconclusive"
+    status = "failed" if accepted else "passed" if len(rejected) == count else "inconclusive"
     return {
         "contract": "damn-vulnerable-drone.antoine-setpoint-rate-probe",
         "version": "1.0.0",
@@ -203,6 +221,9 @@ async def run(args: argparse.Namespace) -> dict:
         "decisionObservedAtUnixNs": now_ns,
         "controllerDecisionUpperBoundMs": round((now_ns - started_ns) / 1e6, 3),
         "uniqueMutatedPayloadSha256": len(set(hashes)),
+        "injectedPayloadSha256BySequence": {
+            str(sequence): digest for sequence, digest in payload_hashes.items()
+        },
         "preAttackPoseWindow": pose_window,
         "independentEffectBefore": before_effect,
         "independentEffectAfter": after_effect,
