@@ -127,7 +127,9 @@ identity-matched children to exit and reports unconfirmed stops as partial.
 It preserves QGroundControl because it is an operator-owned application. Both
 commands leave JSON output on stdout; stop also atomically writes
 `interactive-profile-stop-result.json` beside the receipt and returns a nonzero
-status when cleanup is partial. The status command subscribes for at most
+status when cleanup is partial. A stopped result also verifies that the
+run-owned NATS and bridge ports are closed; the QGC UDP port is preserved. The
+status command subscribes for at most
 1.5 seconds to two messages on the run's loopback
 `furia.telemetry.<callsign>` subject. It reports armed state only when both
 messages have the expected schema, protocol, and callsign, and their finite

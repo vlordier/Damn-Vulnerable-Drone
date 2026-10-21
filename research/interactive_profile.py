@@ -375,6 +375,7 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
                     if stop_result == "timeout":
                         stop_result = "term-sent-stop-unconfirmed"
             results[name] = stop_result
+    results.update(_run_owned_port_statuses(receipt))
     complete = all(
         status
         in {
@@ -382,6 +383,7 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
             "stopped-after-identity-change",
             "already-stopped",
             "preserved-user-owned",
+            "closed",
         }
         for status in results.values()
     )
@@ -393,6 +395,33 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
             "results": results,
         },
     )
+
+
+def _run_owned_port_statuses(receipt: dict[str, Any]) -> dict[str, str]:
+    ports = receipt.get("ports")
+    checks = {}
+    for name, protocol in (("nats", "TCP"), ("bridgeUdpBind", "UDP")):
+        port = ports.get(name) if isinstance(ports, dict) else None
+        result_name = f"{name}Port"
+        if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+            checks[result_name] = "invalid-port-not-verified"
+            continue
+        command = ["lsof", "-nP", f"-i{protocol}:{port}"]
+        if protocol == "TCP":
+            command.extend(["-sTCP:LISTEN"])
+        try:
+            probe = subprocess.run(command, capture_output=True, text=True, check=False)
+        except OSError:
+            checks[result_name] = "unavailable"
+            continue
+        checks[result_name] = (
+            "open"
+            if probe.returncode == 0
+            else "closed"
+            if probe.returncode == 1
+            else "unavailable"
+        )
+    return checks
 
 
 def _persist_stop_result(receipt_path: Path, result: dict[str, Any]) -> dict[str, Any]:

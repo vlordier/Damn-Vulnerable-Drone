@@ -15,6 +15,13 @@ import interactive_profile
 class InteractiveProfileTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
+        self.real_port_status = interactive_profile._run_owned_port_statuses
+        self.port_status = patch(
+            "interactive_profile._run_owned_port_statuses",
+            return_value={"natsPort": "closed", "bridgeUdpBindPort": "closed"},
+        )
+        self.port_status_mock = self.port_status.start()
+        self.addCleanup(self.port_status.stop)
         self.receipt = Path(self.temp.name) / "interactive-profile-receipt.json"
         self.receipt.write_text(
             json.dumps(
@@ -333,6 +340,32 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(
             result["results"]["mavlinkBridge"], "invalid-process-identity-not-signalled"
         )
+
+    def test_stop_reports_partial_when_a_run_owned_port_remains_open(self) -> None:
+        self.port_status_mock.return_value = {
+            "natsPort": "open",
+            "bridgeUdpBindPort": "closed",
+        }
+        with patch("interactive_profile.process_identity", return_value=None):
+            result = interactive_profile.stop_owned(self.receipt)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["results"]["natsPort"], "open")
+
+    def test_run_owned_port_probe_excludes_qgc_and_distinguishes_open_ports(self) -> None:
+        with patch("interactive_profile.subprocess.run") as run:
+            run.side_effect = [
+                type("Result", (), {"returncode": 1})(),
+                type("Result", (), {"returncode": 0})(),
+            ]
+            result = self.real_port_status(json.loads(self.receipt.read_text(encoding="utf-8")))
+
+        self.assertEqual(result, {"natsPort": "closed", "bridgeUdpBindPort": "open"})
+        commands = [call.args[0] for call in run.call_args_list]
+        self.assertEqual(len(commands), 2)
+        self.assertIn("-iTCP:14226", commands[0])
+        self.assertIn("-iUDP:14651", commands[1])
+        self.assertNotIn("14550", str(commands))
 
     @patch("interactive_profile.process_identity")
     @patch("interactive_profile.os.kill")
