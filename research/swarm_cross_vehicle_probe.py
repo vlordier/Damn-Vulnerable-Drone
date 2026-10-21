@@ -142,7 +142,13 @@ def mutate_setpoint(
 
 def target_plan(run_dir: Path, callsign: str) -> tuple[str, list[float]]:
     config = json.loads((run_dir / "research-swarm-config.json").read_text(encoding="utf-8"))
-    matches = [item for item in config["vehicles"] if item.get("callsign") == callsign]
+    if not isinstance(config, dict) or not isinstance(config.get("vehicles"), list):
+        raise ValueError("swarm config must contain a vehicle roster")
+    matches = [
+        item
+        for item in config["vehicles"]
+        if isinstance(item, dict) and item.get("callsign") == callsign
+    ]
     if len(matches) != 1:
         raise ValueError("run plan does not have exactly one target callsign")
     vehicle = matches[0]
@@ -164,6 +170,34 @@ def target_plan(run_dir: Path, callsign: str) -> tuple[str, list[float]]:
     ):
         raise ValueError("target final waypoint is malformed")
     return model, [float(value) for value in target]
+
+
+def vehicle_models_from_config(config: object) -> dict[str, str]:
+    if not isinstance(config, dict) or not isinstance(config.get("vehicles"), list):
+        raise ValueError("swarm config must contain a vehicle roster")
+    vehicles = config["vehicles"]
+    if len(vehicles) < 2:
+        raise ValueError("swarm config must identify at least two vehicles")
+    models = {}
+    for item in vehicles:
+        if (
+            not isinstance(item, dict)
+            or not isinstance(item.get("callsign"), str)
+            or not item["callsign"]
+            or not isinstance(item.get("model"), str)
+            or not item["model"]
+        ):
+            raise ValueError("swarm config contains a malformed vehicle identity")
+        callsign, model = item["callsign"], item["model"]
+        if callsign in models or model in models.values():
+            raise ValueError("swarm config callsigns and models must be unique")
+        models[callsign] = model
+    return models
+
+
+def validate_probe_roster(models: dict[str, str], source: str, target: str) -> None:
+    if source not in models or target not in models:
+        raise ValueError("source and target callsigns must belong to the run roster")
 
 
 def validate_run_evidence_paths(run_dir: Path, target: str) -> None:
@@ -629,15 +663,8 @@ def main() -> int:
             config = json.loads(
                 (run_dir / "research-swarm-config.json").read_text(encoding="utf-8")
             )
-            models = {
-                item["callsign"]: item["model"]
-                for item in config.get("vehicles", [])
-                if isinstance(item, dict)
-                and isinstance(item.get("callsign"), str)
-                and isinstance(item.get("model"), str)
-            }
-            if len(models) < 2 or args.target not in models:
-                raise ValueError("swarm config does not identify at least two callsigns and models")
+            models = vehicle_models_from_config(config)
+            validate_probe_roster(models, args.source, args.target)
             pose_deadline = time.monotonic() + args.wait_timeout_seconds
             dwell = None
             while time.monotonic() < pose_deadline:

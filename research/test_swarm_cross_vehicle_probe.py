@@ -20,8 +20,10 @@ from swarm_cross_vehicle_probe import (
     pose_simulation_time,
     pose_window_at_target,
     target_plan,
+    validate_probe_roster,
     validate_vehicle_callsigns,
     vehicle_effect_snapshot,
+    vehicle_models_from_config,
     write_report,
 )
 
@@ -75,6 +77,36 @@ class MutationTests(unittest.TestCase):
         ):
             with self.subTest(source=source, target=target), self.assertRaises(ValueError):
                 validate_vehicle_callsigns(source, target)
+
+    def test_run_roster_rejects_malformed_or_duplicate_vehicle_identities(self) -> None:
+        valid = {
+            "vehicles": [
+                {"callsign": "drone-1", "model": "fpv-a"},
+                {"callsign": "drone-2", "model": "fpv-b"},
+            ]
+        }
+        models = vehicle_models_from_config(valid)
+        validate_probe_roster(models, "drone-1", "drone-2")
+        with self.assertRaisesRegex(ValueError, "must belong to the run roster"):
+            validate_probe_roster(models, "drone-3", "drone-2")
+
+        for roster in (
+            {"vehicles": [*valid["vehicles"], "malformed"]},
+            {
+                "vehicles": [
+                    {"callsign": "drone-1", "model": "fpv-a"},
+                    {"callsign": "drone-1", "model": "fpv-b"},
+                ]
+            },
+            {
+                "vehicles": [
+                    {"callsign": "drone-1", "model": "fpv-a"},
+                    {"callsign": "drone-2", "model": "fpv-a"},
+                ]
+            },
+        ):
+            with self.subTest(roster=roster), self.assertRaises(ValueError):
+                vehicle_models_from_config(roster)
 
     def test_actuator_vector_rejects_partial_or_nonfinite_values(self) -> None:
         self.assertIsNone(actuator_numeric_vector({"left": 0.2, "right": "unknown"}))
