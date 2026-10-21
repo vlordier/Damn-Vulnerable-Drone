@@ -785,6 +785,24 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
             },
         ),
     )?;
+    probe.send_to(&mission_item, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), probe.recv_from(&mut buffer))
+        .await
+        .context("foreign mission-item rejection timeout")??;
+    assert_eq!(buffer[7], 47, "foreign UDP source must not complete upload");
+    let (_, foreign_item_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(foreign_item_ack) =
+        foreign_item_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for foreign mission item");
+    };
+    assert_eq!(
+        foreign_item_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
     gcs.send_to(&mission_item, qgc_bind).await?;
     let mut mission_ack_seen = false;
     for _ in 0..4 {

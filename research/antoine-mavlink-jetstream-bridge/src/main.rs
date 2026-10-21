@@ -800,7 +800,7 @@ async fn qgc_to_antoine_nats(
 ) -> Result<()> {
     let command_subject = config.control_subject.clone();
     let mut buffer = vec![0_u8; 4096];
-    let mut mission_upload: Option<(u8, Vec<Option<[f64; 3]>>)> = None;
+    let mut mission_upload: Option<(SocketAddr, u8, Vec<Option<[f64; 3]>>)> = None;
     let mut uploaded_waypoints: Vec<[f64; 3]> = Vec::new();
     loop {
         let (length, source) = gcs.recv_from(&mut buffer).await?;
@@ -881,7 +881,7 @@ async fn qgc_to_antoine_nats(
                 gcs.send_to(&ack, source).await?;
                 continue;
             }
-            mission_upload = Some((frame.system_id, vec![None; count]));
+            mission_upload = Some((source, frame.system_id, vec![None; count]));
             let request = mission_request_int(
                 frame.sequence.wrapping_add(1),
                 config.system_id,
@@ -1147,10 +1147,20 @@ async fn qgc_to_antoine_nats(
                     * config.home_lat_deg.to_radians().cos();
                 (north, east, -wire_z)
             };
-            if let Some((sender, items)) = mission_upload.as_mut() {
+            if let Some((upload_source, sender, items)) = mission_upload.as_mut() {
+                if *upload_source != source || *sender != frame.system_id {
+                    let ack = mission_ack(
+                        frame.sequence.wrapping_add(1),
+                        config.system_id,
+                        frame.system_id,
+                        frame.component_id,
+                        1,
+                    );
+                    gcs.send_to(&ack, source).await?;
+                    continue;
+                }
                 let expected = items.iter().position(Option::is_none);
-                if *sender != frame.system_id
-                    || seq >= items.len()
+                if seq >= items.len()
                     || expected != Some(seq)
                     || !x.is_finite()
                     || !y.is_finite()

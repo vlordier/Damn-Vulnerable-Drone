@@ -84,7 +84,9 @@ Supported controls:
   `MAV_CMD_NAV_WAYPOINT` items in `MAV_FRAME_LOCAL_NED` and share the same
   position envelope. The bridge audits GCS mission frames to JetStream before
   applying them, and reads the live mission from Antoine for mission-list
-  responses.
+  responses. Each upload handshake is bound to the loopback UDP source that
+  sent `MISSION_COUNT`; mission items from another local socket are rejected
+  even when they reuse the same MAVLink system ID.
 
 The bridge maps `MAV_CMD_NAV_RETURN_TO_LAUNCH` to a targetless `{"type":"rtl"}`
 request. The frame must target this vehicle, and all seven command parameters
