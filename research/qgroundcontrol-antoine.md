@@ -89,17 +89,25 @@ Supported controls:
 The bridge maps `MAV_CMD_NAV_RETURN_TO_LAUNCH` to a targetless `{"type":"rtl"}`
 request. The frame must target this vehicle, and all seven command parameters
 must be zero; the adapter rejects other targets or parameter values before
-publishing. This proves the bridge cannot carry a caller-selected return point.
-It does not prove that a direct NATS producer without run/task authority is
-rejected by the Antoine controller; that boundary still needs an isolated
-controller run and independent trajectory evidence.
+publishing. This prevents a MAVLink caller from supplying a return point through
+the bridge. The native Antoine NATS controller also accepts a direct `rtl`
+control request when its callsign identity matches. In an isolated native SITL
+check, a same-host unsigned request carrying an irrelevant stale `runId` and a
+caller-supplied target payload was accepted; the controller ignored that
+payload and returned toward its fixed home before landing. The envelope does
+not establish run/task authority, so any same-host process with access to this
+loopback broker can invoke the supported native controls. This result is for
+the opt-in native Antoine software SITL only and does not describe the separate
+Gazebo controller or its authority boundary. The observed return used native
+SITL telemetry, not independent Gazebo truth, so it is not an independent
+trajectory or actuator-safety result.
 
 The local scenario uses `pymavlink` through the `uv` `mavlink-check` group and
 the Rust bridge's `mavlink` 0.18 common dialect. It starts a separate
 `nats-server`, native SITL, and bridge on temporary loopback ports. It tests
 ARM, takeoff altitude, explicit modes, north/east movement, mission upload and
-readback, AUTO execution, RTL mode, landing, DISARM, and durable MAVLink frame
-audit. Run it with:
+readback, AUTO execution, bridge and direct-NATS RTL behavior, landing, DISARM,
+and durable MAVLink frame audit. Run it with:
 
 ```sh
 make mavlink-flight-check

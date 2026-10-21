@@ -193,6 +193,31 @@ class FlightCheck:
             await asyncio.sleep(0.05)
         raise AssertionError(f"timed out waiting for {description}: {self.telemetry}")
 
+    async def direct_control(
+        self,
+        command: dict,
+        *,
+        request_id: str,
+        identity: str | None = None,
+        extra_fields: dict | None = None,
+    ) -> dict:
+        """Publish directly to native SITL, bypassing MAVLink bridge ingress."""
+        envelope = {
+            "schema": "furia.mavlink.control",
+            "version": "1.0.0",
+            "identity": identity or self.callsign,
+            "request_id": request_id,
+            "command": command,
+        }
+        if extra_fields:
+            envelope.update(extra_fields)
+        reply = await self.nc.request(
+            f"furia.mavlink.control.{self.callsign}",
+            json.dumps(envelope).encode(),
+            timeout=2,
+        )
+        return json.loads(reply.data)
+
     def long(self, command: int, p1=0.0, p2=0.0, p7=0.0):
         return self.encode(76, struct.pack("<7fHBBB", p1, p2, 0, 0, 0, 0, p7, command, 1, 1, 0))
 
@@ -331,16 +356,78 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
             20,
             "mission reached terminal HOLD waypoint",
         )
+        mission_after_execution_reply = await check.nc.request(
+            f"furia.mavlink.control.{callsign}",
+            json.dumps(
+                {
+                    "schema": "furia.mavlink.control",
+                    "version": "1.0.0",
+                    "identity": callsign,
+                    "request_id": "flight-check-mission-after-execution",
+                    "type": "mission_query",
+                }
+            ).encode(),
+            timeout=2,
+        )
+        mission_after_execution = json.loads(mission_after_execution_reply.data)
+        assert mission_after_execution["accepted"] is True, mission_after_execution
+        assert mission_after_execution["missionUploaded"] is True, mission_after_execution
+        assert len(mission_after_execution["waypoints"]) == 2, mission_after_execution
         mission_count, listed = await check.mission_list()
-        assert mission_count == 2
+        assert mission_count == 2, {
+            "missionCount": mission_count,
+            "nativeMissionAfterExecution": mission_after_execution,
+        }
         assert all(
             math.isclose(actual, expected, abs_tol=1e-5)
             for actual_waypoint, expected_waypoint in zip(listed, expected_waypoints, strict=True)
             for actual, expected in zip(actual_waypoint, expected_waypoint, strict=True)
         ), listed
 
-        await check.request(check.long(176, p1=1.0, p2=4.0), 176)
-        await check.wait_state(lambda t: t.get("mode") == "RTL", 2, "RTL mode")
+        await check.request(check.long(176, p1=1.0, p2=1.0), 176)
+        await check.wait_state(lambda t: t.get("mode") == "GUIDED", 2, "GUIDED mode")
+        reposition_deadline = time.monotonic() + 1.5
+        while time.monotonic() < reposition_deadline:
+            check.socket.sendto(check.position(1.0, 0.5, -1.0), check.bridge)
+            await asyncio.sleep(0.1)
+        offset = await check.wait_state(
+            lambda t: (
+                t.get("lat_deg", 48.0002) > 48.000201
+                and t.get("lon_deg", 0.3564) > 0.3564003
+            ),
+            3,
+            "native telemetry at offset before direct RTL",
+        )
+        wrong_identity = await check.direct_control(
+            {"type": "rtl"},
+            request_id="direct-rtl-wrong-identity",
+            identity=f"{callsign}-spoofed",
+        )
+        assert wrong_identity["accepted"] is False, wrong_identity
+        direct_rtl = await check.direct_control(
+            {
+                "type": "rtl",
+                "payload": {"north_m": 2.0, "east_m": 2.0, "down_m": -2.0},
+            },
+            request_id="direct-rtl-unsigned-wrong-run",
+            extra_fields={"runId": "stale-run-without-authority"},
+        )
+        assert direct_rtl["accepted"] is True, direct_rtl
+        assert direct_rtl["mode"] == "RTL", direct_rtl
+
+        def horizontal_distance_from_home(telemetry: dict) -> float:
+            return math.hypot(
+                (telemetry.get("lat_deg", 90.0) - 48.0002) * 111_111.0,
+                (telemetry.get("lon_deg", 180.0) - 0.3564)
+                * 111_111.0
+                * math.cos(math.radians(48.0002)),
+            )
+
+        returned = await check.wait_state(
+            lambda t: t.get("mode") == "LAND" and horizontal_distance_from_home(t) < 0.25,
+            12,
+            "direct RTL reaches home and transitions to LAND",
+        )
         await check.request(check.long(21), 21)
         await check.wait_state(
             lambda t: t.get("ground_contact") is True and t.get("armed") is False,
@@ -381,9 +468,32 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
                         "LOCAL_NED movement",
                         "mission upload, readback, and protocol ACKs",
                         "mission execution",
-                        "RTL, landing, and DISARM",
+                        "direct unsigned NATS RTL, wrong-identity rejection, and landing",
                         "JetStream MAVLink command audit",
                     ],
+                    "directNatsRtlBoundary": {
+                        "wrongIdentityRejected": wrong_identity["accepted"] is False,
+                        "signaturePresent": False,
+                        "staleRunIdPresent": True,
+                        "accepted": direct_rtl["accepted"],
+                        "requestedTargetOverride": {
+                            "north_m": 2.0,
+                            "east_m": 2.0,
+                            "down_m": -2.0,
+                        },
+                        "positionBefore": {
+                            "lat_deg": offset.get("lat_deg"),
+                            "lon_deg": offset.get("lon_deg"),
+                        },
+                        "positionAfter": {
+                            "lat_deg": returned.get("lat_deg"),
+                            "lon_deg": returned.get("lon_deg"),
+                        },
+                        "homeDistanceAfterM": round(
+                            horizontal_distance_from_home(returned), 3
+                        ),
+                        "evidenceLimit": "native SITL telemetry is not independent Gazebo truth",
+                    },
                 },
                 indent=2,
             )

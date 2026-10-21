@@ -950,35 +950,82 @@ async fn qgc_to_antoine_nats(
                 "version":"1.0.0",
                 "identity":config.callsign,
                 "request_id":request_id,
-                "command":{"type":"mission_query"}
+                "type":"mission_query"
             });
-            let live_waypoints = tokio::time::timeout(
+            let query_response = tokio::time::timeout(
                 std::time::Duration::from_secs(2),
                 client.request(command_subject.clone(), query.to_string().into()),
             )
-            .await
-            .ok()
-            .and_then(|response| response.ok())
-            .and_then(|response| {
-                serde_json::from_slice::<serde_json::Value>(&response.payload).ok()
-            })
-            .filter(|value| value["requestId"] == request_id && value["accepted"] == true)
-            .and_then(|value| {
-                if value["missionUploaded"] != true {
-                    return Some(Vec::new());
+            .await;
+            let live_waypoints = match query_response {
+                Err(_) => {
+                    tracing::warn!(
+                        request_id,
+                        "mission query timed out; returning an empty list"
+                    );
+                    Vec::new()
                 }
-                serde_json::from_value::<Vec<[f64; 3]>>(value["waypoints"].clone()).ok()
-            })
-            .filter(|points| {
-                points.len() <= 5
-                    && points.iter().all(|point| {
-                        point.iter().all(|value| value.is_finite())
-                            && point[0].abs() <= 3.0
-                            && point[1].abs() <= 3.0
-                            && (-3.0..=0.0).contains(&point[2])
-                    })
-            })
-            .unwrap_or_default();
+                Ok(Err(error)) => {
+                    tracing::warn!(request_id, %error, "mission query failed; returning an empty list");
+                    Vec::new()
+                }
+                Ok(Ok(response)) => {
+                    match serde_json::from_slice::<serde_json::Value>(&response.payload) {
+                        Err(error) => {
+                            tracing::warn!(request_id, %error, "mission query returned invalid JSON");
+                            Vec::new()
+                        }
+                        Ok(value)
+                            if value["requestId"] != request_id || value["accepted"] != true =>
+                        {
+                            tracing::warn!(
+                                request_id,
+                                returned_request_id = ?value["requestId"],
+                                accepted = ?value["accepted"],
+                                "mission query response did not match the request"
+                            );
+                            Vec::new()
+                        }
+                        Ok(value) if value["missionUploaded"] != true => {
+                            tracing::debug!(request_id, "controller reports no uploaded mission");
+                            Vec::new()
+                        }
+                        Ok(value) => {
+                            match serde_json::from_value::<Vec<[f64; 3]>>(
+                                value["waypoints"].clone(),
+                            ) {
+                                Err(error) => {
+                                    tracing::warn!(request_id, %error, "mission query returned invalid waypoints");
+                                    Vec::new()
+                                }
+                                Ok(points)
+                                    if points.len() <= 5
+                                        && points.iter().all(|point| {
+                                            point.iter().all(|value| value.is_finite())
+                                                && point[0].abs() <= 3.0
+                                                && point[1].abs() <= 3.0
+                                                && (-3.0..=0.0).contains(&point[2])
+                                        }) =>
+                                {
+                                    tracing::debug!(
+                                        request_id,
+                                        waypoint_count = points.len(),
+                                        "mission query succeeded"
+                                    );
+                                    points
+                                }
+                                Ok(_) => {
+                                    tracing::warn!(
+                                        request_id,
+                                        "mission query waypoints exceed the local envelope"
+                                    );
+                                    Vec::new()
+                                }
+                            }
+                        }
+                    }
+                }
+            };
             uploaded_waypoints = live_waypoints;
             let count = uploaded_waypoints.len() as u16;
             let response = encode_message(
