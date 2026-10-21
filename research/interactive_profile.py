@@ -20,6 +20,7 @@ from typing import Any
 STOP_TIMEOUT_SECONDS = 5.0
 STOP_POLL_SECONDS = 0.1
 TELEMETRY_TIMEOUT_SECONDS = 1.5
+PORT_PROBE_TIMEOUT_SECONDS = 2.0
 POSE_RECORDER_MAX_AGE_SECONDS = 1.5
 POSE_RECORDER_MAX_FUTURE_SECONDS = 0.25
 MAVLINK_HEARTBEAT_MAX_AGE_SECONDS = 2.0
@@ -592,8 +593,14 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         if protocol == "TCP":
             command.extend(["-sTCP:LISTEN"])
         try:
-            probe = subprocess.run(command, capture_output=True, text=True, check=False)
-        except OSError:
+            probe = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=PORT_PROBE_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
             checks[f"{name}Port"] = {
                 "port": port,
                 "protocol": protocol,
@@ -905,8 +912,14 @@ def _run_owned_port_statuses(receipt: dict[str, Any]) -> dict[str, str]:
         if protocol == "TCP":
             command.extend(["-sTCP:LISTEN"])
         try:
-            probe = subprocess.run(command, capture_output=True, text=True, check=False)
-        except OSError:
+            probe = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                timeout=PORT_PROBE_TIMEOUT_SECONDS,
+                check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
             checks[result_name] = "unavailable"
             continue
         checks[result_name] = (

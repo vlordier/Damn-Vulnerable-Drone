@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -218,6 +219,47 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "partial")
         self.assertIsNone(result["processes"]["natsPort"]["listening"])
         self.assertEqual(result["processes"]["natsPort"]["error"], "port-probe-failed")
+
+    def test_status_bounds_lsof_probes_and_reports_timeout_unavailable(self) -> None:
+        with (
+            patch("interactive_profile.process_identity", return_value=None),
+            patch(
+                "interactive_profile.read_nats_messages",
+                return_value=([], {"status": "unavailable", "reason": "no fresh telemetry"}),
+            ),
+            patch("interactive_profile.subprocess.run") as run,
+        ):
+            run.side_effect = [
+                subprocess.TimeoutExpired("lsof", interactive_profile.PORT_PROBE_TIMEOUT_SECONDS),
+                type("Result", (), {"returncode": 0})(),
+                type("Result", (), {"returncode": 0})(),
+            ]
+            result = interactive_profile.inspect(self.receipt)
+
+        self.assertEqual(result["status"], "partial")
+        self.assertIsNone(result["processes"]["natsPort"]["listening"])
+        self.assertEqual(result["processes"]["natsPort"]["error"], "port-probe-unavailable")
+        self.assertEqual(
+            run.call_args_list[0].kwargs["timeout"], interactive_profile.PORT_PROBE_TIMEOUT_SECONDS
+        )
+
+    def test_stop_port_probes_are_bounded(self) -> None:
+        self.port_status.stop()
+        with patch("interactive_profile.subprocess.run") as run:
+            run.side_effect = subprocess.TimeoutExpired(
+                "lsof", interactive_profile.PORT_PROBE_TIMEOUT_SECONDS
+            )
+            result = interactive_profile._run_owned_port_statuses(
+                json.loads(self.receipt.read_text(encoding="utf-8"))
+            )
+
+        self.assertEqual(result, {"natsPort": "unavailable", "bridgeUdpBindPort": "unavailable"})
+        self.assertTrue(
+            all(
+                call.kwargs["timeout"] == interactive_profile.PORT_PROBE_TIMEOUT_SECONDS
+                for call in run.call_args_list
+            )
+        )
 
     def test_profile_ports_reject_duplicate_udp_bindings(self) -> None:
         valid, errors = interactive_profile._validate_profile_ports(
