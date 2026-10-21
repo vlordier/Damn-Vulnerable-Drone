@@ -1063,7 +1063,31 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
     )
     for name, process in ordered_processes:
         if name.lower().startswith("qgc"):
-            results[name] = "preserved-user-owned"
+            if not isinstance(process, dict):
+                results[name] = "invalid-user-process-identity-preserved"
+                continue
+            pid = process.get("pid")
+            expected = process.get("identity")
+            if (
+                not isinstance(pid, int)
+                or isinstance(pid, bool)
+                or pid <= 1
+                or not isinstance(expected, str)
+                or not expected
+            ):
+                results[name] = "invalid-user-process-identity-preserved"
+                continue
+            try:
+                actual = process_identity(pid)
+            except OSError:
+                results[name] = "identity-probe-unavailable-preserved"
+                continue
+            if actual is None:
+                results[name] = "user-owned-process-exited"
+            elif actual == expected:
+                results[name] = "preserved-user-owned"
+            else:
+                results[name] = "identity-mismatch-preserved"
             continue
         if not isinstance(process, dict):
             results[name] = "invalid-process-identity-not-signalled"
@@ -1132,6 +1156,10 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
             "already-stopped",
             "already-stopped-stale-marker-cleaned",
             "preserved-user-owned",
+            "user-owned-process-exited",
+            "identity-mismatch-preserved",
+            "identity-probe-unavailable-preserved",
+            "invalid-user-process-identity-preserved",
             "closed",
         }
         for status in results.values()

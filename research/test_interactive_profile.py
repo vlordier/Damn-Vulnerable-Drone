@@ -1100,6 +1100,27 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["results"]["mavlinkBridge"], "identity-mismatch-not-signalled")
         self.assertEqual(result["results"]["qgcUserProcess"], "preserved-user-owned")
 
+    @patch("interactive_profile.process_identity", side_effect=["foreign-bridge", "reused-pid"])
+    @patch("interactive_profile.os.kill")
+    def test_stop_reports_qgc_pid_reuse_without_signaling_or_claiming_preserved(
+        self, kill, _identity
+    ):
+        result = interactive_profile.stop_owned(self.receipt)
+
+        kill.assert_not_called()
+        self.assertEqual(result["results"]["qgcUserProcess"], "identity-mismatch-preserved")
+        self.assertNotEqual(result["results"]["qgcUserProcess"], "preserved-user-owned")
+
+    @patch("interactive_profile.process_identity", side_effect=OSError("ps unavailable"))
+    @patch("interactive_profile.os.kill")
+    def test_stop_reports_unverified_qgc_identity_without_signaling(self, kill, _identity):
+        result = interactive_profile.stop_owned(self.receipt)
+
+        kill.assert_not_called()
+        self.assertEqual(
+            result["results"]["qgcUserProcess"], "identity-probe-unavailable-preserved"
+        )
+
     @patch("interactive_profile.process_identity", return_value="foreign-process")
     def test_stop_cli_returns_failure_for_partial_cleanup(self, _identity) -> None:
         output = io.StringIO()
@@ -1203,7 +1224,7 @@ class InteractiveProfileTests(unittest.TestCase):
             result = interactive_profile.stop_owned(self.receipt)
 
         self.assertEqual(result["results"]["mavlinkBridge"], "stopped")
-        self.assertEqual(result["results"]["qgcUserProcess"], "preserved-user-owned")
+        self.assertEqual(result["results"]["qgcUserProcess"], "identity-mismatch-preserved")
         args = run.call_args.args[0]
         self.assertEqual(args[1], "stop")
         self.assertEqual(args[2], str((Path(self.temp.name) / ".bridge.identity").resolve()))
