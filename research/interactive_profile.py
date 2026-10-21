@@ -36,6 +36,26 @@ def _load_receipt(receipt_path: Path) -> dict[str, Any]:
     return receipt
 
 
+def _run_directory_error(receipt_path: Path, receipt: dict[str, Any]) -> str | None:
+    run_id = receipt.get("runId")
+    run_directory = receipt.get("runDirectory")
+    if not isinstance(run_id, str) or not run_id or Path(run_id).name != run_id:
+        return "runId must be a single non-empty directory name"
+    if not isinstance(run_directory, str) or not Path(run_directory).is_absolute():
+        return "runDirectory must be an absolute path"
+    run_path = Path(run_directory)
+    try:
+        resolved_run = run_path.resolve(strict=True)
+        resolved_receipt_parent = receipt_path.resolve(strict=True).parent
+    except (OSError, RuntimeError):
+        return "run directory or receipt path cannot be resolved"
+    if not run_path.is_dir() or run_path.name != run_id:
+        return "run directory is missing or does not match runId"
+    if resolved_run != resolved_receipt_parent:
+        return "receipt is not located inside its declared run directory"
+    return None
+
+
 def process_identity(pid: int) -> str | None:
     result = subprocess.run(
         ["ps", "-p", str(pid), "-o", "lstart=", "-o", "command="],
@@ -204,6 +224,32 @@ def read_nats_messages(port: int, subject: str) -> tuple[list[Any], dict[str, st
 
 def inspect(receipt_path: Path) -> dict[str, Any]:
     receipt = _load_receipt(receipt_path)
+    run_directory_error = _run_directory_error(receipt_path, receipt)
+    if run_directory_error:
+        return {
+            "contract": "damn-vulnerable-drone.interactive-profile-status",
+            "version": "1.0.0",
+            "observedAtUtc": datetime.now(UTC).isoformat(),
+            "runId": receipt.get("runId"),
+            "runDirectory": receipt.get("runDirectory"),
+            "callsign": receipt.get("callsign"),
+            "ports": receipt.get("ports"),
+            "runIdentityValidation": {"status": "invalid", "reason": run_directory_error},
+            "portValidation": {"status": "not-checked", "errors": []},
+            "processValidation": {
+                "status": "not-checked",
+                "reason": "run identity failed; process probes were skipped",
+            },
+            "processes": {},
+            "status": "partial",
+            "telemetry": {"status": "unavailable", "reason": "run identity failed"},
+            "qgcPeerRouting": {
+                "status": "unverified",
+                "reason": "run identity failed; routing was not inspected",
+            },
+            "armed": None,
+            "armedReason": "run identity failed; armed state is unknown",
+        }
     checks: dict[str, Any] = {}
     processes = receipt.get("processes")
     process_records_valid = isinstance(processes, dict)
@@ -267,15 +313,7 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
             else None,
             **({"error": "port-probe-failed"} if probe.returncode > 1 else {}),
         }
-    run_id = receipt.get("runId")
-    run_directory = receipt.get("runDirectory")
-    stale = (
-        not isinstance(run_id, str)
-        or not run_id
-        or not isinstance(run_directory, str)
-        or Path(run_directory).name != run_id
-        or not Path(run_directory).is_dir()
-    )
+    stale = _run_directory_error(receipt_path, receipt) is not None
     foreign = any(
         item["alive"] and not item["identityMatches"]
         for item in checks.values()
@@ -341,6 +379,10 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         "observedAtUtc": datetime.now(UTC).isoformat(),
         "runId": receipt.get("runId"),
         "runDirectory": receipt.get("runDirectory"),
+        "runIdentityValidation": {
+            "status": "stale" if stale else "valid",
+            "reason": "run directory changed during inspection" if stale else None,
+        },
         "callsign": receipt.get("callsign"),
         "ports": receipt.get("ports"),
         "portValidation": {"status": "valid" if ports_valid else "invalid", "errors": port_errors},
@@ -368,20 +410,14 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
 def stop_owned(receipt_path: Path) -> dict[str, Any]:
     receipt = _load_receipt(receipt_path)
     run_id = receipt.get("runId")
-    run_directory = receipt.get("runDirectory")
-    if (
-        not isinstance(run_id, str)
-        or not run_id
-        or not isinstance(run_directory, str)
-        or Path(run_directory).name != run_id
-        or not Path(run_directory).is_dir()
-    ):
+    run_directory_error = _run_directory_error(receipt_path, receipt)
+    if run_directory_error:
         return _persist_stop_result(
             receipt_path,
             {
                 "runId": run_id,
                 "status": "partial",
-                "results": {"runReceipt": "invalid-run-identity-not-signalled"},
+                "results": {"runReceipt": run_directory_error},
             },
         )
 

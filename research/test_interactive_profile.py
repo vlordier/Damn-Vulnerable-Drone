@@ -60,6 +60,25 @@ class InteractiveProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "receipt must be a JSON object"):
             interactive_profile.inspect(self.receipt)
 
+    def test_status_rejects_receipt_outside_run_directory_before_probes(self) -> None:
+        other_run = Path(self.temp.name) / "other-run"
+        other_run.mkdir()
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["runId"] = "other-run"
+        receipt["runDirectory"] = str(other_run)
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with (
+            patch("interactive_profile.process_identity") as process_identity,
+            patch("interactive_profile.subprocess.run") as run,
+        ):
+            result = interactive_profile.inspect(self.receipt)
+
+        process_identity.assert_not_called()
+        run.assert_not_called()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["runIdentityValidation"]["status"], "invalid")
+        self.assertEqual(result["processValidation"]["status"], "not-checked")
+
     def test_stop_rejects_unsupported_receipt_before_process_inspection(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         receipt["version"] = "9.9.9"
@@ -467,7 +486,7 @@ class InteractiveProfileTests(unittest.TestCase):
         process_identity.assert_not_called()
         kill.assert_not_called()
         self.assertEqual(result["status"], "partial")
-        self.assertEqual(result["results"]["runReceipt"], "invalid-run-identity-not-signalled")
+        self.assertIn("does not match runId", result["results"]["runReceipt"])
         report = json.loads(
             (Path(self.temp.name) / "interactive-profile-stop-result.json").read_text(
                 encoding="utf-8"
@@ -489,7 +508,7 @@ class InteractiveProfileTests(unittest.TestCase):
         process_identity.assert_not_called()
         kill.assert_not_called()
         self.assertEqual(result["status"], "partial")
-        self.assertEqual(result["results"]["runReceipt"], "invalid-run-identity-not-signalled")
+        self.assertIn("cannot be resolved", result["results"]["runReceipt"])
 
     @patch(
         "interactive_profile.process_identity",
