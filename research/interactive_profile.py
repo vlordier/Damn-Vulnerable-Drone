@@ -492,6 +492,7 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
                 "results": {"runReceipt": run_directory_error},
             },
         )
+    receipt_path = receipt_path.resolve(strict=True)
 
     processes = receipt.get("processes")
     if not isinstance(processes, dict):

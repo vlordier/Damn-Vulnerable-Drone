@@ -667,6 +667,25 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "partial")
         self.assertIn("cannot be resolved", result["results"]["runReceipt"])
 
+    def test_stop_persists_report_beside_resolved_receipt_target(self) -> None:
+        outside = Path(self.temp.name) / "outside"
+        outside.mkdir()
+        receipt_link = outside / "receipt.json"
+        receipt_link.symlink_to(self.receipt)
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["processes"]["antoineGazeboSupervisor"] = {
+            "pid": 9003,
+            "identity": "supervisor-process",
+        }
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+
+        with patch("interactive_profile.process_identity", return_value=None):
+            result = interactive_profile.stop_owned(receipt_link)
+
+        self.assertEqual(result["status"], "stopped")
+        self.assertTrue((Path(self.temp.name) / "interactive-profile-stop-result.json").exists())
+        self.assertFalse((outside / "interactive-profile-stop-result.json").exists())
+
     @patch(
         "interactive_profile.process_identity",
         side_effect=[
