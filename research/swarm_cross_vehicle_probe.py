@@ -213,6 +213,8 @@ def vehicle_effect_snapshot(run_dir: Path, models: dict[str, str]) -> dict:
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
+        if not isinstance(row, dict):
+            continue
         callsign = row.get("vehicleId")
         if callsign not in wanted_callsigns or callsign in result["actuatorByVehicle"]:
             continue

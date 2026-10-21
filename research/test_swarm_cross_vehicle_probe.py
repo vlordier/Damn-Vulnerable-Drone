@@ -11,6 +11,7 @@ from swarm_cross_vehicle_probe import (
     controller_decision,
     mutate_setpoint,
     pose_window_at_target,
+    vehicle_effect_snapshot,
 )
 
 
@@ -172,6 +173,18 @@ class MutationTests(unittest.TestCase):
 
 
 class PoseTruthTests(unittest.TestCase):
+    def test_non_object_actuator_rows_are_skipped_and_reported_missing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            actuator_path = run_dir / "applier-neutral" / "actuator-output.jsonl"
+            actuator_path.parent.mkdir()
+            actuator_path.write_text('[]\nnull\n"not-an-object"\n', encoding="utf-8")
+
+            snapshot = vehicle_effect_snapshot(run_dir, {"drone-1": "fpv-a"})
+
+        self.assertEqual(snapshot["actuatorByVehicle"], {})
+        self.assertIn("actuator:drone-1", snapshot["missing"])
+
     def test_nonfinite_or_reversed_pose_stream_cannot_prove_dwell(self) -> None:
         for invalid in ("nan", "infinity", "reversed", "duplicate"):
             with self.subTest(invalid=invalid), tempfile.TemporaryDirectory() as directory:
