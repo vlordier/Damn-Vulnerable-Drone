@@ -58,6 +58,16 @@ class InteractiveProfileTests(unittest.TestCase):
         ],
     )
     def test_status_reports_fresh_callsign_bound_armed_state(self, _identity) -> None:
+        run_directory = Path(self.temp.name)
+        flight_directory = run_directory / "flight-proof"
+        (flight_directory / "logs").mkdir(parents=True)
+        (flight_directory / "logs" / "nats.log").write_text(
+            "Listening for client connections on 127.0.0.1:14226\nServer is ready\n",
+            encoding="utf-8",
+        )
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["flightRunDirectory"] = str(flight_directory)
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
         telemetry = {
             "schema": "furia.telemetry",
             "version": "1.0.0",
@@ -83,6 +93,89 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertFalse(result["armed"])
         self.assertEqual(result["status"], "recorded")
         self.assertEqual(result["qgcPeerRouting"]["status"], "configured-unverified")
+
+    @patch(
+        "interactive_profile.process_identity",
+        side_effect=[
+            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+            "qgc-process",
+        ],
+    )
+    def test_status_uses_advancing_gazebo_time_when_telemetry_omits_sim_time(
+        self, _identity
+    ) -> None:
+        telemetry = {
+            "schema": "furia.telemetry",
+            "version": "1.0.0",
+            "protocol": "antoine-gz",
+            "identity": "drone-1",
+            "armed": False,
+        }
+        states = [
+            {
+                "schema": "furia.gzsitl.state",
+                "version": "1.1.0",
+                "identity": "drone-1",
+                "simulation_time_ns": 1_000_000_000,
+            },
+            {
+                "schema": "furia.gzsitl.state",
+                "version": "1.1.0",
+                "identity": "drone-1",
+                "simulation_time_ns": 1_100_000_000,
+            },
+        ]
+        with patch("interactive_profile.subprocess.run") as run:
+
+            def result_for(command, **_kwargs):
+                result = type("Result", (), {"returncode": 0, "stdout": ""})()
+                if command[0] == "nats":
+                    samples = (
+                        states if command[-1] == "furia.gzsitl.state.drone-1" else [telemetry] * 2
+                    )
+                    result.stdout = "\n".join(json.dumps(sample) for sample in samples) + "\n"
+                return result
+
+            run.side_effect = result_for
+            result = interactive_profile.inspect(self.receipt)
+        self.assertEqual(result["telemetry"]["status"], "fresh")
+        self.assertEqual(result["telemetry"]["timestampSubject"], "furia.gzsitl.state.drone-1")
+        self.assertAlmostEqual(result["telemetry"]["simulationTimeSeconds"], 1.1)
+        self.assertAlmostEqual(result["telemetry"]["simulationTimeAdvanceSeconds"], 0.1)
+
+    @patch(
+        "interactive_profile.process_identity",
+        side_effect=[
+            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+            "qgc-process",
+        ],
+    )
+    def test_status_rejects_nonadvancing_gazebo_time(self, _identity) -> None:
+        telemetry = {
+            "schema": "furia.telemetry",
+            "version": "1.0.0",
+            "protocol": "antoine-gz",
+            "identity": "drone-1",
+        }
+        state = {
+            "schema": "furia.gzsitl.state",
+            "version": "1.1.0",
+            "identity": "drone-1",
+            "simulation_time_ns": 1_000_000_000,
+        }
+        with patch("interactive_profile.subprocess.run") as run:
+
+            def result_for(command, **_kwargs):
+                result = type("Result", (), {"returncode": 0, "stdout": ""})()
+                if command[0] == "nats":
+                    sample = state if command[-1] == "furia.gzsitl.state.drone-1" else telemetry
+                    result.stdout = f"{json.dumps(sample)}\n{json.dumps(sample)}\n"
+                return result
+
+            run.side_effect = result_for
+            result = interactive_profile.inspect(self.receipt)
+        self.assertEqual(result["telemetry"]["status"], "stale")
+        self.assertIsNone(result["armed"])
 
     @patch(
         "interactive_profile.process_identity",
@@ -145,6 +238,20 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertIsNone(result["armed"])
         self.assertEqual(result["status"], "partial")
 
+    @patch("interactive_profile.process_identity", return_value=None)
+    def test_status_reports_confirmed_stop_without_claiming_current_telemetry(
+        self, _identity
+    ) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["status"] = "stopped"
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with patch("interactive_profile.subprocess.run") as run:
+            run.return_value.returncode = 1
+            result = interactive_profile.inspect(self.receipt)
+        self.assertEqual(result["status"], "stopped")
+        self.assertEqual(result["telemetry"]["status"], "unavailable")
+        self.assertIsNone(result["armed"])
+
     @patch("interactive_profile.process_identity", side_effect=["foreign-process", "qgc-process"])
     @patch("interactive_profile.os.kill")
     def test_stop_never_signals_reused_pid_or_user_qgc(self, kill, _identity) -> None:
@@ -167,6 +274,23 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "stopped")
         self.assertEqual(result["results"]["mavlinkBridge"], "stopped")
         self.assertEqual(result["results"]["qgcUserProcess"], "preserved-user-owned")
+        updated = json.loads(self.receipt.read_text(encoding="utf-8"))
+        self.assertEqual(updated["status"], "stopped")
+        self.assertIn("stoppedAtUtc", updated)
+
+    @patch(
+        "interactive_profile.process_identity",
+        return_value="owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+    )
+    @patch("interactive_profile._wait_for_owned_exit", side_effect=["timeout", "stopped"])
+    @patch("interactive_profile.os.kill")
+    def test_stop_escalates_to_term_after_interrupt_timeout(
+        self, kill, _wait_for_exit, _identity
+    ) -> None:
+        result = interactive_profile.stop_owned(self.receipt)
+        self.assertEqual(result["status"], "stopped")
+        self.assertEqual(kill.call_args_list[0].args, (9001, interactive_profile.signal.SIGINT))
+        self.assertEqual(kill.call_args_list[1].args, (9001, interactive_profile.signal.SIGTERM))
 
 
 if __name__ == "__main__":

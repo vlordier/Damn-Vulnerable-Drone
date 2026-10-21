@@ -127,6 +127,7 @@ def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "status": "starting",
         "profile": "interactive-antoine-gazebo",
         "runDirectory": str(run_dir),
+        "flightRunDirectory": str(run_dir / "flight-proof"),
         "callsign": args.callsign,
         "ports": {
             "nats": args.nats_port,

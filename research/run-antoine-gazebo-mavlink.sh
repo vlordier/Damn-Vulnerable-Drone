@@ -67,7 +67,7 @@ capture_provenance() {
     --input-gui-config "${PROJECT_ROOT}/research/gazebo-qgc-gui.config" \
     --input-runtime-config "${RUNTIME_CONFIG}" \
     --qgc-source "${ANTOINE_QGC_DIR}" \
-    --qgc-config "${QGC_SETTINGS_FILE}" \
+    --qgc-config "${RUNTIME_CONFIG}" \
     --profile-receipt "${PROFILE_RECEIPT}" \
     --expected-env "${PROVENANCE_ENV}" \
     "${required_inputs[@]}"

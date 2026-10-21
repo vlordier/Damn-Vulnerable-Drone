@@ -56,7 +56,19 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
             "status": "unavailable",
             "reason": "run directory is missing or does not match runId",
         }
-    nats_log = run_path / "logs" / "nats.log"
+    flight_directory = receipt.get("flightRunDirectory")
+    if isinstance(flight_directory, str) and flight_directory:
+        flight_path = Path(flight_directory).resolve()
+    else:
+        nested = run_path / "flight-proof"
+        flight_path = (nested if nested.is_dir() else run_path).resolve()
+    resolved_run = run_path.resolve()
+    if flight_path != resolved_run and not flight_path.is_relative_to(resolved_run):
+        return {
+            "status": "invalid",
+            "reason": "flight evidence directory is outside the run directory",
+        }
+    nats_log = flight_path / "logs" / "nats.log"
     try:
         log = nats_log.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -70,34 +82,9 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
             "reason": "run-owned NATS did not confirm its loopback endpoint",
         }
 
-    try:
-        result = subprocess.run(
-            [
-                "nats",
-                "--no-context",
-                "--server",
-                f"nats://127.0.0.1:{port}",
-                "sub",
-                "--count=2",
-                "--raw",
-                f"furia.telemetry.{callsign}",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=TELEMETRY_TIMEOUT_SECONDS,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return {
-            "status": "unavailable",
-            "reason": "no fresh telemetry arrived before the bounded deadline",
-        }
-    if result.returncode != 0:
-        return {"status": "unavailable", "reason": "NATS telemetry subscription failed"}
-    try:
-        messages = [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
-    except (json.JSONDecodeError, TypeError):
-        return {"status": "invalid", "reason": "NATS returned a non-JSON telemetry message"}
+    messages, error = read_nats_messages(port, f"furia.telemetry.{callsign}")
+    if error:
+        return error
     if len(messages) < 2 or not all(isinstance(message, dict) for message in messages):
         return {"status": "invalid", "reason": "NATS did not return two JSON telemetry samples"}
     for message in messages:
@@ -111,14 +98,39 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
                 "status": "invalid",
                 "reason": "telemetry schema, protocol, or callsign does not match this profile",
             }
-        simulation_time = message.get("time_s")
-        if (
-            not isinstance(simulation_time, (int, float))
-            or isinstance(simulation_time, bool)
-            or not math.isfinite(simulation_time)
-        ):
-            return {"status": "invalid", "reason": "telemetry has no finite simulation timestamp"}
-    first_time, latest_time = messages[-2]["time_s"], messages[-1]["time_s"]
+    times = [message.get("time_s") for message in messages[-2:]]
+    if all(
+        isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+        for value in times
+    ):
+        first_time, latest_time = times
+        timestamp_subject = f"furia.telemetry.{callsign}"
+        timestamp_unit = 1.0
+    else:
+        states, error = read_nats_messages(port, f"furia.gzsitl.state.{callsign}")
+        if error:
+            return error
+        if len(states) < 2 or not all(isinstance(state, dict) for state in states):
+            return {"status": "invalid", "reason": "NATS did not return two Gazebo state samples"}
+        for state in states[-2:]:
+            if state.get("schema") != "furia.gzsitl.state" or state.get("identity") != callsign:
+                return {
+                    "status": "invalid",
+                    "reason": "Gazebo state schema or callsign does not match this profile",
+                }
+            simulation_time_ns = state.get("simulation_time_ns")
+            if (
+                not isinstance(simulation_time_ns, (int, float))
+                or isinstance(simulation_time_ns, bool)
+                or not math.isfinite(simulation_time_ns)
+            ):
+                return {
+                    "status": "invalid",
+                    "reason": "Gazebo state has no finite simulation timestamp",
+                }
+        first_time, latest_time = (state["simulation_time_ns"] for state in states[-2:])
+        timestamp_subject = f"furia.gzsitl.state.{callsign}"
+        timestamp_unit = 1_000_000_000.0
     if latest_time <= first_time:
         return {
             "status": "stale",
@@ -133,12 +145,44 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
         "schema": message["schema"],
         "version": message["version"],
         "protocol": message["protocol"],
-        "simulationTimeSeconds": message["time_s"],
-        "simulationTimeAdvanceSeconds": message["time_s"] - first_time,
+        "timestampSubject": timestamp_subject,
+        "simulationTimeSeconds": latest_time / timestamp_unit,
+        "simulationTimeAdvanceSeconds": (latest_time - first_time) / timestamp_unit,
         "sampleCount": len(messages),
         "armed": message.get("armed") if isinstance(message.get("armed"), bool) else None,
         "mode": message.get("mode"),
     }
+
+
+def read_nats_messages(port: int, subject: str) -> tuple[list[Any], dict[str, str] | None]:
+    try:
+        result = subprocess.run(
+            [
+                "nats",
+                "--no-context",
+                "--server",
+                f"nats://127.0.0.1:{port}",
+                "sub",
+                "--count=2",
+                "--raw",
+                subject,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=TELEMETRY_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return [], {
+            "status": "unavailable",
+            "reason": "no fresh telemetry arrived before the bounded deadline",
+        }
+    if result.returncode != 0:
+        return [], {"status": "unavailable", "reason": f"NATS subscription failed for {subject}"}
+    try:
+        return [json.loads(line) for line in result.stdout.splitlines() if line.strip()], None
+    except (json.JSONDecodeError, TypeError):
+        return [], {"status": "invalid", "reason": f"NATS returned non-JSON data for {subject}"}
 
 
 def inspect(receipt_path: Path) -> dict[str, Any]:
@@ -196,7 +240,18 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         and f"--qgc-peer {expected_qgc_peer}" in bridge_identity
         and f"--qgc-bind {expected_bridge_bind}" in bridge_identity
     )
-    if telemetry.get("status") != "fresh":
+    owned_processes = [
+        item
+        for name, item in checks.items()
+        if isinstance(item, dict) and "pid" in item and not name.lower().startswith("qgc")
+    ]
+    if (
+        receipt.get("status") == "stopped"
+        and all(not item["alive"] for item in owned_processes)
+        and not foreign
+    ):
+        overall_status = "stopped"
+    elif telemetry.get("status") != "fresh":
         overall_status = "stale" if stale else "partial"
     elif stale or foreign:
         overall_status = "stale" if stale else "partial"
@@ -245,27 +300,49 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
             results[name] = "identity-mismatch-not-signalled"
         else:
             os.kill(pid, signal.SIGINT)
-            deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
-            while time.monotonic() < deadline:
+            stop_result = _wait_for_owned_exit(pid, expected)
+            if stop_result == "timeout":
+                # Background shells can inherit SIGINT as ignored. Recheck
+                # identity before TERM so a reused PID is never signalled.
                 current = process_identity(pid)
                 if current is None:
-                    results[name] = "stopped"
-                    break
-                if current != expected:
-                    results[name] = "identity-changed-after-interrupt"
-                    break
-                time.sleep(STOP_POLL_SECONDS)
-            else:
-                results[name] = "interrupt-sent-stop-unconfirmed"
+                    stop_result = "stopped"
+                elif current != expected:
+                    stop_result = "identity-changed-after-interrupt"
+                else:
+                    os.kill(pid, signal.SIGTERM)
+                    stop_result = _wait_for_owned_exit(pid, expected)
+                    if stop_result == "timeout":
+                        stop_result = "term-sent-stop-unconfirmed"
+            results[name] = stop_result
     complete = all(
         status in {"stopped", "already-stopped", "preserved-user-owned"}
         for status in results.values()
     )
+    if complete:
+        receipt["status"] = "stopped"
+        receipt["stoppedAtUtc"] = datetime.now(UTC).isoformat()
+        receipt["stopResults"] = results
+        receipt_path.write_text(
+            json.dumps(receipt, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
     return {
         "runId": receipt.get("runId"),
         "status": "stopped" if complete else "partial",
         "results": results,
     }
+
+
+def _wait_for_owned_exit(pid: int, expected: str) -> str:
+    deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        current = process_identity(pid)
+        if current is None:
+            return "stopped"
+        if current != expected:
+            return "identity-changed-after-interrupt"
+        time.sleep(STOP_POLL_SECONDS)
+    return "timeout"
 
 
 def main() -> int:
