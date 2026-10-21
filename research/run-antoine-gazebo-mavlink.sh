@@ -30,9 +30,9 @@ NATS_URL="nats://127.0.0.1:${NATS_PORT}"
 BRIDGE_TARGET="${ANTOINE_BRIDGE_TARGET_DIR:-/tmp/dvd-antoine-bridge-target}"
 BRIDGE_BIN="${BRIDGE_TARGET}/debug/antoine-mavlink-jetstream-bridge"
 ANTOINE_TARGET="${ANTOINE_GZ_CARGO_TARGET_DIR:-/tmp/antoine-gz-target}"
-ANTOINE_BUILD_RECEIPT="${ANTOINE_SITL_BUILD_RECEIPT:-${ANTOINE_TARGET}/antoine-gz-battery-build.json}"
-ANTOINE_RUN_BUILD_RECEIPT="${ANTOINE_SOURCE_BUILD_RECEIPT:-${ANTOINE_ROOT}/.cargo-target/antoine-sitl-build-receipt/antoine_sitl_nats.build.json}"
-ANTOINE_RUN_BIN_DIR="${ANTOINE_ROOT}/.cargo-target/antoine-sitl-build-receipt/debug"
+ANTOINE_RUN_ROOT="${ANTOINE_SEALED_BUILD_ROOT:-}"
+ANTOINE_RUN_BUILD_RECEIPT="${ANTOINE_SOURCE_BUILD_RECEIPT:-}"
+ANTOINE_RUN_BIN_DIR="${ANTOINE_GZ_PREBUILT_BIN_DIR:-}"
 CALLSIGN="${ANTOINE_GZ_MAVLINK_CALLSIGN:-drone-1}"
 QGC_BIND_PORT="${QGC_BRIDGE_PORT:-${QGC_BIND_DEFAULT}}"
 QGC_LISTEN_PORT="${QGC_UDP_LISTEN_PORT:-${QGC_LISTEN_DEFAULT}}"
@@ -177,16 +177,6 @@ fi
   echo "Missing source-built Gazebo at ~/Work/gz-macOS/ws/install/bin/gz" >&2
   exit 1
 }
-if [[ "${HEADLESS_ACCEPTANCE}" != "1" ]]; then
-  [[ -x "${ANTOINE_TARGET}/debug/antoine_sitl_nats" \
-    && -x "${ANTOINE_TARGET}/debug/antoine_gz_local_authority" \
-    && -x "${ANTOINE_TARGET}/debug/antoine-boundary-service" \
-    && -f "${ANTOINE_BUILD_RECEIPT}" ]] || {
-    echo "Missing verified Antoine build inputs; run 'make antoine-gz-battery-test' first." >&2
-    exit 1
-  }
-fi
-
 VISIBLE_WORLD="${RUN_DIR}.visible.sdf"
 if [[ -e "${RUN_DIR}" || -e "${VISIBLE_WORLD}" ]]; then
   echo "Run output already exists; refusing to overwrite evidence: ${RUN_DIR}" >&2
@@ -207,21 +197,38 @@ uv run --no-project python "${PROJECT_ROOT}/research/snapshot_antoine_build_inpu
   --source-patch "${PROJECT_ROOT}/research/patches/antoine-gazebo-battery-drain.patch"
 uv run --no-project python "${PROJECT_ROOT}/research/snapshot_gazebo_inputs.py" \
   "${SIM_ROOT}" "${GAZEBO_SOURCE_SNAPSHOT}" --c2-bridge-root "${C2_BRIDGE_ROOT}"
-RECEIPT_TOOL="${ANTOINE_ROOT}/scripts/antoine_sitl_build_receipt.py"
-if ! PYTHONPATH="${ANTOINE_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
-  RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.99.1}" uv run --no-project --script \
-  "${RECEIPT_TOOL}" verify --root "${ANTOINE_ROOT}" --receipt "${ANTOINE_RUN_BUILD_RECEIPT}" \
-  >"${RUN_DIR}/logs/source-build-receipt-verify.log" 2>&1; then
-  echo "Refreshing Antoine's source-bound Gazebo build receipt..."
-  PYTHONPATH="${ANTOINE_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
-    RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.99.1}" uv run --no-project --script \
-    "${RECEIPT_TOOL}" build --root "${ANTOINE_ROOT}" --receipt "${ANTOINE_RUN_BUILD_RECEIPT}" \
-    >"${RUN_DIR}/logs/source-bound-build.log" 2>&1 || {
-      cat "${RUN_DIR}/logs/source-bound-build.log" >&2
-      echo "Antoine source-bound build failed; inspect ${RUN_DIR}/logs/source-bound-build.log" >&2
+if [[ -n "${ANTOINE_RUN_ROOT}" ]]; then
+  [[ -n "${ANTOINE_RUN_BUILD_RECEIPT}" && -n "${ANTOINE_RUN_BIN_DIR}" ]] || {
+    echo "A sealed Antoine build root requires its native receipt and binary directory." >&2
+    exit 2
+  }
+  echo "Verifying the prebuilt sealed Antoine snapshot against this run's source bundle..."
+  uv run --no-project python -c 'import sys; from pathlib import Path; from create_interactive_profile_receipt import snapshot_record; fields=("receiptSha256", "snapshotManifestSha256", "fileCount"); current=snapshot_record(Path(sys.argv[1]).parent, Path(sys.argv[1]), "antoine-source-snapshot.json", "damn-vulnerable-drone.antoine-source-snapshot"); sealed=Path(sys.argv[2]).resolve(strict=True); actual=snapshot_record(sealed.parent, sealed, "antoine-source-snapshot.json", "damn-vulnerable-drone.antoine-source-snapshot"); raise SystemExit(0 if all(current[key] == actual[key] for key in fields) else "prebuilt Antoine source snapshot differs from this run")' \
+    "${ANTOINE_SOURCE_SNAPSHOT}" "$(dirname "${ANTOINE_RUN_ROOT}")"
+else
+  ANTOINE_RUN_ROOT="${ANTOINE_SOURCE_SNAPSHOT}/antoine"
+  ANTOINE_RUN_BUILD_RECEIPT="${ANTOINE_SOURCE_SNAPSHOT}/antoine-source-build-receipt.json"
+  ANTOINE_RUN_BIN_DIR="${ANTOINE_RUN_ROOT}/.cargo-target/antoine-sitl-build-receipt/debug"
+  echo "Building Antoine from the verified run-owned source snapshot..."
+  uv run --no-project python "${PROJECT_ROOT}/research/build_antoine_source_snapshot.py" \
+    --snapshot-dir "${ANTOINE_SOURCE_SNAPSHOT}" \
+    --target-dir "${RUN_DIR}/antoine-native-target" \
+    --rustup-toolchain "${RUSTUP_TOOLCHAIN:-1.99.1}" \
+    >"${RUN_DIR}/logs/antoine-snapshot-build.json" 2>"${RUN_DIR}/logs/antoine-snapshot-build.log" || {
+      cat "${RUN_DIR}/logs/antoine-snapshot-build.log" >&2
+      echo "Sealed Antoine build failed; inspect ${RUN_DIR}/logs/antoine-snapshot-build.log" >&2
       exit 1
     }
 fi
+RECEIPT_TOOL="${ANTOINE_RUN_ROOT}/scripts/antoine_sitl_build_receipt.py"
+PYTHONPATH="${ANTOINE_RUN_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" \
+  RUSTUP_TOOLCHAIN="${RUSTUP_TOOLCHAIN:-1.99.1}" uv run --no-project --script \
+  "${RECEIPT_TOOL}" verify --root "${ANTOINE_RUN_ROOT}" --receipt "${ANTOINE_RUN_BUILD_RECEIPT}" \
+  >"${RUN_DIR}/logs/source-build-receipt-verify.log" 2>&1 || {
+    cat "${RUN_DIR}/logs/source-build-receipt-verify.log" >&2
+    echo "Sealed Antoine source-build receipt did not verify." >&2
+    exit 1
+  }
 for binary in antoine_sitl_nats antoine_gz_local_authority antoine-boundary-service; do
   [[ -x "${ANTOINE_RUN_BIN_DIR}/${binary}" ]] || {
     echo "Missing source-receipted Antoine binary: ${ANTOINE_RUN_BIN_DIR}/${binary}" >&2
@@ -301,7 +308,7 @@ uv run --no-project python "${PROJECT_ROOT}/research/create_interactive_profile_
   "${profile_qgc_args[@]}"
 echo "Starting the isolated Antoine/Gazebo profile at ${NATS_URL}..."
 (
-  cd "${ANTOINE_ROOT}"
+  cd "${ANTOINE_RUN_ROOT}"
   dvd_run_owned_child "${PROJECT_ROOT}" "${PROFILE_IDENTITY}" env ANTOINE_GZ_INTERACTIVE_CONTROL=1 \
     AGR_SIM="${GAZEBO_SOURCE_SNAPSHOT}" \
     AGR_C2_SCRIPTS="${GAZEBO_SOURCE_SNAPSHOT}/c2-bridge/scripts" \
@@ -313,7 +320,7 @@ echo "Starting the isolated Antoine/Gazebo profile at ${NATS_URL}..."
     ANTOINE_GZ_FLIGHT_NATS_PORT="${NATS_PORT}" \
     ANTOINE_GZ_CARGO_TARGET_DIR="${ANTOINE_TARGET}" \
     GZ_BIN="${GZ_BINARY}" \
-    "${ANTOINE_ROOT}/scripts/gz_flight_proof.sh" --run-dir "${FLIGHT_RUN_DIR}" --keep
+    "${ANTOINE_RUN_ROOT}/scripts/gz_flight_proof.sh" --run-dir "${FLIGHT_RUN_DIR}" --keep
 ) &
 PROFILE_PID=$!
 PROFILE_CHILD_PID="$(supervised_child_pid "${PROFILE_IDENTITY}")"

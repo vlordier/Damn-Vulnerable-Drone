@@ -116,7 +116,9 @@ antoine-gz-rebuild-check: ## Rebuild archived Antoine inputs from a profile rece
 	$(RESEARCH_PYTHON) python research/rebuild_antoine_snapshot.py --run-dir "$(PROFILE_RUN_DIR)" --output-dir "$(REBUILD_DIR)" --rustup-toolchain "$(RUSTUP_TOOLCHAIN)"
 	ANTOINE_GZ_OPEN_QGC=0 ANTOINE_GZ_HEADLESS_ACCEPTANCE=1 ANTOINE_GZ_FLIGHT_GUI=0 \
 	  ANTOINE_ROOT="$(REBUILD_DIR)/source-snapshot/antoine" \
+	  ANTOINE_SEALED_BUILD_ROOT="$(REBUILD_DIR)/source-snapshot/antoine" \
 	  ANTOINE_SOURCE_BUILD_RECEIPT="$(REBUILD_DIR)/source-snapshot/antoine-source-build-receipt.json" \
+	  ANTOINE_GZ_PREBUILT_BIN_DIR="$(REBUILD_DIR)/source-snapshot/antoine/.cargo-target/antoine-sitl-build-receipt/debug" \
 	  ANTOINE_GZ_CARGO_TARGET_DIR="$(REBUILD_DIR)/cargo-target" \
 	  ANTOINE_GZ_MAVLINK_RUN_DIR="$(REBUILD_DIR)/acceptance-run" \
 	  AGR_SIM="$(PROFILE_RUN_DIR)/gazebo-source-snapshot" \
@@ -293,12 +295,12 @@ mavlink-check: ## Verify both MAVLink/NATS directions and leave the SITL disarme
 mavlink-flight-check: ## Isolated end-to-end mission, takeoff, mode and position flight check
 	@ANTOINE_BRIDGE_DIR="$(ANTOINE_BRIDGE_DIR)" MAVLINK_BRIDGE_TARGET="$(ANTOINE_BRIDGE_TARGET_DIR)" $(UV) run --project research --group mavlink-check research/mavlink-nats-console/flight_check.py
 
-mavlink-gazebo-headless-check: doctor antoine-gz-battery-test ## Isolated live MAVLink-to-NATS-to-Antoine/Gazebo acceptance without QGC
+mavlink-gazebo-headless-check: doctor ## Isolated live MAVLink-to-NATS-to-Antoine/Gazebo acceptance without QGC
 	@ANTOINE_GZ_OPEN_QGC=0 ANTOINE_GZ_HEADLESS_ACCEPTANCE=1 ANTOINE_GZ_FLIGHT_GUI=0 \
 	  ANTOINE_GZ_CARGO_TARGET_DIR="$(ANTOINE_GZ_CARGO_TARGET_DIR)" \
 	  ./research/run-antoine-gazebo-mavlink.sh
 
-mavlink-gazebo-headless-lifecycle-check: doctor antoine-gz-battery-test ## Isolated headless profile lifecycle acceptance, including restart and stale identity
+mavlink-gazebo-headless-lifecycle-check: doctor ## Isolated headless profile lifecycle acceptance, including restart and stale identity
 	@$(RESEARCH_PYTHON) python research/run_headless_profile_lifecycle.py
 
 mavlink-full-check: ## Run isolated flight scenario plus local bench MAVLink/NATS checks
@@ -347,7 +349,7 @@ qgc-gazebo-preflight: ## Check large interactive-profile prerequisites before st
 	  "$(ANTOINE_GZ_CARGO_TARGET_DIR)" "$(ANTOINE_BRIDGE_TARGET_DIR)" \
 	  "$$qgc_binary" "$$gz_binary"
 
-qgc-gazebo: qgc-gazebo-preflight doctor antoine-gz-battery-test bridge-build ## Start the interactive loopback QGC/Antoine/Gazebo profile
+qgc-gazebo: qgc-gazebo-preflight doctor bridge-build ## Start the interactive loopback QGC/Antoine/Gazebo profile
 	ANTOINE_GZ_CARGO_TARGET_DIR="$(ANTOINE_GZ_CARGO_TARGET_DIR)" ANTOINE_GZ_FLIGHT_GUI="$(ANTOINE_GZ_FLIGHT_GUI)" ./research/run-antoine-gazebo-mavlink.sh
 
 qgc-gazebo-status: ## Inspect a selected QGC/Gazebo profile receipt without inferring health from PIDs alone
