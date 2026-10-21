@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from gazebo_version import gazebo_version
+
 
 def sha256(path: Path) -> str | None:
     if path.is_symlink() or not path.is_file():
@@ -181,7 +183,7 @@ def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "toolchain": {
             "rustc": command_version("rustc", "--version"),
             "cargo": command_version("cargo", "--version"),
-            "gazebo": command_version(str(args.gazebo_binary), "--version"),
+            "gazebo": gazebo_version(args.gazebo_binary),
         },
         "processes": {},
     }

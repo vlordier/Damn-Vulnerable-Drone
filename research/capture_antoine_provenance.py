@@ -14,6 +14,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from gazebo_version import gazebo_version
+
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_SUFFIXES = {
     ".c",
@@ -630,7 +632,7 @@ def main() -> int:
             "rustc": command_version("rustc", ["--version", "--verbose"]),
             "uv": command_version("uv", ["--version"]),
             "natsServer": command_version("nats-server", ["--version"]),
-            "gazebo": command_version(str(gz_bin), ["--version"]),
+            "gazebo": gazebo_version(gz_bin),
         },
         "patchState": None,
         "sourceTrees": [source_tree(name, root) for name, root in tree_roots],
