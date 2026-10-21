@@ -35,7 +35,8 @@ def process_identity(pid: int) -> str | None:
 def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
     """Read one newly published state from this run's loopback NATS broker."""
     callsign = receipt.get("callsign")
-    port = receipt.get("ports", {}).get("nats")
+    ports = receipt.get("ports")
+    port = ports.get("nats") if isinstance(ports, dict) else None
     run_directory = receipt.get("runDirectory")
     run_id = receipt.get("runId")
     if (
@@ -197,20 +198,31 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
             "alive": actual is not None,
             "identityMatches": actual == process.get("identity") if actual else False,
         }
-    ports = receipt.get("ports", {})
+    ports = receipt.get("ports")
+    ports_valid, port_errors = _validate_profile_ports(ports)
+    if not isinstance(ports, dict):
+        ports = {}
     for name, protocol in (("nats", "TCP"), ("qgcUdpListen", "UDP"), ("bridgeUdpBind", "UDP")):
         port = ports.get(name)
-        if isinstance(port, int):
-            selector = f"-i{protocol}:{port}"
-            command = ["lsof", "-nP", selector]
-            if protocol == "TCP":
-                command.extend(["-sTCP:LISTEN"])
-            probe = subprocess.run(command, capture_output=True, text=True, check=False)
+        port_valid = isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535
+        if not port_valid:
             checks[f"{name}Port"] = {
                 "port": port,
                 "protocol": protocol,
-                "listening": probe.returncode == 0,
+                "listening": None,
+                "error": "invalid-port-not-checked",
             }
+            continue
+        selector = f"-i{protocol}:{port}"
+        command = ["lsof", "-nP", selector]
+        if protocol == "TCP":
+            command.extend(["-sTCP:LISTEN"])
+        probe = subprocess.run(command, capture_output=True, text=True, check=False)
+        checks[f"{name}Port"] = {
+            "port": port,
+            "protocol": protocol,
+            "listening": probe.returncode == 0,
+        }
     run_id = receipt.get("runId")
     run_directory = receipt.get("runDirectory")
     stale = (
@@ -233,8 +245,8 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
     telemetry = sample_telemetry(receipt)
     bridge = checks.get("mavlinkBridge", {})
     bridge_identity = receipt.get("processes", {}).get("mavlinkBridge", {}).get("identity", "")
-    expected_qgc_peer = f"127.0.0.1:{receipt.get('ports', {}).get('qgcUdpListen')}"
-    expected_bridge_bind = f"127.0.0.1:{receipt.get('ports', {}).get('bridgeUdpBind')}"
+    expected_qgc_peer = f"127.0.0.1:{ports.get('qgcUdpListen')}"
+    expected_bridge_bind = f"127.0.0.1:{ports.get('bridgeUdpBind')}"
     routing_configured = (
         bridge.get("identityMatches") is True
         and isinstance(bridge_identity, str)
@@ -248,7 +260,8 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
     ]
     run_owned_ports = [checks.get("natsPort"), checks.get("bridgeUdpBindPort")]
     stopped = (
-        bool(owned_processes)
+        ports_valid
+        and bool(owned_processes)
         and all(not item["alive"] for item in owned_processes)
         and all(
             isinstance(item, dict) and item.get("listening") is False for item in run_owned_ports
@@ -257,6 +270,8 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
     )
     if stopped:
         overall_status = "stopped"
+    elif not ports_valid:
+        overall_status = "partial"
     elif telemetry.get("status") != "fresh":
         overall_status = "stale" if stale else "partial"
     elif stale or foreign:
@@ -273,6 +288,7 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         "runDirectory": receipt.get("runDirectory"),
         "callsign": receipt.get("callsign"),
         "ports": receipt.get("ports"),
+        "portValidation": {"status": "valid" if ports_valid else "invalid", "errors": port_errors},
         "receiptStatus": receipt.get("status"),
         "processes": checks,
         "status": overall_status,
@@ -394,6 +410,27 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
             "results": results,
         },
     )
+
+
+def _validate_profile_ports(ports: Any) -> tuple[bool, list[str]]:
+    if not isinstance(ports, dict):
+        return False, ["ports must be an object"]
+    errors = []
+    for name in ("nats", "qgcUdpListen", "bridgeUdpBind"):
+        port = ports.get(name)
+        if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+            errors.append(f"{name} must be an integer port from 1 to 65535")
+    qgc_port = ports.get("qgcUdpListen")
+    bridge_port = ports.get("bridgeUdpBind")
+    if (
+        isinstance(qgc_port, int)
+        and not isinstance(qgc_port, bool)
+        and isinstance(bridge_port, int)
+        and not isinstance(bridge_port, bool)
+        and qgc_port == bridge_port
+    ):
+        errors.append("qgcUdpListen and bridgeUdpBind must use different UDP ports")
+    return not errors, errors
 
 
 def _run_owned_port_statuses(receipt: dict[str, Any]) -> dict[str, str]:
