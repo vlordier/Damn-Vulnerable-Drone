@@ -26,6 +26,9 @@ class InteractiveProfileTests(unittest.TestCase):
         self.receipt.write_text(
             json.dumps(
                 {
+                    "contract": interactive_profile.PROFILE_CONTRACT,
+                    "version": interactive_profile.PROFILE_VERSION,
+                    "profile": "interactive-antoine-gazebo",
                     "runId": Path(self.temp.name).name,
                     "runDirectory": self.temp.name,
                     "callsign": "drone-1",
@@ -50,6 +53,22 @@ class InteractiveProfileTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.temp.cleanup()
+
+    def test_status_rejects_non_object_receipt(self) -> None:
+        self.receipt.write_text("[]", encoding="utf-8")
+
+        with self.assertRaisesRegex(ValueError, "receipt must be a JSON object"):
+            interactive_profile.inspect(self.receipt)
+
+    def test_stop_rejects_unsupported_receipt_before_process_inspection(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["version"] = "9.9.9"
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+        with patch("interactive_profile.process_identity") as process_identity:
+            with self.assertRaisesRegex(ValueError, "unsupported interactive profile receipt"):
+                interactive_profile.stop_owned(self.receipt)
+
+        process_identity.assert_not_called()
 
     @patch("interactive_profile.process_identity", return_value="foreign-process")
     def test_status_marks_pid_reuse_as_partial_without_attributing_process(self, _identity) -> None:

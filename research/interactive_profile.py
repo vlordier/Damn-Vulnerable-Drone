@@ -19,6 +19,21 @@ from typing import Any
 STOP_TIMEOUT_SECONDS = 5.0
 STOP_POLL_SECONDS = 0.1
 TELEMETRY_TIMEOUT_SECONDS = 1.5
+PROFILE_CONTRACT = "damn-vulnerable-drone.interactive-profile"
+PROFILE_VERSION = "1.0.0"
+
+
+def _load_receipt(receipt_path: Path) -> dict[str, Any]:
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    if not isinstance(receipt, dict):
+        raise ValueError("profile receipt must be a JSON object")
+    if (
+        receipt.get("contract") != PROFILE_CONTRACT
+        or receipt.get("version") != PROFILE_VERSION
+        or receipt.get("profile") != "interactive-antoine-gazebo"
+    ):
+        raise ValueError("unsupported interactive profile receipt contract or version")
+    return receipt
 
 
 def process_identity(pid: int) -> str | None:
@@ -188,7 +203,7 @@ def read_nats_messages(port: int, subject: str) -> tuple[list[Any], dict[str, st
 
 
 def inspect(receipt_path: Path) -> dict[str, Any]:
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt = _load_receipt(receipt_path)
     checks: dict[str, Any] = {}
     processes = receipt.get("processes")
     process_records_valid = isinstance(processes, dict)
@@ -351,7 +366,7 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
 
 
 def stop_owned(receipt_path: Path) -> dict[str, Any]:
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt = _load_receipt(receipt_path)
     run_id = receipt.get("runId")
     run_directory = receipt.get("runDirectory")
     if (
