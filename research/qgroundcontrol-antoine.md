@@ -114,11 +114,14 @@ Gazebo actuation.
 
 ## Build and launch
 
-`make qgc-gazebo` first checks for the configured QGroundControl and
-source-built Gazebo executables, before running the Antoine or bridge builds.
-If QGC is missing, build it with `make qgc-antoine-build` and then retry. This
-preflight avoids spending time or disk on the SITL build when the desktop client
-required by the profile cannot launch. It also requires at least 2 GiB free on
+`make qgc-gazebo` first checks for the configured Antoine-patched QGroundControl
+and source-built Gazebo executables, before running the Antoine or bridge
+builds. The profile uses the QGC executable from the configured source
+checkout; a separate app in `/Applications` is not substituted because its
+source revision and Antoine patch state are not established. Build the
+configured checkout with `make qgc-antoine-build` when that executable is
+missing. This preflight avoids spending time or disk on the SITL build when the
+desktop client required by the profile cannot launch. It also requires at least 2 GiB free on
 the filesystems holding the QGC/Gazebo executables and both Rust build targets.
 Set `QGC_GAZEBO_MIN_FREE_MIB` to adjust that threshold.
 

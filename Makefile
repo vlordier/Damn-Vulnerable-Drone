@@ -304,7 +304,8 @@ qgc-gazebo-preflight: ## Check large interactive-profile prerequisites before st
 	qgc_binary="$(ANTOINE_QGC_DIR)/build/$(QGC_CONFIG)/QGroundControl.app/Contents/MacOS/QGroundControl"; \
 	gz_binary="$${GZ_BIN:-$(HOME)/Work/gz-macOS/ws/install/bin/gz}"; \
 	if [[ ! -x "$$qgc_binary" ]]; then \
-	  echo "Missing QGroundControl executable: $$qgc_binary" >&2; \
+	  echo "Missing configured Antoine-patched QGroundControl executable: $$qgc_binary" >&2; \
+	  echo "The profile requires the patched source-checkout build; a separately installed QGroundControl app is not used." >&2; \
 	  echo "Build the configured checkout with 'make qgc-antoine-build' before starting the Gazebo profile." >&2; \
 	  exit 1; \
 	fi; \
