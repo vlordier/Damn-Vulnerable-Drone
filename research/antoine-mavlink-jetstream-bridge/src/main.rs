@@ -986,11 +986,11 @@ async fn qgc_to_antoine_nats(
                             );
                             None
                         }
-                        Ok(value) if value["missionUploaded"] != true => {
+                        Ok(value) if value["missionUploaded"] == false => {
                             tracing::debug!(request_id, "controller reports no uploaded mission");
                             Some(Vec::new())
                         }
-                        Ok(value) => {
+                        Ok(value) if value["missionUploaded"] == true => {
                             match serde_json::from_value::<Vec<[f64; 3]>>(
                                 value["waypoints"].clone(),
                             ) {
@@ -1022,6 +1022,13 @@ async fn qgc_to_antoine_nats(
                                     None
                                 }
                             }
+                        }
+                        Ok(_) => {
+                            tracing::warn!(
+                                request_id,
+                                "mission query omitted a valid missionUploaded flag; returning a mission error"
+                            );
+                            None
                         }
                     }
                 }

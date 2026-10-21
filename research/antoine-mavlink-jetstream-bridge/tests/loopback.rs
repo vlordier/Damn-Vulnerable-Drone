@@ -451,8 +451,13 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
                 let reject_mission_query = request_id
                     .as_str()
                     .is_some_and(|id| id.contains("-mission-query-12-"));
+                let omit_mission_state = request_id
+                    .as_str()
+                    .is_some_and(|id| id.contains("-mission-query-13-"));
                 let response = if reject_mission_query {
                     serde_json::json!({"requestId":request_id,"accepted":false,"armed":true,"mode":"GUIDED"})
+                } else if omit_mission_state {
+                    serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED"})
                 } else {
                     serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED","missionUploaded":false,"waypoints":[]})
                 };
@@ -698,6 +703,29 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     let _ = timeout(Duration::from_secs(2), reply_rx.recv())
         .await
         .context("rejected SITL mission query was not received")?;
+    let malformed_mission_list = v2_frame(43, 13, 255, &[1, 1, 0], 132);
+    gcs.send_to(&malformed_mission_list, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("malformed mission query response timeout")??;
+    assert_eq!(
+        buffer[7], 47,
+        "malformed query must not look like an empty mission"
+    );
+    let (_, malformed_response) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+        &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+    )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(malformed_ack) = malformed_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for malformed mission query response");
+    };
+    assert_eq!(
+        malformed_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
+    let _ = timeout(Duration::from_secs(2), reply_rx.recv())
+        .await
+        .context("malformed SITL mission query was not received")?;
     let mut mission_count_payload = vec![0; 4];
     mission_count_payload[0..2].copy_from_slice(&1_u16.to_le_bytes());
     mission_count_payload[2] = 1;
