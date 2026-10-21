@@ -40,6 +40,33 @@ set -e
 [[ "${race_status}" == 7 || "${race_status}" == 143 ]]
 [[ ! -e "${identity}" && ! -e "${identity}.control" ]]
 
+# A direct stop can arrive as soon as the run identity becomes visible. The
+# supervisor must already own the signal and reap its child before removing it.
+identity="${TEMP_ROOT}/early-signal.identity"
+child_pid_file="${TEMP_ROOT}/early-signal-child.pid"
+"${SUPERVISOR}" run "${identity}" -- sh -c \
+  'echo $$ > "$1"; trap "exit 0" TERM INT; while :; do sleep 0.05; done' \
+  _ "${child_pid_file}" & early_signal_pid=$!
+wait_for_file "${identity}"
+kill -TERM "${early_signal_pid}"
+set +e
+wait "${early_signal_pid}"
+early_signal_status=$?
+set -e
+[[ "${early_signal_status}" == 0 || "${early_signal_status}" == 143 ]]
+if [[ -s "${child_pid_file}" ]]; then
+  early_child_pid="$(cat "${child_pid_file}")"
+  for _ in $(seq 1 100); do
+    kill -0 "${early_child_pid}" 2>/dev/null || break
+    sleep 0.02
+  done
+  if kill -0 "${early_child_pid}" 2>/dev/null; then
+    echo "child survived an early supervisor signal" >&2
+    exit 1
+  fi
+fi
+[[ ! -e "${identity}" && ! -e "${identity}.control" ]]
+
 # Replacing the identity's FIFO reference cannot stop another live process.
 sh -c 'trap "exit 0" TERM INT; while :; do sleep 0.05; done' & unrelated_pid=$!
 identity="${TEMP_ROOT}/owned.identity"

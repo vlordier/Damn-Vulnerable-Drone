@@ -25,6 +25,24 @@ static volatile sig_atomic_t stop_requested = 0;
 
 static void on_signal(int signo) { stop_requested = signo; }
 
+static int install_parent_signal_handlers(void) {
+  struct sigaction action = {0};
+  action.sa_handler = on_signal;
+  sigemptyset(&action.sa_mask);
+  return sigaction(SIGTERM, &action, NULL) < 0 ||
+         sigaction(SIGINT, &action, NULL) < 0 ||
+         sigaction(SIGHUP, &action, NULL) < 0;
+}
+
+static int restore_default_signal_handlers(void) {
+  struct sigaction action = {0};
+  action.sa_handler = SIG_DFL;
+  sigemptyset(&action.sa_mask);
+  return sigaction(SIGTERM, &action, NULL) < 0 ||
+         sigaction(SIGINT, &action, NULL) < 0 ||
+         sigaction(SIGHUP, &action, NULL) < 0;
+}
+
 static void pause_ms(long ms) {
   struct timespec ts = {.tv_sec = ms / 1000, .tv_nsec = (ms % 1000) * 1000000L};
   while (nanosleep(&ts, &ts) < 0 && errno == EINTR) {}
@@ -76,6 +94,11 @@ static int run_command(const char *identity, char **command) {
     fclose(record); close(control); unlink(fifo); unlink(identity); free(fifo);
     return 125;
   }
+  if (install_parent_signal_handlers() < 0) {
+    fprintf(stderr, "supervisor: cannot install signal handlers: %s\n", strerror(errno));
+    fclose(record); close(control); unlink(fifo); unlink(identity); free(fifo);
+    return 125;
+  }
   pid_t child = fork();
   if (child < 0) {
     fprintf(stderr, "supervisor: fork failed: %s\n", strerror(errno));
@@ -83,6 +106,7 @@ static int run_command(const char *identity, char **command) {
     return 125;
   }
   if (child == 0) {
+    if (restore_default_signal_handlers() < 0) _exit(125);
     if (setpgid(0, 0) < 0) _exit(125);
     execvp(command[0], command);
     fprintf(stderr, "supervisor: exec %s failed: %s\n", command[0], strerror(errno));
@@ -100,13 +124,6 @@ static int run_command(const char *identity, char **command) {
   fprintf(record, "pid=%ld\nchild_pid=%ld\ngroup_owned=%d\nfifo=%s\n",
           (long)getpid(), (long)child, group_owned ? 1 : 0, fifo);
   if (fclose(record) != 0) stop_requested = SIGTERM;
-
-  struct sigaction action = {0};
-  action.sa_handler = on_signal;
-  sigemptyset(&action.sa_mask);
-  (void)sigaction(SIGTERM, &action, NULL);
-  (void)sigaction(SIGINT, &action, NULL);
-  (void)sigaction(SIGHUP, &action, NULL);
 
   bool stopping = false;
   long grace = 0;
