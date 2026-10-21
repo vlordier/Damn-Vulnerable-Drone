@@ -24,7 +24,7 @@ MAVLINK_AUDIT_STREAM ?= ANTOINE_MAVLINK
 QGC_UDP_LISTEN_PORT ?= 14550
 QGC_BRIDGE_PORT ?= 14651
 
-.PHONY: help doctor antoine-gz-battery-patch antoine-gz-battery-test console-start console-status console-stop baseline attack-waypoint attack-replay observe-nats probe-gps observe-camera early-revoke state-timing swarm-smoke swarm-baseline swarm-flight swarm-live swarm-vee swarm-rendezvous swarm-split swarm-bridge swarm-3 swarm-5 swarm-blackhole swarm-rate swarm-auth-isolation test-swarm test-research bridge-test bridge-build mavlink-console mavlink-console-start mavlink-console-stop mavlink-control mavlink-arm mavlink-disarm mavlink-check mavlink-flight-check mavlink-gazebo-flight-check mavlink-full-check qgc-antoine-patch qgc-antoine-build qgc-antoine-run qgc-antoine-check qgc-gazebo-preflight qgc-gazebo qgc-gazebo-status qgc-gazebo-stop qgc-gazebo-verify qgc-gazebo-check lint validate
+.PHONY: help doctor antoine-gz-battery-patch antoine-gz-battery-test console-start console-status console-stop baseline attack-waypoint attack-replay observe-nats probe-gps observe-camera early-revoke state-timing swarm-smoke swarm-baseline swarm-flight swarm-live swarm-vee swarm-rendezvous swarm-split swarm-bridge swarm-3 swarm-5 swarm-blackhole swarm-rate swarm-auth-isolation test-swarm test-research bridge-test bridge-build mavlink-console mavlink-console-start mavlink-console-stop mavlink-control mavlink-arm mavlink-disarm mavlink-check mavlink-flight-check mavlink-gazebo-flight-check mavlink-full-check qgc-antoine-patch qgc-antoine-build qgc-antoine-run qgc-antoine-check qgc-gazebo-preflight qgc-gazebo qgc-gazebo-status qgc-gazebo-stop qgc-gazebo-verify qgc-gazebo-pin-candidate qgc-gazebo-check lint validate
 
 help: ## Show common commands
 	@printf '%s\n' \
@@ -72,6 +72,7 @@ help: ## Show common commands
 	  '  make qgc-antoine-check Verify QGC-origin heartbeat/requests are audited by NATS' \
 	  '  make qgc-gazebo        Open QGC and Gazebo 3D for the Antoine/NATS profile' \
 	  '  make qgc-gazebo-verify PROFILE_RECEIPT=... PROFILE_PINS=... Compare to reviewed runtime pins' \
+	  '  make qgc-gazebo-pin-candidate PROFILE_RECEIPT=... PROFILE_COMPARISON=... PROFILE_PIN_CANDIDATE=...' \
 	  '  make qgc-gazebo-check Verify GCS-style UDP frames reach the Gazebo audit' \
 	  '  make lint              Run Ruff, ShellCheck, and shell syntax checks' \
 	  '  make validate          Run lint and validate the scenario catalog'
@@ -328,6 +329,12 @@ qgc-gazebo-verify: ## Compare a profile receipt with an explicit reviewed runtim
 	@test -n "$(PROFILE_RECEIPT)" || { echo 'Set PROFILE_RECEIPT=/path/to/interactive-profile-receipt.json' >&2; exit 2; }
 	@test -n "$(PROFILE_PINS)" || { echo 'Set PROFILE_PINS=/path/to/reviewed-pins.json' >&2; exit 2; }
 	$(UV) run --project research python research/verify_interactive_profile_pins.py --receipt "$(PROFILE_RECEIPT)" --pins "$(PROFILE_PINS)"
+
+qgc-gazebo-pin-candidate: ## Write a non-overwriting unreviewed pin candidate from a stable run
+	@test -n "$(PROFILE_RECEIPT)" || { echo 'Set PROFILE_RECEIPT=/path/to/interactive-profile-receipt.json' >&2; exit 2; }
+	@test -n "$(PROFILE_COMPARISON)" || { echo 'Set PROFILE_COMPARISON=/path/to/research-provenance-comparison.json' >&2; exit 2; }
+	@test -n "$(PROFILE_PIN_CANDIDATE)" || { echo 'Set PROFILE_PIN_CANDIDATE=/path/to/unreviewed-candidate.json' >&2; exit 2; }
+	$(UV) run --project research python research/create_interactive_profile_pin_candidate.py --receipt "$(PROFILE_RECEIPT)" --comparison "$(PROFILE_COMPARISON)" --output "$(PROFILE_PIN_CANDIDATE)"
 
 qgc-gazebo-check: ## Verify GCS-style UDP frames are audited by the active Gazebo MAVLink bridge
 	NATS_URL="$${MAVLINK_NATS_URL:-nats://127.0.0.1:14226}" MAVLINK_CALLSIGN="$${MAVLINK_CALLSIGN:-drone-1}" QGC_BRIDGE_PORT="$(QGC_BRIDGE_PORT)" $(UV) run --project research --group mavlink-check research/mavlink-nats-console/check_qgc_bridge.py

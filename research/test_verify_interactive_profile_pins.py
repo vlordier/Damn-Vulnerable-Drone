@@ -10,6 +10,7 @@ class InteractiveProfilePinTests(unittest.TestCase):
         self.receipt = {
             "contract": "damn-vulnerable-drone.interactive-profile",
             "version": "1.0.0",
+            "runId": "run-123",
             "profile": "interactive-antoine-gazebo",
             "source": {
                 "antoine": {
@@ -31,6 +32,11 @@ class InteractiveProfilePinTests(unittest.TestCase):
             "source": {"antoine": dict(self.receipt["source"]["antoine"])},
             "artifacts": dict(self.receipt["artifacts"]),
             "toolchain": dict(self.receipt["toolchain"]),
+            "review": {
+                "status": "reviewed",
+                "reviewer": "test reviewer",
+                "reviewedAtUtc": "2026-10-21T12:00:00Z",
+            },
         }
 
     def test_exact_reviewed_inputs_are_verified(self) -> None:
@@ -80,6 +86,16 @@ class InteractiveProfilePinTests(unittest.TestCase):
 
     def test_unavailable_source_classification_fails_closed(self) -> None:
         self.receipt["source"]["antoine"]["classification"] = "unavailable"
+        result = verify(self.receipt, self.pins)
+        self.assertEqual(result["status"], "missing")
+
+    def test_unreviewed_pins_are_not_accepted(self) -> None:
+        self.pins["review"]["status"] = "unreviewed"
+        result = verify(self.receipt, self.pins)
+        self.assertEqual(result["status"], "missing")
+
+    def test_non_utc_review_timestamp_is_not_accepted(self) -> None:
+        self.pins["review"]["reviewedAtUtc"] = "2026-10-21T12:00:00+02:00"
         result = verify(self.receipt, self.pins)
         self.assertEqual(result["status"], "missing")
 

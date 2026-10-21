@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,6 +35,7 @@ def verify(receipt: Any, pins: Any) -> dict[str, Any]:
 
     if pins.get("version") != PIN_VERSION:
         missing.append("pin version is missing or unsupported")
+    _validate_review(pins.get("review"), missing)
     if receipt.get("version") != "1.0.0":
         missing.append("receipt version is missing or unsupported")
     profile = receipt.get("profile")
@@ -158,6 +160,26 @@ def _compare_mapping(
                 missing.append(f"{label}.{name}.{field} is missing")
             elif actual_value != expected_value:
                 incompatible.append(f"{label}.{name}.{field} differs from reviewed pin")
+
+
+def _validate_review(review: Any, missing: list[str]) -> None:
+    if not isinstance(review, dict) or review.get("status") != "reviewed":
+        missing.append("pins are not explicitly marked reviewed")
+        return
+    reviewer = review.get("reviewer")
+    reviewed_at = review.get("reviewedAtUtc")
+    if not isinstance(reviewer, str) or not reviewer.strip():
+        missing.append("pin reviewer is missing")
+    if not isinstance(reviewed_at, str):
+        missing.append("pin review timestamp is missing")
+        return
+    try:
+        parsed = datetime.fromisoformat(reviewed_at.replace("Z", "+00:00"))
+    except ValueError:
+        missing.append("pin review timestamp is invalid")
+        return
+    if parsed.tzinfo is None or parsed.utcoffset() != UTC.utcoffset(parsed):
+        missing.append("pin review timestamp must be UTC")
 
 
 def _result(
