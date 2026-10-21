@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from create_interactive_profile_receipt import create_receipt, source_record
 
@@ -157,6 +158,14 @@ class InteractiveReceiptTests(unittest.TestCase):
                 qgc_port=14660,
                 bridge_port=14661,
             )
+            with patch(
+                "create_interactive_profile_receipt.source_record",
+                side_effect=OSError("source inspection failed"),
+            ):
+                with self.assertRaisesRegex(OSError, "source inspection failed"):
+                    create_receipt(args)
+            self.assertFalse((run_dir / "interactive-profile.json").exists())
+
             receipt = create_receipt(args)
             self.assertEqual(receipt["runId"], "run-123")
             self.assertEqual(receipt["ports"]["nats"], 14238)

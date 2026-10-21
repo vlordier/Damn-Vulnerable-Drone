@@ -6,7 +6,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -135,14 +137,13 @@ def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "homeAltitudeMsl": 82,
         "profile": "interactive-antoine-gazebo",
     }
-    runtime_config = run_dir / "interactive-profile.json"
-    runtime_config.write_text(json.dumps(config, indent=2, sort_keys=True) + "\n")
+    runtime_config_text = json.dumps(config, indent=2, sort_keys=True) + "\n"
     sources = {
         "antoine": source_record("antoine", args.antoine_root),
         "gazeboAssets": source_record("gazeboAssets", args.sim_root),
         "qgroundcontrol": source_record("qgroundcontrol", args.qgc_root),
     }
-    return {
+    receipt = {
         "contract": "damn-vulnerable-drone.interactive-profile",
         "version": "1.0.0",
         "runId": run_dir.name,
@@ -167,7 +168,7 @@ def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "gazeboBinarySha256": sha256(args.gazebo_binary),
             "patchSha256": sha256(args.qgc_patch),
             "runtimeWorldSha256": sha256(args.runtime_world),
-            "runtimeConfigSha256": sha256(runtime_config),
+            "runtimeConfigSha256": hashlib.sha256(runtime_config_text.encode()).hexdigest(),
             "qgcSettingsSha256": sha256(args.qgc_settings),
             "guiConfigSha256": sha256(args.gui_config),
         },
@@ -178,6 +179,27 @@ def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
         },
         "processes": {},
     }
+    _atomic_write_text(run_dir / "interactive-profile.json", runtime_config_text)
+    return receipt
+
+
+def _atomic_write_text(path: Path, value: str) -> None:
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            temporary.write(value)
+        os.replace(temporary_path, path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
 
 def main() -> int:
@@ -204,7 +226,7 @@ def main() -> int:
     args = parser.parse_args()
     try:
         receipt = create_receipt(args)
-        args.output.write_text(json.dumps(receipt, indent=2, sort_keys=True) + "\n")
+        _atomic_write_text(args.output, json.dumps(receipt, indent=2, sort_keys=True) + "\n")
     except (OSError, subprocess.SubprocessError, ValueError) as error:
         parser.error(str(error))
     print(json.dumps({"runId": receipt["runId"], "status": receipt["status"]}))
