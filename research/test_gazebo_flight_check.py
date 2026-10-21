@@ -60,6 +60,8 @@ class GazeboFailureReportTests(unittest.TestCase):
         checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
         checker.callsign = "drone-1"
         checker.raw_telemetry = {"identity": "drone-1", "protocol": "antoine-gz"}
+        checker.telemetry_rejection = None
+        checker.valid_telemetry_received = asyncio.Event()
 
         async def deliver(payload: bytes) -> None:
             await checker.on_telemetry(types.SimpleNamespace(data=payload))
@@ -73,6 +75,7 @@ class GazeboFailureReportTests(unittest.TestCase):
         asyncio.run(deliver(json.dumps(valid).encode()))
         self.assertEqual(checker.raw_telemetry, valid)
         self.assertIsNone(checker.telemetry_rejection)
+        self.assertTrue(checker.valid_telemetry_received.is_set())
 
         for invalid in (
             {**valid, "protocol": "antoine"},

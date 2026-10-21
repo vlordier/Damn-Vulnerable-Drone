@@ -62,6 +62,9 @@ def write_failed_report(
                 "lastGazeboPose": check.pose(),
                 "lastMavlinkState": dict(check.telemetry),
                 "rawGazeboTelemetry": check.raw_telemetry,
+                "validGazeboTelemetryReceived": getattr(
+                    check, "valid_telemetry_received", asyncio.Event()
+                ).is_set(),
                 "telemetryRejection": getattr(check, "telemetry_rejection", None),
                 "auditFrameCount": len(check.audit_frames),
             },
@@ -81,6 +84,7 @@ class GazeboFlightCheck(FlightCheck):
         self.agent = agent
         self.raw_telemetry: dict = {}
         self.telemetry_rejection: str | None = None
+        self.valid_telemetry_received = asyncio.Event()
         self.keepalive_task: asyncio.Task | None = None
         self.vehicle_state_updated_at: float | None = None
         self.state_field_updated_at: dict[str, float] = {}
@@ -107,6 +111,7 @@ class GazeboFlightCheck(FlightCheck):
             return
         self.raw_telemetry = value
         self.telemetry_rejection = None
+        self.valid_telemetry_received.set()
 
     async def start(self):
         await super().start()
@@ -456,6 +461,13 @@ async def run_check() -> dict:
     armed = False
     try:
         await check.start()
+        try:
+            await asyncio.wait_for(check.valid_telemetry_received.wait(), timeout=3.0)
+        except TimeoutError as error:
+            raise AssertionError(
+                "did not receive valid Antoine Gazebo-profile NATS telemetry"
+                + (f": {check.telemetry_rejection}" if check.telemetry_rejection else "")
+            ) from error
         await check.wait_state(
             lambda state: state.get("prearm_ready") is True,
             5,
@@ -730,6 +742,7 @@ async def run_check() -> dict:
             "auditedMessageIds": sorted(audit_ids),
             "auditFrameCount": len(check.audit_frames),
             "rawGazeboTelemetry": check.raw_telemetry,
+            "validGazeboTelemetryReceived": check.valid_telemetry_received.is_set(),
             "telemetryRejection": getattr(check, "telemetry_rejection", None),
         }
     except Exception as failure:
