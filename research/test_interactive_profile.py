@@ -257,6 +257,37 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["results"]["mavlinkBridge"], "identity-mismatch-not-signalled")
         self.assertEqual(result["results"]["qgcUserProcess"], "preserved-user-owned")
 
+    @patch("interactive_profile.process_identity")
+    @patch("interactive_profile.os.kill")
+    def test_stop_rejects_receipt_with_mismatched_run_identity(
+        self, kill, process_identity
+    ) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["runId"] = "another-run"
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+
+        result = interactive_profile.stop_owned(self.receipt)
+
+        process_identity.assert_not_called()
+        kill.assert_not_called()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["results"]["runReceipt"], "invalid-run-identity-not-signalled")
+
+    @patch("interactive_profile.process_identity")
+    @patch("interactive_profile.os.kill")
+    def test_stop_rejects_receipt_for_missing_run_directory(self, kill, process_identity) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        receipt["runDirectory"] = str(Path(self.temp.name) / "missing-run")
+        receipt["runId"] = "missing-run"
+        self.receipt.write_text(json.dumps(receipt), encoding="utf-8")
+
+        result = interactive_profile.stop_owned(self.receipt)
+
+        process_identity.assert_not_called()
+        kill.assert_not_called()
+        self.assertEqual(result["status"], "partial")
+        self.assertEqual(result["results"]["runReceipt"], "invalid-run-identity-not-signalled")
+
     @patch(
         "interactive_profile.process_identity",
         side_effect=[

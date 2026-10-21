@@ -291,6 +291,21 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
 
 def stop_owned(receipt_path: Path) -> dict[str, Any]:
     receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    run_id = receipt.get("runId")
+    run_directory = receipt.get("runDirectory")
+    if (
+        not isinstance(run_id, str)
+        or not run_id
+        or not isinstance(run_directory, str)
+        or Path(run_directory).name != run_id
+        or not Path(run_directory).is_dir()
+    ):
+        return {
+            "runId": run_id,
+            "status": "partial",
+            "results": {"runReceipt": "invalid-run-identity-not-signalled"},
+        }
+
     results = {}
     for name, process in receipt.get("processes", {}).items():
         if name.lower().startswith("qgc"):
