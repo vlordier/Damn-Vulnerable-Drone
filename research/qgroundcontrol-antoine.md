@@ -365,6 +365,19 @@ the installed Gazebo toolchain remains a local prerequisite. The rebuild
 command above proves that the archived Antoine inputs compile and pass headless
 acceptance when combined with the archived Gazebo/C2 bundle.
 
+Rebuild-from-receipt acceptance passed from committed profile
+`dvd-antoine-committed-sealed-acceptance-20261022` into
+`/private/tmp/dvd-antoine-committed-rebuild-retry-20261022`. The Antoine source
+manifest remained `e94e5becf3d4aa0612b593500fbe7926950f88d62ceb2687fe6d0a87f2bfd303`;
+the prebuilt-bundle reuse check verified all 142 files against the run capture.
+The fresh headless flight report passed with stable provenance, 74 audited
+frames, a 0.015 m MAVLink/Gazebo altitude delta, and final `armed=false`. The
+rebuilt binary hashes differed from the earlier run, so this qualifies source,
+toolchain, build-receipt, and behavior reproducibility rather than
+byte-identical binaries. An initial attempt exposed a missing research-module
+import in the prebuilt reuse branch; commit `cb3cb35` fixes it and adds mismatch
+and tamper rejection tests.
+
 Create a non-overwriting candidate from a stable run with
 `make qgc-gazebo-pin-candidate PROFILE_RECEIPT=... PROFILE_COMPARISON=... PROFILE_PIN_CANDIDATE=...`.
 The candidate command requires matching run IDs and a stable pre/post
