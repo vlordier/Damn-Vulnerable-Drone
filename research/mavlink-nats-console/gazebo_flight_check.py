@@ -221,12 +221,16 @@ async def run_check() -> dict:
 
         await check.set_mode(3)
         await check.set_mode(1)
-        check.socket.sendto(check.position(1.0, 0.0, -1.0), check.bridge)
+        # Antoine's local controller captures horizontal targets inside 0.75 m.
+        # Keep this waypoint beyond that band so the check proves actual travel,
+        # rather than asking for a target that is mostly inside the arrival hold.
+        position_target_north = 2.0
+        check.socket.sendto(check.position(position_target_north, 0.0, -1.0), check.bridge)
         moved = await check.wait_pose(
-            lambda point: point[0] >= home[0] + 0.55, 25, "north position target"
+            lambda point: point[0] >= home[0] + 1.0, 35, "north position target"
         )
 
-        waypoints = [[0.7, 0.0, -1.0], [0.7, 0.0, -0.5]]
+        waypoints = [[2.0, 0.0, -1.0], [2.0, 0.0, -0.5], [0.0, 0.0, -0.5]]
         await check.mission_upload(waypoints)
         mission_count, mission_readback = await check.mission_list()
         assert mission_count == len(waypoints), mission_count
@@ -254,15 +258,24 @@ async def run_check() -> dict:
         await check.request(check.long(300), 300)
         await check.wait_state(lambda state: state.get("mode") == "AUTO", 4, "AUTO mode")
         mission_end = await check.wait_pose(
-            lambda point: math.dist(point, (home[0] + 0.7, home[1], home[2] + 0.5)) <= 1.0,
+            lambda point: math.dist(point, (home[0] + 2.0, home[1], home[2] + 0.5)) <= 1.0,
             40,
             "AUTO mission terminal waypoint",
         )
 
+        # The upstream local authority's RTL leg tracks home at the current
+        # altitude. Its terminal controller has a 0.75 m hold radius, so the
+        # acceptance mission first exercises a precise return-to-home waypoint
+        # before asking RTL to descend.
+        return_home = await check.wait_pose(
+            lambda point: math.dist(point, (home[0], home[1], home[2] + 0.5)) <= 0.65,
+            35,
+            "AUTO return-to-home waypoint",
+        )
         await check.set_mode(4)
         await check.wait_pose(
             lambda point: math.dist(point, home) <= 0.25,
-            40,
+            35,
             "RTL to home and ground",
         )
         await check.request(check.long(22, p7=0.8), 22)
@@ -290,6 +303,7 @@ async def run_check() -> dict:
             "takeoffPose": takeoff,
             "positionTargetPose": moved,
             "missionEndPose": mission_end,
+            "autoReturnHomePose": return_home,
             "finalGazeboPose": final_pose,
             "finalMavlinkState": final_state,
             "prearmReadyBeforeFlight": initial_state.get("prearm_ready"),

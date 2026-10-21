@@ -277,6 +277,17 @@ and callsign `drone-1` by default. Override those with `QGC_UDP_LISTEN_PORT`,
 `QGC_BRIDGE_PORT`, `ANTOINE_GZ_MAVLINK_NATS_PORT`, and
 `ANTOINE_GZ_MAVLINK_CALLSIGN`.
 
+For an end-to-end protocol acceptance without opening or requiring QGC, run
+`make mavlink-gazebo-headless-check`. It builds/verifies the patched Antoine
+SITL artifacts, starts a run-owned headless Gazebo profile and MAVLink bridge,
+then exercises mode, takeoff, position, mission, RTL, land, and disarm through
+the bridge. The checker correlates MAVLink with the run's independent Gazebo
+pose stream and stores `gazebo-mavlink-acceptance.json` in the run directory.
+It allocates loopback ports and stops only its own profile processes. The
+receipt identifies the profile as headless and records no QGC source or binary
+as a runtime input. This acceptance proves the MAVLink test-client path; it is
+not QGC UI evidence.
+
 The bridge always sends telemetry to QGC's configured UDP peer. It can also
 send a fixed copy to the local flight-check observer at `127.0.0.1:14574`.
 This observer is configured at bridge startup; a valid frame from an arbitrary

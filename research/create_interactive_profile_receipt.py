@@ -128,6 +128,11 @@ def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
         raise ValueError("ports must be integers from 1 to 65535: " + ", ".join(invalid_ports))
     if args.qgc_port == args.bridge_port:
         raise ValueError("qgc and bridge UDP ports must be different")
+    profile = (
+        "headless-antoine-gazebo-mavlink"
+        if args.qgc_binary is None
+        else "interactive-antoine-gazebo"
+    )
     config = {
         "natsUrl": f"nats://127.0.0.1:{args.nats_port}",
         "callsign": args.callsign,
@@ -135,21 +140,22 @@ def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
         "bridgeUdpBind": f"127.0.0.1:{args.bridge_port}",
         "systemId": 1,
         "homeAltitudeMsl": 82,
-        "profile": "interactive-antoine-gazebo",
+        "profile": profile,
     }
     runtime_config_text = json.dumps(config, indent=2, sort_keys=True) + "\n"
     sources = {
         "antoine": source_record("antoine", args.antoine_root),
         "gazeboAssets": source_record("gazeboAssets", args.sim_root),
-        "qgroundcontrol": source_record("qgroundcontrol", args.qgc_root),
     }
+    if args.qgc_root is not None:
+        sources["qgroundcontrol"] = source_record("qgroundcontrol", args.qgc_root)
     receipt = {
         "contract": "damn-vulnerable-drone.interactive-profile",
         "version": "1.0.0",
         "runId": run_dir.name,
         "createdAtUtc": datetime.now(UTC).isoformat(),
         "status": "starting",
-        "profile": "interactive-antoine-gazebo",
+        "profile": profile,
         "runDirectory": str(run_dir),
         "flightRunDirectory": str(run_dir / "flight-proof"),
         "callsign": args.callsign,
@@ -160,7 +166,7 @@ def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
         },
         "source": sources,
         "artifacts": {
-            "qgroundcontrolBinarySha256": sha256(args.qgc_binary),
+            "qgroundcontrolBinarySha256": sha256(args.qgc_binary) if args.qgc_binary else None,
             "bridgeBinarySha256": sha256(args.bridge_binary),
             "antoineNatsBinarySha256": sha256(args.antoine_nats_binary),
             "antoineAuthorityBinarySha256": sha256(args.antoine_authority_binary),
@@ -169,7 +175,7 @@ def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
             "patchSha256": sha256(args.qgc_patch),
             "runtimeWorldSha256": sha256(args.runtime_world),
             "runtimeConfigSha256": hashlib.sha256(runtime_config_text.encode()).hexdigest(),
-            "qgcSettingsSha256": sha256(args.qgc_settings),
+            "qgcSettingsSha256": sha256(args.qgc_settings) if args.qgc_settings else None,
             "guiConfigSha256": sha256(args.gui_config),
         },
         "toolchain": {
@@ -207,8 +213,8 @@ def main() -> int:
     parser.add_argument("--run-dir", type=Path, required=True)
     parser.add_argument("--antoine-root", type=Path, required=True)
     parser.add_argument("--sim-root", type=Path, required=True)
-    parser.add_argument("--qgc-root", type=Path, required=True)
-    parser.add_argument("--qgc-binary", type=Path, required=True)
+    parser.add_argument("--qgc-root", type=Path)
+    parser.add_argument("--qgc-binary", type=Path)
     parser.add_argument("--bridge-binary", type=Path, required=True)
     parser.add_argument("--antoine-nats-binary", type=Path, required=True)
     parser.add_argument("--antoine-authority-binary", type=Path, required=True)
@@ -216,7 +222,7 @@ def main() -> int:
     parser.add_argument("--gazebo-binary", type=Path, required=True)
     parser.add_argument("--qgc-patch", type=Path, required=True)
     parser.add_argument("--runtime-world", type=Path, required=True)
-    parser.add_argument("--qgc-settings", type=Path, required=True)
+    parser.add_argument("--qgc-settings", type=Path)
     parser.add_argument("--gui-config", type=Path, required=True)
     parser.add_argument("--callsign", required=True)
     parser.add_argument("--nats-port", type=int, required=True)

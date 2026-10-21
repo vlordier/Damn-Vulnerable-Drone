@@ -12,6 +12,59 @@ from create_interactive_profile_receipt import create_receipt, source_record
 
 
 class InteractiveReceiptTests(unittest.TestCase):
+    def test_headless_gazebo_receipt_excludes_qgroundcontrol_inputs(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            antoine = root / "antoine"
+            sim = root / "sim"
+            antoine.mkdir()
+            sim.mkdir()
+            run_dir = root / "headless-run"
+            run_dir.mkdir()
+            artifacts = {}
+            for name in (
+                "bridge",
+                "antoine_nats",
+                "authority",
+                "boundary",
+                "gazebo",
+                "qgc_patch",
+                "world",
+                "gui_config",
+            ):
+                path = root / name
+                path.write_text(name, encoding="utf-8")
+                artifacts[name] = path
+            args = argparse.Namespace(
+                run_dir=run_dir,
+                antoine_root=antoine,
+                sim_root=sim,
+                qgc_root=None,
+                qgc_binary=None,
+                bridge_binary=artifacts["bridge"],
+                antoine_nats_binary=artifacts["antoine_nats"],
+                antoine_authority_binary=artifacts["authority"],
+                antoine_boundary_binary=artifacts["boundary"],
+                gazebo_binary=artifacts["gazebo"],
+                qgc_patch=artifacts["qgc_patch"],
+                runtime_world=artifacts["world"],
+                qgc_settings=None,
+                gui_config=artifacts["gui_config"],
+                callsign="drone-1",
+                nats_port=14238,
+                qgc_port=14660,
+                bridge_port=14661,
+            )
+
+            receipt = create_receipt(args)
+
+            self.assertEqual(receipt["profile"], "headless-antoine-gazebo-mavlink")
+            self.assertNotIn("qgroundcontrol", receipt["source"])
+            self.assertIsNone(receipt["artifacts"]["qgroundcontrolBinarySha256"])
+            self.assertIsNone(receipt["artifacts"]["qgcSettingsSha256"])
+            runtime_config = (run_dir / "interactive-profile.json").read_text(encoding="utf-8")
+            self.assertIn('"profile": "headless-antoine-gazebo-mavlink"', runtime_config)
+
     def test_receipt_rejects_invalid_callsign_before_writing_runtime_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run-123"
