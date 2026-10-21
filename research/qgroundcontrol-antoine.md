@@ -124,8 +124,11 @@ Inspect it with `make qgc-gazebo-status PROFILE_RECEIPT=/path/to/receipt.json`.
 Stop only identity-matched processes recorded in that receipt with
 `make qgc-gazebo-stop PROFILE_RECEIPT=/path/to/receipt.json`; this waits for
 identity-matched children to exit and reports unconfirmed stops as partial.
-It preserves QGroundControl because it is an operator-owned application. Status
-subscribes for at most 1.5 seconds to two messages on the run's loopback
+It preserves QGroundControl because it is an operator-owned application. Both
+commands leave JSON output on stdout; stop also atomically writes
+`interactive-profile-stop-result.json` beside the receipt and returns a nonzero
+status when cleanup is partial. The status command subscribes for at most
+1.5 seconds to two messages on the run's loopback
 `furia.telemetry.<callsign>` subject. It reports armed state only when both
 messages have the expected schema, protocol, and callsign, and their finite
 simulation timestamps advance. Missing, malformed, mismatched, or

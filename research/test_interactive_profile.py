@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -257,6 +260,18 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["results"]["mavlinkBridge"], "identity-mismatch-not-signalled")
         self.assertEqual(result["results"]["qgcUserProcess"], "preserved-user-owned")
 
+    @patch("interactive_profile.process_identity", return_value="foreign-process")
+    def test_stop_cli_returns_failure_for_partial_cleanup(self, _identity) -> None:
+        output = io.StringIO()
+        with (
+            patch.object(sys, "argv", ["interactive_profile.py", "stop", str(self.receipt)]),
+            contextlib.redirect_stdout(output),
+        ):
+            exit_code = interactive_profile.main()
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(json.loads(output.getvalue())["status"], "partial")
+
     @patch("interactive_profile.process_identity")
     @patch("interactive_profile.os.kill")
     def test_stop_rejects_receipt_with_mismatched_run_identity(
@@ -272,6 +287,13 @@ class InteractiveProfileTests(unittest.TestCase):
         kill.assert_not_called()
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["results"]["runReceipt"], "invalid-run-identity-not-signalled")
+        report = json.loads(
+            (Path(self.temp.name) / "interactive-profile-stop-result.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(report["status"], "partial")
+        self.assertEqual(report["runId"], "another-run")
 
     @patch("interactive_profile.process_identity")
     @patch("interactive_profile.os.kill")
@@ -302,6 +324,13 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["status"], "stopped")
         self.assertEqual(result["results"]["mavlinkBridge"], "stopped")
         self.assertEqual(result["results"]["qgcUserProcess"], "preserved-user-owned")
+        report = json.loads(
+            (Path(self.temp.name) / "interactive-profile-stop-result.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(report["status"], "stopped")
+        self.assertTrue(report["observedAtUtc"])
 
     @patch(
         "interactive_profile.process_identity",

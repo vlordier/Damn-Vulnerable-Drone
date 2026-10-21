@@ -10,6 +10,7 @@ import os
 import signal
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import UTC, datetime
 from pathlib import Path
@@ -300,11 +301,14 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         or Path(run_directory).name != run_id
         or not Path(run_directory).is_dir()
     ):
-        return {
-            "runId": run_id,
-            "status": "partial",
-            "results": {"runReceipt": "invalid-run-identity-not-signalled"},
-        }
+        return _persist_stop_result(
+            receipt_path,
+            {
+                "runId": run_id,
+                "status": "partial",
+                "results": {"runReceipt": "invalid-run-identity-not-signalled"},
+            },
+        )
 
     results = {}
     for name, process in receipt.get("processes", {}).items():
@@ -349,11 +353,38 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         }
         for status in results.values()
     )
-    return {
-        "runId": receipt.get("runId"),
-        "status": "stopped" if complete else "partial",
-        "results": results,
-    }
+    return _persist_stop_result(
+        receipt_path,
+        {
+            "runId": receipt.get("runId"),
+            "status": "stopped" if complete else "partial",
+            "results": results,
+        },
+    )
+
+
+def _persist_stop_result(receipt_path: Path, result: dict[str, Any]) -> dict[str, Any]:
+    """Write a compact stop report beside the receipt without changing it."""
+    report = {**result, "observedAtUtc": datetime.now(UTC).isoformat()}
+    report_path = receipt_path.with_name("interactive-profile-stop-result.json")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=receipt_path.parent,
+            prefix=".interactive-profile-stop-",
+            suffix=".tmp",
+            delete=False,
+        ) as temporary:
+            temporary_path = Path(temporary.name)
+            json.dump(report, temporary, indent=2, sort_keys=True)
+            temporary.write("\n")
+        os.replace(temporary_path, report_path)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
+    return report
 
 
 def _wait_for_owned_exit(pid: int, expected: str) -> str:
@@ -388,7 +419,7 @@ def main() -> int:
         print(f"profile {args.action} failed: {error}", file=sys.stderr)
         return 2
     print(json.dumps(result, indent=2, sort_keys=True))
-    return 0
+    return 1 if args.action == "stop" and result.get("status") != "stopped" else 0
 
 
 if __name__ == "__main__":
