@@ -11,6 +11,46 @@ from create_interactive_profile_receipt import create_receipt, source_record
 
 
 class InteractiveReceiptTests(unittest.TestCase):
+    def test_receipt_rejects_invalid_callsign_before_writing_runtime_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-123"
+            run_dir.mkdir()
+            args = argparse.Namespace(
+                run_dir=run_dir,
+                callsign="drone.one",
+                nats_port=14238,
+                qgc_port=14660,
+                bridge_port=14661,
+            )
+
+            with self.assertRaisesRegex(ValueError, "single non-empty NATS subject token"):
+                create_receipt(args)
+
+            self.assertFalse((run_dir / "interactive-profile.json").exists())
+
+    def test_receipt_rejects_invalid_or_duplicate_ports_before_writing_config(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-123"
+            run_dir.mkdir()
+            args = argparse.Namespace(
+                run_dir=run_dir,
+                callsign="drone-1",
+                nats_port=True,
+                qgc_port=14660,
+                bridge_port=14660,
+            )
+
+            with self.assertRaisesRegex(ValueError, "ports must be integers"):
+                create_receipt(args)
+
+            self.assertFalse((run_dir / "interactive-profile.json").exists())
+
+            args.nats_port = 14238
+            with self.assertRaisesRegex(ValueError, "UDP ports must be different"):
+                create_receipt(args)
+
+            self.assertFalse((run_dir / "interactive-profile.json").exists())
+
     def test_source_record_binds_tracked_and_untracked_dirty_content(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

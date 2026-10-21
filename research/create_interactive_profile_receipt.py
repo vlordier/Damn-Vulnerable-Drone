@@ -103,6 +103,29 @@ def command_version(*command: str) -> str | None:
 
 def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = args.run_dir.resolve()
+    if (
+        not isinstance(args.callsign, str)
+        or not args.callsign
+        or any(
+            ord(character) < 33 or ord(character) == 127 or character in ".*>"
+            for character in args.callsign
+        )
+    ):
+        raise ValueError("callsign must be a single non-empty NATS subject token")
+    ports = {
+        "nats": args.nats_port,
+        "qgcUdpListen": args.qgc_port,
+        "bridgeUdpBind": args.bridge_port,
+    }
+    invalid_ports = [
+        name
+        for name, port in ports.items()
+        if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535
+    ]
+    if invalid_ports:
+        raise ValueError("ports must be integers from 1 to 65535: " + ", ".join(invalid_ports))
+    if args.qgc_port == args.bridge_port:
+        raise ValueError("qgc and bridge UDP ports must be different")
     config = {
         "natsUrl": f"nats://127.0.0.1:{args.nats_port}",
         "callsign": args.callsign,
