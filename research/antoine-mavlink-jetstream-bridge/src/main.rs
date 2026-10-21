@@ -569,16 +569,15 @@ fn control_command(frame: &FrameInfo, vehicle_system_id: u8) -> Result<Option<se
         }
         // Position-only LOCAL_NED: xyz active; velocity, acceleration, yaw and
         // yaw rate ignored; FORCE bit clear.
-        if frame_id != 1
-            || mask & 0x0007 != 0
-            || mask & 0x01f8 != 0x01f8
-            || mask & 0x0200 != 0
-            || mask & 0x0c00 != 0x0c00
-        {
+        if frame_id != 1 || mask != 0x0df8 {
             bail!("only position-only LOCAL_NED targets are supported");
         }
         let number = |offset| -> Result<f64> {
-            Ok(f32::from_le_bytes(frame.payload[offset..offset + 4].try_into()?) as f64)
+            let value = f32::from_le_bytes(frame.payload[offset..offset + 4].try_into()?) as f64;
+            if !value.is_finite() {
+                bail!("position target coordinates must be finite");
+            }
+            Ok(value)
         };
         return Ok(Some(
             serde_json::json!({"type":"set_position","payload":{"north_m":number(4)?,"east_m":number(8)?,"down_m":number(12)?}}),
@@ -1911,6 +1910,39 @@ mod tests {
             control_command(&mode, 1).unwrap().unwrap()["payload"]["mode"],
             "RTL"
         );
+    }
+
+    #[test]
+    fn position_target_rejects_reserved_mask_bits_and_non_finite_coordinates() {
+        let mut position = vec![0_u8; 53];
+        position[50] = 1;
+        position[51] = 1;
+        position[52] = 1;
+        position[48..50].copy_from_slice(&0x1df8_u16.to_le_bytes());
+        let frame = |payload| FrameInfo {
+            system_id: 255,
+            component_id: 190,
+            message_id: 84,
+            sequence: 1,
+            payload,
+        };
+        assert!(control_command(&frame(position.clone()), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("position-only LOCAL_NED"));
+
+        position[48..50].copy_from_slice(&0x0df8_u16.to_le_bytes());
+        position[4..8].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(control_command(&frame(position.clone()), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("must be finite"));
+
+        position[4..8].copy_from_slice(&f32::INFINITY.to_le_bytes());
+        assert!(control_command(&frame(position), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("must be finite"));
     }
 
     #[test]
