@@ -224,6 +224,7 @@ uv run --no-project python "${PROJECT_ROOT}/research/verify_antoine_native_recei
   --root "${ANTOINE_RUN_ROOT}" \
   --snapshot-root "$(dirname "${ANTOINE_RUN_ROOT}")" \
   --receipt "${ANTOINE_RUN_BUILD_RECEIPT}" \
+  --write-shell-environment "${RUN_DIR}/logs/native-build-environment.sh" \
   >"${RUN_DIR}/logs/source-build-receipt-verify.log" 2>&1 || {
     cat "${RUN_DIR}/logs/source-build-receipt-verify.log" >&2
     echo "Sealed Antoine source-build receipt did not verify." >&2
@@ -309,6 +310,7 @@ uv run --no-project python "${PROJECT_ROOT}/research/create_interactive_profile_
 echo "Starting the isolated Antoine/Gazebo profile at ${NATS_URL}..."
 (
   cd "${ANTOINE_RUN_ROOT}"
+  source "${RUN_DIR}/logs/native-build-environment.sh"
   dvd_run_owned_child "${PROJECT_ROOT}" "${PROFILE_IDENTITY}" env ANTOINE_GZ_INTERACTIVE_CONTROL=1 \
     AGR_SIM="${GAZEBO_SOURCE_SNAPSHOT}" \
     AGR_C2_SCRIPTS="${GAZEBO_SOURCE_SNAPSHOT}/c2-bridge/scripts" \
@@ -320,11 +322,7 @@ echo "Starting the isolated Antoine/Gazebo profile at ${NATS_URL}..."
     ANTOINE_GZ_FLIGHT_NATS_PORT="${NATS_PORT}" \
     ANTOINE_GZ_CARGO_TARGET_DIR="${ANTOINE_TARGET}" \
     GZ_BIN="${GZ_BINARY}" \
-    uv run --no-project python "${PROJECT_ROOT}/research/verify_antoine_native_receipt.py" \
-      --root "${ANTOINE_RUN_ROOT}" \
-      --snapshot-root "$(dirname "${ANTOINE_RUN_ROOT}")" \
-      --receipt "${ANTOINE_RUN_BUILD_RECEIPT}" \
-      --exec-command "${ANTOINE_RUN_ROOT}/scripts/gz_flight_proof.sh" \
+    "${ANTOINE_RUN_ROOT}/scripts/gz_flight_proof.sh" \
       --run-dir "${FLIGHT_RUN_DIR}" --keep
 ) &
 PROFILE_PID=$!

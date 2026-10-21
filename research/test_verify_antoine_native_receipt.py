@@ -3,15 +3,15 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import subprocess
-import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from build_antoine_source_snapshot import add_stable_rust_path_remaps
-from verify_antoine_native_receipt import main, verify_native_receipt
+from verify_antoine_native_receipt import verify_native_receipt, write_shell_environment
 
 
 class AntoineNativeReceiptVerificationTests(unittest.TestCase):
@@ -70,47 +70,42 @@ class AntoineNativeReceiptVerificationTests(unittest.TestCase):
                 verify_native_receipt(self.root, self.snapshot_root, self.receipt)
         run.assert_not_called()
 
-    def test_exec_command_receives_reconstructed_flags(self) -> None:
+    def test_shell_environment_preserves_flags_and_is_private_non_overwriting(self) -> None:
         environment = {}
         add_stable_rust_path_remaps(environment, self.snapshot_root)
         flags_hash = hashlib.sha256(environment["CARGO_ENCODED_RUSTFLAGS"].encode()).hexdigest()
         self.write_receipt(flags_hash)
         with (
             patch.dict(os.environ, {}, clear=True),
-            patch.object(
-                sys,
-                "argv",
-                [
-                    "verify_antoine_native_receipt.py",
-                    "--root",
-                    str(self.root),
-                    "--snapshot-root",
-                    str(self.snapshot_root),
-                    "--receipt",
-                    str(self.receipt),
-                    "--exec-command",
-                    "/bin/true",
-                    "--argument",
-                    "one",
-                ],
-            ),
             patch(
                 "verify_antoine_native_receipt.subprocess.run",
                 return_value=subprocess.CompletedProcess([], 0),
             ) as run,
-            patch("verify_antoine_native_receipt.os.execvpe") as execvpe,
         ):
-            self.assertEqual(main(), 0)
+            verified_environment = verify_native_receipt(
+                self.root, self.snapshot_root, self.receipt
+            )
         run.assert_called_once()
-        execvpe.assert_called_once_with(
-            "/bin/true",
-            ["/bin/true", "--argument", "one"],
-            run.call_args.kwargs["env"],
+        output = self.base / "verified-environment.sh"
+        write_shell_environment(output, verified_environment)
+        self.assertEqual(output.stat().st_mode & 0o777, 0o600)
+        contents = output.read_text(encoding="utf-8")
+        self.assertIn(
+            "export CARGO_ENCODED_RUSTFLAGS=" + shlex.quote(environment["CARGO_ENCODED_RUSTFLAGS"]),
+            contents,
         )
-        self.assertEqual(
-            execvpe.call_args.args[2]["CARGO_ENCODED_RUSTFLAGS"],
-            environment["CARGO_ENCODED_RUSTFLAGS"],
+        sourced = subprocess.run(
+            [
+                "bash",
+                "-c",
+                f"source {shlex.quote(str(output))}; printf '%s' \"$CARGO_ENCODED_RUSTFLAGS\"",
+            ],
+            capture_output=True,
+            check=True,
         )
+        self.assertEqual(sourced.stdout.decode(), environment["CARGO_ENCODED_RUSTFLAGS"])
+        with self.assertRaises(FileExistsError):
+            write_shell_environment(output, verified_environment)
 
     def test_symlinked_receipt_is_rejected(self) -> None:
         self.write_receipt("")

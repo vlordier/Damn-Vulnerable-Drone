@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import os
+import shlex
 import subprocess
 import sys
 from pathlib import Path
@@ -54,29 +55,31 @@ def verify_native_receipt(root: Path, snapshot_root: Path, receipt_path: Path) -
     return environment
 
 
+def write_shell_environment(path: Path, environment: dict[str, str]) -> None:
+    """Write a private, non-overwriting shell fragment for verified build flags."""
+    lines = []
+    for name in ("CARGO_ENCODED_RUSTFLAGS", "PYTHONPATH"):
+        value = environment.get(name)
+        if value is None:
+            lines.append(f"unset {name}")
+        else:
+            lines.append(f"export {name}={shlex.quote(value)}")
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
+        stream.write("\n".join(lines) + "\n")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--snapshot-root", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
-    parser.add_argument(
-        "--exec-command",
-        nargs=1,
-        metavar="PROGRAM",
-        help="execute PROGRAM and remaining arguments under the verified build environment",
-    )
-    args, remaining = parser.parse_known_args()
-    command = [*(args.exec_command or []), *remaining]
-    if command and command[0] == "--":
-        command = command[1:]
-    if remaining and not args.exec_command:
-        parser.error(f"unrecognized arguments: {' '.join(command)}")
+    parser.add_argument("--write-shell-environment", type=Path)
+    args = parser.parse_args()
     try:
         environment = verify_native_receipt(args.root, args.snapshot_root, args.receipt)
-        if args.exec_command and command:
-            os.execvpe(command[0], command, environment)
-        if args.exec_command and not command:
-            parser.error("--exec-command requires a command")
+        if args.write_shell_environment:
+            write_shell_environment(args.write_shell_environment, environment)
     except (OSError, ValueError, json.JSONDecodeError, subprocess.SubprocessError) as error:
         print(f"Antoine native receipt verification failed: {error}", file=sys.stderr)
         return 2
