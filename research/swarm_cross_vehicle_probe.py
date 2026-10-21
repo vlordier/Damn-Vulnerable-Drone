@@ -161,6 +161,27 @@ def target_plan(run_dir: Path, callsign: str) -> tuple[str, list[float]]:
     return model, [float(value) for value in target]
 
 
+def validate_run_evidence_paths(run_dir: Path, target: str) -> None:
+    """Reject run evidence paths that resolve through symlinks outside the run."""
+    root = run_dir.resolve(strict=True)
+    if not root.is_dir():
+        raise ValueError("selected run path is not a directory")
+    paths = (
+        Path("research-swarm-config.json"),
+        Path("gazebo-pose.jsonl"),
+        Path("applier-neutral/actuator-output.jsonl"),
+        Path("logs") / f"antoine-controller-{target}.log",
+    )
+    for relative_path in paths:
+        try:
+            resolved = (root / relative_path).resolve(strict=False)
+            resolved.relative_to(root)
+        except (OSError, RuntimeError, ValueError) as error:
+            raise ValueError(
+                f"run evidence path escapes the selected run: {relative_path}"
+            ) from error
+
+
 def pose_simulation_time(stamp: object) -> float | None:
     """Parse a ROS timestamp without accepting booleans or fractional fields."""
     if not isinstance(stamp, dict):
@@ -598,6 +619,7 @@ def main() -> int:
             _, support = mutate_setpoint({}, args.mutation, args.source, args.target)
             report.update({"mutationSupport": support, "status": "inconclusive"})
         else:
+            validate_run_evidence_paths(run_dir, args.target)
             model, target = target_plan(run_dir, args.target)
             config = json.loads(
                 (run_dir / "research-swarm-config.json").read_text(encoding="utf-8")

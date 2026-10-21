@@ -236,6 +236,37 @@ class MutationTests(unittest.TestCase):
 
 
 class PoseTruthTests(unittest.TestCase):
+    def test_probe_rejects_evidence_symlink_that_escapes_the_run(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run-1"
+            run_dir.mkdir()
+            external_config = root / "external-config.json"
+            external_config.write_text('{"vehicles": []}\n', encoding="utf-8")
+            (run_dir / "research-swarm-config.json").symlink_to(external_config)
+            argv = [
+                "swarm_cross_vehicle_probe.py",
+                "--server",
+                "nats://127.0.0.1:14224",
+                "--run-dir",
+                str(run_dir),
+            ]
+
+            with (
+                patch.object(sys, "argv", argv),
+                contextlib.redirect_stdout(io.StringIO()),
+            ):
+                exit_code = main()
+
+            report = json.loads(
+                (run_dir / "research-cross-vehicle-authorization.json").read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertIn("escapes the selected run", report["error"])
+        self.assertEqual(report["publishedMessages"], 0)
+
     def test_new_probe_replaces_a_stale_pass_before_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory)
