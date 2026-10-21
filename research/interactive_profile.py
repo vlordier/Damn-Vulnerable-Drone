@@ -306,6 +306,10 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
         else:
             os.kill(pid, signal.SIGINT)
             stop_result = _wait_for_owned_exit(pid, expected)
+            if stop_result == "identity-changed-after-interrupt":
+                # Never signal the changed identity. Give the original
+                # interrupt a bounded chance to finish its exec handoff.
+                stop_result = _wait_for_pid_exit(pid)
             if stop_result == "timeout":
                 # Background shells can inherit SIGINT as ignored. Recheck
                 # identity before TERM so a reused PID is never signalled.
@@ -321,7 +325,13 @@ def stop_owned(receipt_path: Path) -> dict[str, Any]:
                         stop_result = "term-sent-stop-unconfirmed"
             results[name] = stop_result
     complete = all(
-        status in {"stopped", "already-stopped", "preserved-user-owned"}
+        status
+        in {
+            "stopped",
+            "stopped-after-identity-change",
+            "already-stopped",
+            "preserved-user-owned",
+        }
         for status in results.values()
     )
     return {
@@ -341,6 +351,15 @@ def _wait_for_owned_exit(pid: int, expected: str) -> str:
             return "identity-changed-after-interrupt"
         time.sleep(STOP_POLL_SECONDS)
     return "timeout"
+
+
+def _wait_for_pid_exit(pid: int) -> str:
+    deadline = time.monotonic() + STOP_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        if process_identity(pid) is None:
+            return "stopped-after-identity-change"
+        time.sleep(STOP_POLL_SECONDS)
+    return "identity-changed-after-interrupt"
 
 
 def main() -> int:

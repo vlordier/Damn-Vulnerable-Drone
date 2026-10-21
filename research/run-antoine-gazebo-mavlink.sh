@@ -280,13 +280,15 @@ if [[ "${ANTOINE_GZ_FLIGHT_GUI:-1}" == "1" ]]; then
     --gui-config "${PROJECT_ROOT}/research/gazebo-qgc-gui.config" \
     >"${RUN_DIR}/gazebo-gui.log" 2>&1 &
   GUI_PID=$!
-  record_process gazeboGui "${GUI_PID}"
   sleep 2
   if ! kill -0 "${GUI_PID}" 2>/dev/null; then
     wait "${GUI_PID}" || true
     echo "Gazebo 3D client failed to start; inspect ${RUN_DIR}/gazebo-gui.log" >&2
     exit 1
   fi
+  # `gz` may exec through a Ruby launcher; record identity after that handoff
+  # so lifecycle checks match the process that actually remains running.
+  record_process gazeboGui "${GUI_PID}"
   echo "Gazebo 3D view: ${RUN_DIR}/gazebo-gui.log"
 fi
 

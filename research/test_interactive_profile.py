@@ -286,6 +286,23 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(kill.call_args_list[0].args, (9001, interactive_profile.signal.SIGINT))
         self.assertEqual(kill.call_args_list[1].args, (9001, interactive_profile.signal.SIGTERM))
 
+    @patch(
+        "interactive_profile.process_identity",
+        side_effect=[
+            "owned-process --qgc-peer 127.0.0.1:14550 --qgc-bind 127.0.0.1:14651",
+            "changed",
+            None,
+        ],
+    )
+    @patch("interactive_profile.os.kill")
+    def test_stop_waits_for_exit_after_interrupt_identity_change_without_resignalling(
+        self, kill, _identity
+    ) -> None:
+        result = interactive_profile.stop_owned(self.receipt)
+        kill.assert_called_once_with(9001, interactive_profile.signal.SIGINT)
+        self.assertEqual(result["status"], "stopped")
+        self.assertEqual(result["results"]["mavlinkBridge"], "stopped-after-identity-change")
+
 
 if __name__ == "__main__":
     unittest.main()
