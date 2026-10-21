@@ -239,7 +239,7 @@ def read_nats_messages(port: int, subject: str) -> tuple[list[Any], dict[str, st
         return [], {"status": "invalid", "reason": f"NATS returned non-JSON data for {subject}"}
 
 
-def sample_bridge_heartbeat(receipt: dict[str, Any]) -> dict[str, Any]:
+def sample_qgc_heartbeat(receipt: dict[str, Any]) -> dict[str, Any]:
     """Read the latest persisted GCS heartbeat without creating a consumer."""
     callsign = receipt.get("callsign")
     ports = receipt.get("ports")
@@ -455,6 +455,10 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
                 "status": "unverified",
                 "reason": "run identity failed; bridge heartbeat was not inspected",
             },
+            "qgcHeartbeat": {
+                "status": "unverified",
+                "reason": "run identity failed; incoming GCS heartbeat was not inspected",
+            },
             "qgcPeerRouting": {
                 "status": "unverified",
                 "reason": "run identity failed; routing was not inspected",
@@ -488,6 +492,10 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
             "bridgeHeartbeat": {
                 "status": "unverified",
                 "reason": "callsign is invalid; bridge heartbeat was not inspected",
+            },
+            "qgcHeartbeat": {
+                "status": "unverified",
+                "reason": "callsign is invalid; incoming GCS heartbeat was not inspected",
             },
             "qgcPeerRouting": {
                 "status": "unverified",
@@ -614,15 +622,18 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         and f"--qgc-peer {expected_qgc_peer}" in bridge_identity
         and f"--qgc-bind {expected_bridge_bind}" in bridge_identity
     )
-    heartbeat = sample_bridge_heartbeat(receipt)
-    bridge_heartbeat = heartbeat
+    qgc_heartbeat = sample_qgc_heartbeat(receipt)
+    bridge_heartbeat = {
+        "status": "unverified",
+        "reason": "status has no independent observation of a vehicle-to-GCS MAVLink HEARTBEAT",
+    }
     qgc_process = checks.get("qgcUserProcess", {})
     qgc_identity_matches = (
         isinstance(qgc_process, dict)
         and qgc_process.get("alive") is True
         and qgc_process.get("identityMatches") is True
     )
-    path_observed = heartbeat.get("status") == "observed" and routing_configured
+    path_observed = qgc_heartbeat.get("status") == "observed" and routing_configured
     qgc_peer_routing = {
         "status": "observed"
         if path_observed and qgc_identity_matches
@@ -716,6 +727,7 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         "status": overall_status,
         "telemetry": telemetry,
         "bridgeHeartbeat": bridge_heartbeat,
+        "qgcHeartbeat": qgc_heartbeat,
         "qgcPeerRouting": qgc_peer_routing,
         "gazeboPoseRecorder": gazebo_pose_recorder,
         "armed": telemetry.get("armed") if telemetry.get("status") == "fresh" else None,

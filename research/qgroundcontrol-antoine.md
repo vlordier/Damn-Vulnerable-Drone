@@ -164,13 +164,18 @@ messages have the expected schema, protocol, and callsign, and their finite
 simulation timestamps advance. Missing, malformed, mismatched, or
 non-advancing telemetry leaves armed state unknown and the profile partial.
 `qgcPeerRouting` distinguishes the bridge's identity-pinned peer
-configuration from a fresh heartbeat in the run-owned `ANTOINE_MAVLINK` audit.
-Status reads the latest subject message with a bounded, read-only JetStream
-lookup and requires a loopback `gcs_to_antoine` heartbeat no more than two
-seconds old, plus a live process matching the recorded QGC identity. This
-shows that the configured path carried a heartbeat while QGC was running; UDP
-source addresses do not authenticate which local process sent it. Neither a
-receipt nor a live PID is a complete flight-health claim. Status validates the
+configuration from a fresh inbound heartbeat in the run-owned `ANTOINE_MAVLINK`
+audit. `qgcHeartbeat` labels this evidence explicitly: status reads the latest
+command-subject message with a bounded, read-only JetStream lookup and requires
+a loopback `gcs_to_antoine` heartbeat no more than two seconds old, plus a live
+process matching the recorded QGC identity. This shows that the configured
+path carried an inbound heartbeat while QGC was running; UDP source addresses
+do not authenticate which local process sent it. It does not prove that the
+bridge emitted its own vehicle-to-GCS MAVLink heartbeat. `bridgeHeartbeat`
+therefore remains unverified until status has an independent observation of
+that outgoing frame; the telemetry subject also carries Antoine telemetry, so
+its latest message is not sufficient evidence. Neither a receipt nor a live
+PID is a complete flight-health claim. Status validates the
 configured TCP/UDP port values and requires all three configured listeners;
 an invalid value or failed port probe leaves the profile partial.
 

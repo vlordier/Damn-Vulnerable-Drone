@@ -25,7 +25,7 @@ class InteractiveProfileTests(unittest.TestCase):
         self.port_status_mock = self.port_status.start()
         self.addCleanup(self.port_status.stop)
         self.heartbeat = patch(
-            "interactive_profile.sample_bridge_heartbeat",
+            "interactive_profile.sample_qgc_heartbeat",
             return_value={"status": "unverified", "reason": "no latest audit frame"},
         )
         self.heartbeat.start()
@@ -334,7 +334,12 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertFalse(result["armed"])
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["bridgeHeartbeat"]["status"], "unverified")
-        self.assertEqual(result["bridgeHeartbeat"]["reason"], "no latest audit frame")
+        self.assertEqual(
+            result["bridgeHeartbeat"]["reason"],
+            "status has no independent observation of a vehicle-to-GCS MAVLink HEARTBEAT",
+        )
+        self.assertEqual(result["qgcHeartbeat"]["status"], "unverified")
+        self.assertEqual(result["qgcHeartbeat"]["reason"], "no latest audit frame")
         self.assertEqual(result["qgcPeerRouting"]["status"], "configured-unverified")
         self.assertEqual(result["gazeboPoseRecorder"]["status"], "fresh")
         self.assertEqual(result["gazeboPoseRecorder"]["poseName"], "isr")
@@ -360,7 +365,7 @@ class InteractiveProfileTests(unittest.TestCase):
         with patch("interactive_profile.subprocess.run") as run:
             run.return_value.returncode = 0
             run.return_value.stdout = output
-            result = interactive_profile.sample_bridge_heartbeat(
+            result = interactive_profile.sample_qgc_heartbeat(
                 json.loads(self.receipt.read_text(encoding="utf-8"))
             )
 
@@ -395,11 +400,11 @@ class InteractiveProfileTests(unittest.TestCase):
         with patch("interactive_profile.subprocess.run") as run:
             run.return_value.returncode = 0
             run.return_value.stdout = json.dumps({"data": json.dumps(envelope)})
-            stale = interactive_profile.sample_bridge_heartbeat(receipt)
+            stale = interactive_profile.sample_qgc_heartbeat(receipt)
             envelope["received_at_unix_ms"] = int(interactive_profile.time.time() * 1000)
             envelope["message_id"] = 76
             run.return_value.stdout = json.dumps({"data": json.dumps(envelope)})
-            other_frame = interactive_profile.sample_bridge_heartbeat(receipt)
+            other_frame = interactive_profile.sample_qgc_heartbeat(receipt)
 
         self.assertEqual(stale["status"], "stale")
         self.assertEqual(other_frame["status"], "unverified")
@@ -418,7 +423,7 @@ class InteractiveProfileTests(unittest.TestCase):
                 }.get,
             ),
             patch(
-                "interactive_profile.sample_bridge_heartbeat", return_value={"status": "observed"}
+                "interactive_profile.sample_qgc_heartbeat", return_value={"status": "observed"}
             ),
             patch(
                 "interactive_profile.subprocess.run",
@@ -434,7 +439,7 @@ class InteractiveProfileTests(unittest.TestCase):
         with (
             patch("interactive_profile.process_identity", return_value=None),
             patch(
-                "interactive_profile.sample_bridge_heartbeat", return_value={"status": "observed"}
+                "interactive_profile.sample_qgc_heartbeat", return_value={"status": "observed"}
             ),
             patch(
                 "interactive_profile.subprocess.run",
@@ -443,7 +448,8 @@ class InteractiveProfileTests(unittest.TestCase):
         ):
             result = interactive_profile.inspect(self.receipt)
 
-        self.assertEqual(result["bridgeHeartbeat"]["status"], "observed")
+        self.assertEqual(result["qgcHeartbeat"]["status"], "observed")
+        self.assertEqual(result["bridgeHeartbeat"]["status"], "unverified")
         self.assertEqual(result["qgcPeerRouting"]["status"], "unverified")
 
     def test_pose_recorder_rejects_nonadvancing_simulation_time(self) -> None:
