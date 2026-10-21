@@ -516,6 +516,27 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
                         "homeDistanceAfterM": round(horizontal_distance_from_home(returned), 3),
                         "evidenceLimit": "native SITL telemetry is not independent Gazebo truth",
                     },
+                    "independentFlightEvidence": {
+                        "trajectory": {
+                            "status": "unavailable",
+                            "source": "native Antoine SITL telemetry",
+                            "independent": False,
+                            "reason": "this runner has no separate Gazebo pose source",
+                        },
+                        "actuator": {
+                            "status": "unavailable",
+                            "source": "actuator_thrust field in furia.telemetry",
+                            "independent": False,
+                            "reason": "the actuator value is emitted by the same native plant telemetry path",
+                        },
+                    },
+                    "nativeSITLFinalState": {
+                        "status": "observed",
+                        "source": "furia.telemetry",
+                        "groundContact": final["ground_contact"],
+                        "armed": final["armed"],
+                        "actuatorThrust": final["actuator_thrust"],
+                    },
                 },
                 indent=2,
             )
