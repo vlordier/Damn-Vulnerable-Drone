@@ -297,7 +297,8 @@ pose stream and stores `gazebo-mavlink-acceptance.json` in the run directory.
 It allocates loopback ports and stops only its own profile processes. The
 receipt identifies the profile as headless and records no QGC source or binary
 as a runtime input. This acceptance proves the MAVLink test-client path; it is
-not QGC UI evidence.
+not QGC UI evidence. Failed attempts also write a `passed: false` report with
+the failure, final observed MAVLink/Gazebo state, and safety-cleanup result.
 
 To rebuild a saved profile's archived inputs from a fresh sealed checkout,
 run `make antoine-gz-rebuild-check PROFILE_RUN_DIR=/path/to/profile-run

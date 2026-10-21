@@ -14,6 +14,37 @@ from pathlib import Path
 from flight_check import FlightCheck
 
 
+def write_failed_report(
+    report_path: Path,
+    callsign: str,
+    failure: Exception,
+    cleanup: dict,
+    check: GazeboFlightCheck,
+) -> None:
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(
+            {
+                "schema": "dvd.gazebo-mavlink-flight-check.v1",
+                "passed": False,
+                "callsign": callsign,
+                "failure": {
+                    "type": type(failure).__name__,
+                    "message": str(failure)[:2000],
+                },
+                "cleanup": cleanup,
+                "lastGazeboPose": check.pose(),
+                "lastMavlinkState": dict(check.telemetry),
+                "rawGazeboTelemetry": check.raw_telemetry,
+                "auditFrameCount": len(check.audit_frames),
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+
 class GazeboFlightCheck(FlightCheck):
     def __init__(
         self, url: str, bind_port: int, bridge_port: int, callsign: str, pose_file: Path, agent: str
@@ -531,23 +562,37 @@ async def run_check() -> dict:
             "auditFrameCount": len(check.audit_frames),
             "rawGazeboTelemetry": check.raw_telemetry,
         }
-    except Exception:
+    except Exception as failure:
+        cleanup = {
+            "attempted": armed and home is not None,
+            "rtlConfirmed": False,
+            "landConfirmed": False,
+            "disarmConfirmed": False,
+        }
         if armed and home is not None:
             try:
                 await check.request(check.long(20), 20, wait=2)
                 await check.wait_pose(
                     lambda point: math.dist(point, home) <= 0.25, 40, "failure cleanup RTL"
                 )
+                cleanup["rtlConfirmed"] = True
                 await check.request(check.long(21), 21, wait=2)
                 await check.wait_pose(
                     lambda point: math.dist(point, home) <= 0.25, 15, "failure cleanup LAND"
                 )
+                cleanup["landConfirmed"] = True
                 await check.disarm_after_settle(home)
+                cleanup["disarmConfirmed"] = check.telemetry.get("armed") is False
             except Exception as cleanup_error:
+                cleanup["error"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
                 print(
                     f"Safety cleanup could not confirm LAND/DISARM: {cleanup_error}",
                     file=sys.stderr,
                 )
+        report_path = Path(
+            os.environ.get("MAVLINK_GAZEBO_REPORT", "/tmp/dvd-gazebo-mavlink-check.json")
+        )
+        write_failed_report(report_path, callsign, failure, cleanup, check)
         raise
     finally:
         await check.close()
