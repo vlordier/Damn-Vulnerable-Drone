@@ -30,6 +30,12 @@ class InteractiveProfileTests(unittest.TestCase):
         )
         self.heartbeat.start()
         self.addCleanup(self.heartbeat.stop)
+        self.bridge_heartbeat = patch(
+            "interactive_profile.sample_bridge_heartbeat",
+            return_value={"status": "unverified", "reason": "no latest bridge audit frame"},
+        )
+        self.bridge_heartbeat.start()
+        self.addCleanup(self.bridge_heartbeat.stop)
         self.receipt = Path(self.temp.name) / "interactive-profile-receipt.json"
         bridge_identity = Path(self.temp.name) / ".bridge.identity"
         bridge_identity.write_text(
@@ -336,7 +342,7 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["bridgeHeartbeat"]["status"], "unverified")
         self.assertEqual(
             result["bridgeHeartbeat"]["reason"],
-            "status has no independent observation of a vehicle-to-GCS MAVLink HEARTBEAT",
+            "no latest bridge audit frame",
         )
         self.assertEqual(result["qgcHeartbeat"]["status"], "unverified")
         self.assertEqual(result["qgcHeartbeat"]["reason"], "no latest audit frame")
@@ -409,6 +415,51 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(stale["status"], "stale")
         self.assertEqual(other_frame["status"], "unverified")
 
+    def test_bridge_heartbeat_reads_dedicated_vehicle_to_gcs_audit(self) -> None:
+        self.heartbeat.stop()
+        self.bridge_heartbeat.stop()
+        envelope = {
+            "schema": "furia.mavlink.frame",
+            "version": "1.0.0",
+            "callsign": "drone-1",
+            "direction": "vehicle_to_gcs",
+            "received_at_unix_ms": int(interactive_profile.time.time() * 1000),
+            "source": "127.0.0.1:14651",
+            "message_id": 0,
+        }
+        output = json.dumps({"data": base64.b64encode(json.dumps(envelope).encode()).decode()})
+        with patch("interactive_profile.subprocess.run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = output
+            result = interactive_profile.sample_bridge_heartbeat(
+                json.loads(self.receipt.read_text(encoding="utf-8"))
+            )
+
+        self.assertEqual(result["status"], "observed")
+        command = run.call_args.args[0]
+        self.assertIn("--last-for=furia.mavlink.heartbeat.drone-1", command)
+
+    def test_bridge_heartbeat_rejects_inbound_direction(self) -> None:
+        self.heartbeat.stop()
+        self.bridge_heartbeat.stop()
+        envelope = {
+            "schema": "furia.mavlink.frame",
+            "version": "1.0.0",
+            "callsign": "drone-1",
+            "direction": "gcs_to_antoine",
+            "received_at_unix_ms": int(interactive_profile.time.time() * 1000),
+            "source": "127.0.0.1:53000",
+            "message_id": 0,
+        }
+        with patch("interactive_profile.subprocess.run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = json.dumps({"data": json.dumps(envelope)})
+            result = interactive_profile.sample_bridge_heartbeat(
+                json.loads(self.receipt.read_text(encoding="utf-8"))
+            )
+
+        self.assertEqual(result["status"], "unverified")
+
     def test_status_observes_configured_path_only_with_live_recorded_qgc(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         self.add_supervisor_process(receipt)
@@ -422,9 +473,7 @@ class InteractiveProfileTests(unittest.TestCase):
                     9003: "supervisor-process",
                 }.get,
             ),
-            patch(
-                "interactive_profile.sample_qgc_heartbeat", return_value={"status": "observed"}
-            ),
+            patch("interactive_profile.sample_qgc_heartbeat", return_value={"status": "observed"}),
             patch(
                 "interactive_profile.subprocess.run",
                 return_value=type("Result", (), {"returncode": 1})(),
@@ -438,9 +487,7 @@ class InteractiveProfileTests(unittest.TestCase):
     def test_status_does_not_attribute_heartbeat_to_qgc_without_live_process(self) -> None:
         with (
             patch("interactive_profile.process_identity", return_value=None),
-            patch(
-                "interactive_profile.sample_qgc_heartbeat", return_value={"status": "observed"}
-            ),
+            patch("interactive_profile.sample_qgc_heartbeat", return_value={"status": "observed"}),
             patch(
                 "interactive_profile.subprocess.run",
                 return_value=type("Result", (), {"returncode": 1})(),

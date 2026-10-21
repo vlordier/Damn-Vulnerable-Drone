@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 const STREAM: &str = "ANTOINE_MAVLINK";
 const TELEMETRY_SUBJECT: &str = "furia.mavlink.telemetry";
+const OUTGOING_HEARTBEAT_SUBJECT: &str = "furia.mavlink.heartbeat";
 const GCS_COMMAND_SUBJECT: &str = "furia.mavlink.command";
 const COMMAND_SUBJECT: &str = "furia.mavlink.request";
 const DURABLE: &str = "antoine_mavlink_readonly_requests";
@@ -57,6 +58,15 @@ struct FrameInfo {
     message_id: u32,
     sequence: u8,
     payload: Vec<u8>,
+}
+
+fn outgoing_heartbeat_audit_subject(
+    direction: &str,
+    frame: &FrameInfo,
+    callsign: &str,
+) -> Option<String> {
+    (direction == "vehicle_to_gcs" && frame.message_id == 0)
+        .then(|| format!("{OUTGOING_HEARTBEAT_SUBJECT}.{callsign}"))
 }
 
 fn validate_frame(raw: &[u8]) -> Result<FrameInfo> {
@@ -652,11 +662,15 @@ async fn publish_frame(
         sequence: frame.sequence,
         raw_base64: BASE64.encode(raw),
     };
-    let ack = js
-        .publish(subject, serde_json::to_vec(&envelope)?.into())
-        .await?;
+    let payload = serde_json::to_vec(&envelope)?;
+    let ack = js.publish(subject, payload.clone().into()).await?;
     ack.await
         .context("JetStream did not acknowledge MAVLink frame")?;
+    if let Some(heartbeat_subject) = outgoing_heartbeat_audit_subject(direction, frame, callsign) {
+        let ack = js.publish(heartbeat_subject, payload.into()).await?;
+        ack.await
+            .context("JetStream did not acknowledge outgoing heartbeat")?;
+    }
     Ok(())
 }
 
@@ -1438,6 +1452,7 @@ async fn main() -> Result<()> {
         name: STREAM.into(),
         subjects: vec![
             format!("{TELEMETRY_SUBJECT}.>"),
+            format!("{OUTGOING_HEARTBEAT_SUBJECT}.>"),
             format!("{GCS_COMMAND_SUBJECT}.>"),
             format!("{COMMAND_SUBJECT}.>"),
         ],
@@ -1539,6 +1554,33 @@ async fn main() -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_vehicle_heartbeat_uses_dedicated_outgoing_audit_subject() {
+        let heartbeat = FrameInfo {
+            system_id: 1,
+            component_id: 1,
+            message_id: 0,
+            sequence: 0,
+            payload: vec![],
+        };
+        assert_eq!(
+            outgoing_heartbeat_audit_subject("vehicle_to_gcs", &heartbeat, "drone-1"),
+            Some("furia.mavlink.heartbeat.drone-1".to_owned())
+        );
+        assert_eq!(
+            outgoing_heartbeat_audit_subject("gcs_to_antoine", &heartbeat, "drone-1"),
+            None
+        );
+        let position = FrameInfo {
+            message_id: 33,
+            ..heartbeat
+        };
+        assert_eq!(
+            outgoing_heartbeat_audit_subject("vehicle_to_gcs", &position, "drone-1"),
+            None
+        );
+    }
 
     #[test]
     fn local_antoine_altitude_maps_to_msl_and_relative_mavlink_altitudes() {

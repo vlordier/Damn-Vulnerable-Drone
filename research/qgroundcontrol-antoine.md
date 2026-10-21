@@ -170,12 +170,14 @@ command-subject message with a bounded, read-only JetStream lookup and requires
 a loopback `gcs_to_antoine` heartbeat no more than two seconds old, plus a live
 process matching the recorded QGC identity. This shows that the configured
 path carried an inbound heartbeat while QGC was running; UDP source addresses
-do not authenticate which local process sent it. It does not prove that the
-bridge emitted its own vehicle-to-GCS MAVLink heartbeat. `bridgeHeartbeat`
-therefore remains unverified until status has an independent observation of
-that outgoing frame; the telemetry subject also carries Antoine telemetry, so
-its latest message is not sufficient evidence. Neither a receipt nor a live
-PID is a complete flight-health claim. Status validates the
+do not authenticate which local process sent it. The bridge separately copies
+validated outgoing HEARTBEAT envelopes to
+`furia.mavlink.heartbeat.<callsign>`, allowing `bridgeHeartbeat` to check the
+vehicle-to-GCS direction independently of ordinary telemetry cadence. Status
+requires a fresh loopback envelope, the expected callsign, direction, schema,
+and HEARTBEAT message ID. This is bridge-side audit evidence, not proof that
+QGC rendered or acted on the packet. Neither a receipt nor a live PID is a
+complete flight-health claim. Status validates the
 configured TCP/UDP port values and requires all three configured listeners;
 an invalid value or failed port probe leaves the profile partial.
 

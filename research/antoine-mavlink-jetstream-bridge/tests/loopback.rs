@@ -345,10 +345,17 @@ async fn local_bridge_routes_qgc_commands_bidirectionally_and_gates_nats_egress(
     let mut stream = js.get_stream(STREAM).await?;
     let info = stream.info().await?;
     assert_eq!(
-        info.state.messages, 7,
+        info.state.messages, 8,
         "invalid MAVLink CRC must not be persisted"
     );
-    assert_eq!(info.state.subjects_count, 3);
+    assert_eq!(info.state.subjects_count, 4);
+    let heartbeat_subject = "furia.mavlink.heartbeat.integration-sitl";
+    let heartbeat = stream
+        .get_last_raw_message_by_subject(heartbeat_subject)
+        .await?;
+    let heartbeat: serde_json::Value = serde_json::from_slice(&heartbeat.payload)?;
+    assert_eq!(heartbeat["direction"], "vehicle_to_gcs");
+    assert_eq!(heartbeat["message_id"], 0);
     Ok(())
 }
 

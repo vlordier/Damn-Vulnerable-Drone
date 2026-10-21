@@ -239,14 +239,16 @@ def read_nats_messages(port: int, subject: str) -> tuple[list[Any], dict[str, st
         return [], {"status": "invalid", "reason": f"NATS returned non-JSON data for {subject}"}
 
 
-def sample_qgc_heartbeat(receipt: dict[str, Any]) -> dict[str, Any]:
-    """Read the latest persisted GCS heartbeat without creating a consumer."""
+def _sample_audited_heartbeat(
+    receipt: dict[str, Any], *, subject_prefix: str, direction: str, label: str
+) -> dict[str, Any]:
+    """Read one bridge-audited HEARTBEAT without creating a consumer."""
     callsign = receipt.get("callsign")
     ports = receipt.get("ports")
     port = ports.get("nats") if isinstance(ports, dict) else None
     if _callsign_error(callsign) or not isinstance(port, int) or isinstance(port, bool):
         return {"status": "unverified", "reason": "run receipt lacks a valid callsign or NATS port"}
-    subject = f"furia.mavlink.command.{callsign}"
+    subject = f"{subject_prefix}.{callsign}"
     try:
         result = subprocess.run(
             [
@@ -273,7 +275,7 @@ def sample_qgc_heartbeat(receipt: dict[str, Any]) -> dict[str, Any]:
     if result.returncode != 0:
         return {
             "status": "unverified",
-            "reason": "no latest run-owned MAVLink audit frame is available",
+            "reason": f"no latest run-owned {label} audit frame is available",
         }
     try:
         message = json.loads(result.stdout)
@@ -299,12 +301,12 @@ def sample_qgc_heartbeat(receipt: dict[str, Any]) -> dict[str, Any]:
         or envelope.get("schema") != "furia.mavlink.frame"
         or envelope.get("version") != "1.0.0"
         or envelope.get("callsign") != callsign
-        or envelope.get("direction") != "gcs_to_antoine"
+        or envelope.get("direction") != direction
         or envelope.get("message_id") != 0
     ):
         return {
             "status": "unverified",
-            "reason": "latest audit frame is not this callsign's GCS heartbeat",
+            "reason": f"latest audit frame is not this callsign's {label} heartbeat",
         }
     received_ms = envelope.get("received_at_unix_ms")
     if (
@@ -312,20 +314,40 @@ def sample_qgc_heartbeat(receipt: dict[str, Any]) -> dict[str, Any]:
         or isinstance(received_ms, bool)
         or not math.isfinite(received_ms)
     ):
-        return {"status": "invalid", "reason": "GCS heartbeat audit timestamp is invalid"}
+        return {"status": "invalid", "reason": f"{label} heartbeat audit timestamp is invalid"}
     age = time.time() - received_ms / 1000.0
     if age < -POSE_RECORDER_MAX_FUTURE_SECONDS or age > MAVLINK_HEARTBEAT_MAX_AGE_SECONDS:
-        return {"status": "stale", "reason": "latest GCS heartbeat audit frame is not fresh"}
+        return {"status": "stale", "reason": f"latest {label} heartbeat audit frame is not fresh"}
     source = envelope.get("source")
     if not isinstance(source, str) or not source.startswith("127.0.0.1:"):
-        return {"status": "unverified", "reason": "GCS heartbeat did not arrive from loopback"}
+        return {"status": "unverified", "reason": f"{label} heartbeat did not arrive from loopback"}
     return {
         "status": "observed",
         "source": source,
         "ageSeconds": max(0.0, age),
         "messageId": 0,
-        "reason": "fresh loopback GCS heartbeat is present in the run-owned JetStream audit",
+        "reason": f"fresh loopback {label} heartbeat is present in the run-owned JetStream audit",
     }
+
+
+def sample_qgc_heartbeat(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Read the latest persisted inbound GCS heartbeat."""
+    return _sample_audited_heartbeat(
+        receipt,
+        subject_prefix="furia.mavlink.command",
+        direction="gcs_to_antoine",
+        label="GCS",
+    )
+
+
+def sample_bridge_heartbeat(receipt: dict[str, Any]) -> dict[str, Any]:
+    """Read the latest bridge-emitted vehicle-to-GCS HEARTBEAT."""
+    return _sample_audited_heartbeat(
+        receipt,
+        subject_prefix="furia.mavlink.heartbeat",
+        direction="vehicle_to_gcs",
+        label="bridge",
+    )
 
 
 def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
@@ -623,10 +645,7 @@ def inspect(receipt_path: Path) -> dict[str, Any]:
         and f"--qgc-bind {expected_bridge_bind}" in bridge_identity
     )
     qgc_heartbeat = sample_qgc_heartbeat(receipt)
-    bridge_heartbeat = {
-        "status": "unverified",
-        "reason": "status has no independent observation of a vehicle-to-GCS MAVLink HEARTBEAT",
-    }
+    bridge_heartbeat = sample_bridge_heartbeat(receipt)
     qgc_process = checks.get("qgcUserProcess", {})
     qgc_identity_matches = (
         isinstance(qgc_process, dict)
