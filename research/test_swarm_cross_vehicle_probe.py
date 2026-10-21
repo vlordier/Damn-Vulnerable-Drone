@@ -15,6 +15,7 @@ from swarm_cross_vehicle_probe import (
     actuator_numeric_vector,
     compare_effect_snapshots,
     controller_decision,
+    finite_number,
     main,
     mutate_setpoint,
     pose_simulation_time,
@@ -111,7 +112,9 @@ class MutationTests(unittest.TestCase):
     def test_actuator_vector_rejects_partial_or_nonfinite_values(self) -> None:
         self.assertIsNone(actuator_numeric_vector({"left": 0.2, "right": "unknown"}))
         self.assertIsNone(actuator_numeric_vector({"left": [0.2, float("nan")]}))
+        self.assertIsNone(actuator_numeric_vector({"left": 10**400}))
         self.assertEqual(actuator_numeric_vector({"left": [0.2, 0.3]}), [0.2, 0.3])
+        self.assertFalse(finite_number(10**400))
 
     def test_effect_measurement_requires_run_and_vehicle_bound_grants(self) -> None:
         def snapshot(simulation_time: float, sequence: int, grant_run: str) -> dict:
@@ -352,6 +355,7 @@ class PoseTruthTests(unittest.TestCase):
             {"sec": 1, "nsec": True},
             {"sec": 1, "nsec": 1_000_000_000},
             {"sec": -1, "nsec": 0},
+            {"sec": 10**400, "nsec": 0},
         ):
             with self.subTest(stamp=stamp):
                 self.assertIsNone(pose_simulation_time(stamp))

@@ -23,6 +23,15 @@ PROBE_SEQUENCE_GAP = 100
 DECISION_TIMEOUT_SECONDS = 5.0
 
 
+def finite_number(value: object) -> bool:
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def validate_server(server: str) -> None:
     parsed = urlsplit(server)
     if (
@@ -161,12 +170,7 @@ def target_plan(run_dir: Path, callsign: str) -> tuple[str, list[float]]:
         not isinstance(model, str)
         or not isinstance(target, list)
         or len(target) != 3
-        or any(
-            not isinstance(value, (int, float))
-            or isinstance(value, bool)
-            or not math.isfinite(value)
-            for value in target
-        )
+        or any(not finite_number(value) for value in target)
     ):
         raise ValueError("target final waypoint is malformed")
     return model, [float(value) for value in target]
@@ -249,7 +253,10 @@ def pose_simulation_time(stamp: object) -> float | None:
         or not 0 <= nanoseconds < 1_000_000_000
     ):
         return None
-    return seconds + nanoseconds / 1_000_000_000
+    try:
+        return seconds + nanoseconds / 1_000_000_000
+    except OverflowError:
+        return None
 
 
 def vehicle_effect_snapshot(run_dir: Path, models: dict[str, str]) -> dict:
@@ -293,7 +300,7 @@ def vehicle_effect_snapshot(run_dir: Path, models: dict[str, str]) -> dict:
                 continue
             try:
                 position = [float(pose["position"][axis]) for axis in ("x", "y", "z")]
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, OverflowError):
                 continue
             if not all(math.isfinite(value) for value in position):
                 continue
@@ -359,12 +366,7 @@ def actuator_numeric_vector(values: object) -> list[float] | None:
     for key in sorted(values):
         value = values[key]
         candidates = value if isinstance(value, list) else [value]
-        if any(
-            not isinstance(item, (int, float))
-            or isinstance(item, bool)
-            or not math.isfinite(float(item))
-            for item in candidates
-        ):
+        if any(not finite_number(item) for item in candidates):
             return None
         vector.extend(float(item) for item in candidates)
     return vector or None
@@ -480,7 +482,7 @@ def pose_window_at_target(
             position = pose.get("position")
             try:
                 xyz = [float(position[axis]) for axis in ("x", "y", "z")]
-            except (KeyError, TypeError, ValueError):
+            except (KeyError, TypeError, ValueError, OverflowError):
                 continue
             if not all(math.isfinite(value) for value in xyz):
                 continue
