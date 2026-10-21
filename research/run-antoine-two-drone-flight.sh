@@ -22,6 +22,7 @@ FAULT_SECONDS="${ANTOINE_SWARM_FAULT_SECONDS:-4}"
 FAULT_STARTUP_TIMEOUT="${ANTOINE_SWARM_FAULT_STARTUP_TIMEOUT:-30}"
 FAULT_RATE="${ANTOINE_SWARM_FAULT_RATE_HZ:-10}"
 FAULT_MAX_MESSAGES="${ANTOINE_SWARM_FAULT_MAX_MESSAGES:-40}"
+FAULT_WAIT_TIMEOUT="${ANTOINE_SWARM_FAULT_WAIT_TIMEOUT_SECONDS:-90}"
 AUTH_MUTATION="${ANTOINE_SWARM_AUTH_MUTATION:-wrong-callsign}"
 FAULT_STATUS=0
 FAULT_PID=""
@@ -144,6 +145,10 @@ if [[ ! "${FAULT_RATE}" =~ ^[0-9]+$ ]] || ((FAULT_RATE < 1 || FAULT_RATE > 20));
 fi
 if [[ ! "${FAULT_MAX_MESSAGES}" =~ ^[0-9]+$ ]] || ((FAULT_MAX_MESSAGES < 1 || FAULT_MAX_MESSAGES > 200)); then
   echo "Fault message cap must be 1..200" >&2
+  exit 2
+fi
+if [[ ! "${FAULT_WAIT_TIMEOUT}" =~ ^[0-9]+$ ]] || ((FAULT_WAIT_TIMEOUT < 1 || FAULT_WAIT_TIMEOUT > 180)); then
+  echo "Fault pose-gate wait timeout must be 1..180 seconds" >&2
   exit 2
 fi
 if [[ "${FAULT}" == cross-vehicle-authorization && "${FAULT_MAX_MESSAGES}" != 1 ]]; then
@@ -402,7 +407,7 @@ if [[ "${FAULT}" == command-rate ]]; then
     --server "nats://127.0.0.1:${ANTOINE_GZ_FLIGHT_NATS_PORT}" --run-dir "${RUN_DIR}" \
     --source "${FAULT_SOURCE}" --target "${FAULT_CALLSIGN}" \
     --rate-hz "${FAULT_RATE}" --duration "${FAULT_SECONDS}" \
-    --max-messages "${FAULT_MAX_MESSAGES}" --wait-timeout-seconds 90 \
+    --max-messages "${FAULT_MAX_MESSAGES}" --wait-timeout-seconds "${FAULT_WAIT_TIMEOUT}" \
     >"${RUN_DIR}/logs/setpoint-rate-probe.log" 2>&1 &
   FAULT_PID=$!
 fi
