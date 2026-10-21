@@ -380,25 +380,88 @@ async def run_check() -> dict:
             (row.get("sequence", -1) for row in actuator_before_rtl), default=-1
         )
         caller_return_target = [home[0] + 5.0, home[1] + 5.0, home[2] + 2.0]
-        unsigned_stale_run_rtl = await check.direct_control(
-            {
-                "type": "rtl",
-                "payload": {
-                    "return_target_enu_m": caller_return_target,
-                    "north_m": 2.0,
-                    "east_m": 2.0,
-                    "down_m": -2.0,
-                },
+        rtl_command = {
+            "type": "rtl",
+            "payload": {
+                "return_target_enu_m": caller_return_target,
+                "north_m": 2.0,
+                "east_m": 2.0,
+                "down_m": -2.0,
             },
-            request_id="gazebo-rtl-unsigned-stale-run-target-override",
+        }
+        unsigned_rtl = await check.direct_control({"type": "rtl"}, request_id="gazebo-rtl-unsigned")
+        stale_run_rtl = await check.direct_control(
+            {"type": "rtl"},
+            request_id="gazebo-rtl-stale-run",
+            extra_fields={"runId": "stale-run-without-authority"},
+        )
+        stale_task_rtl = await check.direct_control(
+            {"type": "rtl"},
+            request_id="gazebo-rtl-unrelated-task",
+            extra_fields={"taskId": "unrelated-task"},
+        )
+        stale_grant_rtl = await check.direct_control(
+            {"type": "rtl"},
+            request_id="gazebo-rtl-fake-expired-grant",
             extra_fields={
-                "runId": "stale-run-without-authority",
-                "taskId": "unrelated-task",
-                "executionGrant": {"signature": "expired-untrusted-grant", "expiresAtUnixMs": 0},
+                "executionGrant": {
+                    "signature": "expired-untrusted-grant",
+                    "expiresAtUnixMs": 0,
+                }
             },
         )
-        assert unsigned_stale_run_rtl.get("accepted") is True, unsigned_stale_run_rtl
-        assert unsigned_stale_run_rtl.get("mode") == "RTL", unsigned_stale_run_rtl
+        caller_target_rtl = await check.direct_control(
+            rtl_command,
+            request_id="gazebo-rtl-caller-target-override",
+        )
+        rtl_probes = {
+            "unsigned": {
+                "signaturePresent": False,
+                "runIdPresent": False,
+                "taskIdPresent": False,
+                "executionGrantPresent": False,
+                "response": unsigned_rtl,
+            },
+            "staleRun": {
+                "signaturePresent": False,
+                "runIdPresent": True,
+                "runId": "stale-run-without-authority",
+                "taskIdPresent": False,
+                "executionGrantPresent": False,
+                "response": stale_run_rtl,
+            },
+            "unrelatedTask": {
+                "signaturePresent": False,
+                "runIdPresent": False,
+                "taskIdPresent": True,
+                "taskId": "unrelated-task",
+                "executionGrantPresent": False,
+                "response": stale_task_rtl,
+            },
+            "fakeExpiredGrant": {
+                "signaturePresent": False,
+                "runIdPresent": False,
+                "taskIdPresent": False,
+                "executionGrantPresent": True,
+                "executionGrant": {
+                    "signature": "expired-untrusted-grant",
+                    "expiresAtUnixMs": 0,
+                },
+                "response": stale_grant_rtl,
+            },
+            "callerTarget": {
+                "signaturePresent": False,
+                "runIdPresent": False,
+                "taskIdPresent": False,
+                "executionGrantPresent": False,
+                "callerReturnTargetEnuM": caller_return_target,
+                "response": caller_target_rtl,
+            },
+        }
+        for probe_name, probe in rtl_probes.items():
+            response = probe["response"]
+            assert response.get("accepted") is True, (probe_name, response)
+            assert response.get("mode") == "RTL", (probe_name, response)
         return_cruise = await check.wait_pose(
             lambda point: (
                 math.dist(point[:2], home[:2]) <= 0.65 and abs(point[2] - attack_start[2]) <= 0.3
@@ -445,7 +508,7 @@ async def run_check() -> dict:
                 "wrongCallsign": wrong_callsign,
                 "unsupportedReturnTarget": unsupported_return_target,
                 "outOfEnvelopePosition": out_of_envelope,
-                "unsignedStaleRunAndGrantRtl": unsigned_stale_run_rtl,
+                "rtlRequests": rtl_probes,
                 "callerReturnTargetEnuM": caller_return_target,
                 "targetSource": "authority-captured home; caller return-target fields were ignored",
                 "trajectoryEvidence": {

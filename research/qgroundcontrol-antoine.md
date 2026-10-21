@@ -107,12 +107,13 @@ trajectory or actuator-safety result.
 A separate isolated Gazebo flight check exercised the local test authority
 directly on its loopback NATS subject. It rejected wrong callsign, unsupported
 `set_return_target`, and an out-of-envelope position request. It accepted an
-unsigned RTL request with stale run/task and fake expired-grant fields; the
-caller-supplied 5 m return target was ignored, and independent Gazebo pose plus
-the applier actuator audit showed a return toward the authority-captured home,
-followed by landing and disarm. The local test authority signs bounded actuator
-grants itself; this result does not establish furia-core authorization or
-production NATS exposure. Evidence: `/private/tmp/antoine-gz-mavlink-20261021T211910Z-acdc82a6-6961-4775-82a0-a1c75a92e0f6/gazebo-mavlink-acceptance.json`.
+separate unsigned, stale-run, unrelated-task, fake expired-grant, and caller-
+target RTL requests; each returned accepted. The caller-supplied 5 m return
+target was ignored, and independent Gazebo pose plus the applier actuator audit
+showed a return toward the authority-captured home, followed by landing and
+disarm. The local test authority signs bounded actuator grants itself; this
+result does not establish furia-core authorization or production NATS exposure.
+Evidence: `/private/tmp/antoine-gz-mavlink-20261021T212758Z-4dbe20b0-4d44-4f62-b1fa-ecfb51581696/gazebo-mavlink-acceptance.json`.
 
 The local scenario uses `pymavlink` through the `uv` `mavlink-check` group and
 the Rust bridge's `mavlink` 0.18 common dialect. It starts a separate
