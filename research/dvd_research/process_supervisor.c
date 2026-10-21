@@ -166,8 +166,14 @@ static int run_command(const char *identity, char **command) {
 }
 
 static int stop_command(const char *identity) {
-  FILE *record = fopen(identity, "r");
-  if (!record) { perror("supervisor identity"); return 1; }
+  int record_fd = open(identity, O_RDONLY | O_NOFOLLOW | O_CLOEXEC);
+  if (record_fd < 0) { perror("supervisor identity"); return 1; }
+  FILE *record = fdopen(record_fd, "r");
+  if (!record) {
+    perror("supervisor identity stream");
+    close(record_fd);
+    return 1;
+  }
   struct stat record_stat;
   if (fstat(fileno(record), &record_stat) < 0 || !S_ISREG(record_stat.st_mode) ||
       record_stat.st_uid != getuid() || (record_stat.st_mode & 077) != 0) {

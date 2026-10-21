@@ -78,6 +78,14 @@ if "${SUPERVISOR}" stop "${TEMP_ROOT}/stale.identity" >/dev/null 2>&1; then
   echo "supervisor accepted a replaced identity" >&2
   exit 1
 fi
+ln -s "${identity}" "${TEMP_ROOT}/linked.identity"
+if "${SUPERVISOR}" stop "${TEMP_ROOT}/linked.identity" >/dev/null 2>&1; then
+  echo "supervisor followed a symlinked identity record" >&2
+  exit 1
+fi
+owned_child_pid="$(awk -F= '$1 == "child_pid" { print $2; exit }' "${identity}")"
+kill -0 "${owned_child_pid}"
+rm "${TEMP_ROOT}/linked.identity"
 kill -0 "${unrelated_pid}"
 "${SUPERVISOR}" stop "${identity}"
 wait "${owned_pid}" || true
