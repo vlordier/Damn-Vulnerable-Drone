@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,77 @@ MAX_DROPPED_MESSAGES = 200
 MAX_POSE_TIME_SKEW_SECONDS = 0.15
 MAX_PARTITION_WINDOW_SECONDS = 10.0
 MINIMUM_SEPARATION_METERS = 1.0
+PARTITION_MARKER_INTEGER_FIELDS = {
+    "start": ("unix_ms", "after_ms", "duration_ms", "source_sequence", "simulation_time_ns"),
+    "end": (
+        "unix_ms",
+        "elapsed_ms",
+        "dropped_messages",
+        "last_dropped_source_sequence",
+        "recovery_source_sequence",
+        "last_dropped_simulation_time_ns",
+        "recovery_simulation_time_ns",
+    ),
+}
+
+
+def inconclusive_report(
+    run_id: str,
+    fault: str,
+    target: str,
+    reason: str,
+    lines: list[str] | None = None,
+    *,
+    partition_entered: bool = False,
+    partition_exited: bool = False,
+    watchdog_entered: bool = False,
+    watchdog_exited: bool = False,
+) -> dict[str, Any]:
+    return {
+        "contract": "damn-vulnerable-drone.antoine-state-partition-evidence",
+        "version": "1.3.0",
+        "runId": run_id,
+        "fault": fault,
+        "status": "inconclusive",
+        "mechanism": "run-local controller-only NATS state subject relay; authority remains subscribed to original Gazebo state subject",
+        "targetCallsign": target,
+        "partition": {"boundedAndRecovered": False, "invalidReason": reason},
+        "markers": {
+            "partitionEntered": partition_entered,
+            "partitionExited": partition_exited,
+            "watchdogEntered": watchdog_entered,
+            "watchdogExited": watchdog_exited,
+            "watchdogOrderValid": False,
+            "authoritySourceContinued": False,
+            "authorityProgress": {
+                "status": "unavailable",
+                "eventCount": 0,
+                "eventSequences": [],
+            },
+        },
+        "stateCoalescing": state_coalescing_diagnostic(lines, target),
+        "vehicles": {},
+        "actuatorWindows": {},
+        "minimumSynchronizedWindowSeparationM": None,
+        "minimumSeparationThresholdM": MINIMUM_SEPARATION_METERS,
+        "poseTimeToleranceSeconds": MAX_POSE_TIME_SKEW_SECONDS,
+        "actuatorTimeToleranceMs": 1000,
+        "actuatorDeltaMetric": "L2 distance over sorted numeric values fields; diagnostic only, not a neutralization claim",
+        "limits": "Local simulated controller delivery partition only. Zero-velocity watchdog hold is not actuator neutralization; final disarm is qualified separately by the whole-flight report.",
+    }
+
+
+def parse_partition_marker_integers(
+    start: dict[str, str], end: dict[str, str]
+) -> dict[str, int] | None:
+    result = {}
+    for marker_name, values in (("start", start), ("end", end)):
+        for field in PARTITION_MARKER_INTEGER_FIELDS[marker_name]:
+            raw = values.get(field)
+            if not isinstance(raw, str) or re.fullmatch(r"[0-9]+", raw, flags=re.ASCII) is None:
+                return None
+            result[f"{marker_name}_{field}"] = int(raw)
+    return result
 
 
 def read_poses(run_dir: Path, models: set[str]) -> dict[str, list[tuple[float, list[float]]]]:
@@ -137,7 +209,10 @@ def summarize(run_dir: Path) -> dict[str, Any]:
     if target not in roster or len(roster) < 2:
         raise ValueError("fault target and at least one peer must be present in the run roster")
     controller_log = run_dir / "logs" / f"antoine-controller-{target}.log"
-    lines = controller_log.read_text(encoding="utf-8", errors="replace").splitlines()
+    try:
+        lines = controller_log.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return inconclusive_report(run_id, fault, target, "controller-log-missing")
     entered = [
         value for line in lines if (value := marker(line, "ANTOINE_GZ_STATE_PARTITION_ENTER"))
     ]
@@ -163,7 +238,17 @@ def summarize(run_dir: Path) -> dict[str, Any]:
         if f"ANTOINE_GZ_STALE_HOLD_EXIT callsign={target}" in line
     ]
     if len(entered) != 1 or len(exited) != 1:
-        raise ValueError("partition entry and recovery markers must each be unique")
+        return inconclusive_report(
+            run_id,
+            fault,
+            target,
+            "partition-markers-missing-or-ambiguous",
+            lines,
+            partition_entered=bool(entered),
+            partition_exited=bool(exited),
+            watchdog_entered=bool(hold_enter),
+            watchdog_exited=bool(hold_exit),
+        )
     start, end = entered[0], exited[0]
     if (
         start.get("run_id") != run_id
@@ -171,16 +256,39 @@ def summarize(run_dir: Path) -> dict[str, Any]:
         or start.get("callsign") != target
         or end.get("callsign") != target
     ):
-        raise ValueError("partition markers do not match run/callsign")
-    dropped = int(end["dropped_messages"])
-    first_sequence = int(start["source_sequence"])
-    last_sequence = int(end["last_dropped_source_sequence"])
-    recovery_sequence = int(end["recovery_source_sequence"])
-    first_sim = int(start["simulation_time_ns"])
-    last_sim = int(end["last_dropped_simulation_time_ns"])
-    recovery_sim = int(end["recovery_simulation_time_ns"])
-    start_unix, end_unix = int(start["unix_ms"]), int(end["unix_ms"])
-    after_ms, duration_ms = int(start["after_ms"]), int(start["duration_ms"])
+        return inconclusive_report(
+            run_id,
+            fault,
+            target,
+            "partition-marker-run-or-callsign-mismatch",
+            lines,
+            partition_entered=True,
+            partition_exited=True,
+            watchdog_entered=bool(hold_enter),
+            watchdog_exited=bool(hold_exit),
+        )
+    numeric = parse_partition_marker_integers(start, end)
+    if numeric is None:
+        return inconclusive_report(
+            run_id,
+            fault,
+            target,
+            "partition-marker-numeric-fields-invalid",
+            lines,
+            partition_entered=True,
+            partition_exited=True,
+            watchdog_entered=bool(hold_enter),
+            watchdog_exited=bool(hold_exit),
+        )
+    dropped = numeric["end_dropped_messages"]
+    first_sequence = numeric["start_source_sequence"]
+    last_sequence = numeric["end_last_dropped_source_sequence"]
+    recovery_sequence = numeric["end_recovery_source_sequence"]
+    first_sim = numeric["start_simulation_time_ns"]
+    last_sim = numeric["end_last_dropped_simulation_time_ns"]
+    recovery_sim = numeric["end_recovery_simulation_time_ns"]
+    start_unix, end_unix = numeric["start_unix_ms"], numeric["end_unix_ms"]
+    after_ms, duration_ms = numeric["start_after_ms"], numeric["start_duration_ms"]
     valid_relay = (
         1 <= dropped <= MAX_DROPPED_MESSAGES
         and first_sequence <= last_sequence < recovery_sequence

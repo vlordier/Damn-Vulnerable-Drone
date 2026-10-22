@@ -117,6 +117,51 @@ ANTOINE_GZ_STALE_HOLD_EXIT callsign=drone-2 stale_limit_ms=250 behavior=zero-vel
         with self.assertRaisesRegex(ValueError, "target is missing"):
             summarize(self.run_dir)
 
+    def test_missing_controller_log_is_reported_inconclusive(self) -> None:
+        (self.run_dir / "logs" / "antoine-controller-drone-2.log").unlink()
+
+        report = summarize(self.run_dir)
+
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertEqual(report["partition"]["invalidReason"], "controller-log-missing")
+        self.assertEqual(report["stateCoalescing"]["status"], "unavailable")
+
+    def test_duplicate_partition_markers_are_reported_inconclusive(self) -> None:
+        path = self.run_dir / "logs" / "antoine-controller-drone-2.log"
+        lines = path.read_text().splitlines()
+        lines.append(lines[1])
+        path.write_text("\n".join(lines) + "\n")
+
+        report = summarize(self.run_dir)
+
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertEqual(
+            report["partition"]["invalidReason"], "partition-markers-missing-or-ambiguous"
+        )
+        self.assertTrue(report["markers"]["partitionEntered"])
+
+    def test_mismatched_partition_identity_is_reported_inconclusive(self) -> None:
+        path = self.run_dir / "logs" / "antoine-controller-drone-2.log"
+        path.write_text(path.read_text().replace(self.run_id, "foreign-run"))
+
+        report = summarize(self.run_dir)
+
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertEqual(
+            report["partition"]["invalidReason"], "partition-marker-run-or-callsign-mismatch"
+        )
+
+    def test_malformed_partition_numbers_are_reported_inconclusive(self) -> None:
+        path = self.run_dir / "logs" / "antoine-controller-drone-2.log"
+        path.write_text(path.read_text().replace("dropped_messages=10", "dropped_messages=ten"))
+
+        report = summarize(self.run_dir)
+
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertEqual(
+            report["partition"]["invalidReason"], "partition-marker-numeric-fields-invalid"
+        )
+
     def test_state_coalescing_counts_target_events_without_changing_fault_status(self) -> None:
         path = self.run_dir / "logs" / "antoine-controller-drone-2.log"
         path.write_text(
