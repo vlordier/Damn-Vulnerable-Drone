@@ -38,6 +38,10 @@ ANTOINE_GZ_STALE_HOLD_EXIT callsign=drone-2 stale_limit_ms=250 behavior=zero-vel
                 "atUnixMs": 10500,
                 "eventSequence": 7,
                 "event": "grant_issued",
+                "waypointIndex": 0,
+                "grantSequence": 1,
+                "setpointSequence": 1,
+                "vigieAdmissionSequence": 1,
             }
         ]
         evidence = {"runId": self.run_id, "callsign": "drone-2", "missionProgress": events}
@@ -217,6 +221,32 @@ ANTOINE_GZ_STALE_HOLD_EXIT callsign=drone-2 stale_limit_ms=250 behavior=zero-vel
         evidence["missionProgress"][0]["atUnixMs"] = 12000
         evidence_path.write_text(json.dumps(evidence))
         report = summarize(self.run_dir)
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertFalse(report["markers"]["authoritySourceContinued"])
+
+    def test_malformed_authority_event_does_not_qualify_progress(self) -> None:
+        evidence_path = self.run_dir / "flight-evidence-drone-2.json"
+        evidence = json.loads(evidence_path.read_text())
+        evidence["missionProgress"][0]["event"] = "unrecognized"
+        evidence_path.write_text(json.dumps(evidence))
+
+        report = summarize(self.run_dir)
+
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertFalse(report["markers"]["authoritySourceContinued"])
+        self.assertEqual(
+            report["markers"]["authorityProgress"]["invalidReason"],
+            "mission-progress-identity-sequence-or-binding-invalid",
+        )
+
+    def test_authority_progress_requires_all_three_sequence_bindings(self) -> None:
+        evidence_path = self.run_dir / "flight-evidence-drone-2.json"
+        evidence = json.loads(evidence_path.read_text())
+        del evidence["missionProgress"][0]["vigieAdmissionSequence"]
+        evidence_path.write_text(json.dumps(evidence))
+
+        report = summarize(self.run_dir)
+
         self.assertEqual(report["status"], "inconclusive")
         self.assertFalse(report["markers"]["authoritySourceContinued"])
 

@@ -178,18 +178,51 @@ def authority_progress_during_partition(
     events = evidence.get("missionProgress")
     if not isinstance(events, list):
         return {"status": "unavailable", "eventCount": 0, "eventSequences": []}
+    valid_events = []
+    last_sequence = 0
+    last_timestamp = 0
+    for event in events:
+        if not isinstance(event, dict):
+            return {
+                "status": "invalid",
+                "eventCount": 0,
+                "eventSequences": [],
+                "invalidReason": "malformed-mission-progress-event",
+            }
+        sequence = event.get("eventSequence")
+        timestamp = event.get("atUnixMs")
+        waypoint_index = event.get("waypointIndex")
+        bound_sequences = [
+            event.get("grantSequence"),
+            event.get("setpointSequence"),
+            event.get("vigieAdmissionSequence"),
+        ]
+        if (
+            event.get("runId") != run_id
+            or event.get("callsign") != callsign
+            or type(sequence) is not int
+            or sequence <= last_sequence
+            or type(timestamp) is not int
+            or timestamp < last_timestamp
+            or type(waypoint_index) is not int
+            or waypoint_index < 0
+            or any(type(value) is not int or value < 0 for value in bound_sequences)
+            or event.get("event") not in {"grant_issued", "setpoint_published", "waypoint_reached"}
+        ):
+            return {
+                "status": "invalid",
+                "eventCount": 0,
+                "eventSequences": [],
+                "invalidReason": "mission-progress-identity-sequence-or-binding-invalid",
+            }
+        last_sequence = sequence
+        last_timestamp = timestamp
+        valid_events.append(event)
     selected = [
-        event
-        for event in events
-        if isinstance(event, dict)
-        and event.get("runId") == run_id
-        and event.get("callsign") == callsign
-        and type(event.get("atUnixMs")) is int
-        and start_unix_ms <= event["atUnixMs"] <= end_unix_ms
+        event for event in valid_events if start_unix_ms <= event["atUnixMs"] <= end_unix_ms
     ]
-    sequences = [event.get("eventSequence") for event in selected]
-    valid = bool(selected) and all(type(value) is int and value > 0 for value in sequences)
-    valid = valid and sequences == sorted(set(sequences))
+    sequences = [event["eventSequence"] for event in selected]
+    valid = bool(selected)
     return {
         "status": "measured" if valid else "inconclusive",
         "eventCount": len(selected),
