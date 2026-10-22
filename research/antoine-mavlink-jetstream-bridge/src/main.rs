@@ -97,9 +97,27 @@ fn position_setpoint_timestamp_is_fresh(
     let receiver_elapsed_ms = now.duration_since(clock.received_at).as_millis();
     let sender_elapsed_ms = u128::from(time_boot_ms.wrapping_sub(clock.time_boot_ms));
     if sender_elapsed_ms > receiver_elapsed_ms + MAX_SETPOINT_CLOCK_FUTURE_SKEW.as_millis() {
+        // A restarted QGC process can reset time_boot_ms while the bridge is
+        // still running. Drop this first post-reset setpoint and establish a
+        // new clock baseline so subsequent fresh setpoints can be accepted.
+        // A normal u32 wrap has a small wrapping delta and does not enter here.
+        if time_boot_ms < clock.time_boot_ms {
+            *anchor = Some(QgcClockAnchor {
+                time_boot_ms,
+                received_at: now,
+            });
+        }
         return false;
     }
-    receiver_elapsed_ms.saturating_sub(sender_elapsed_ms) <= MAX_SETPOINT_QUEUE_AGE.as_millis()
+    let fresh =
+        receiver_elapsed_ms.saturating_sub(sender_elapsed_ms) <= MAX_SETPOINT_QUEUE_AGE.as_millis();
+    if fresh {
+        *anchor = Some(QgcClockAnchor {
+            time_boot_ms,
+            received_at: now,
+        });
+    }
+    fresh
 }
 
 impl PendingMissionUpload {
@@ -2301,6 +2319,28 @@ mod tests {
             &timestamp(49),
             &mut anchor,
             start + Duration::from_millis(100)
+        ));
+    }
+
+    #[test]
+    fn restarted_qgc_clock_drops_reset_sample_then_recovers() {
+        let start = Instant::now();
+        let mut anchor = None;
+        let timestamp = |time_boot_ms: u32| time_boot_ms.to_le_bytes();
+        assert!(position_setpoint_timestamp_is_fresh(
+            &timestamp(10_000),
+            &mut anchor,
+            start
+        ));
+        assert!(!position_setpoint_timestamp_is_fresh(
+            &timestamp(10),
+            &mut anchor,
+            start + Duration::from_millis(100)
+        ));
+        assert!(position_setpoint_timestamp_is_fresh(
+            &timestamp(110),
+            &mut anchor,
+            start + Duration::from_millis(200)
         ));
     }
 
