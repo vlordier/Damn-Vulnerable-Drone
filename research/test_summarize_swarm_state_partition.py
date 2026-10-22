@@ -99,6 +99,24 @@ ANTOINE_GZ_STALE_HOLD_EXIT callsign=drone-2 stale_limit_ms=250 behavior=zero-vel
             },
         )
 
+    def test_unsupported_fault_is_not_relabelled_as_a_state_partition(self) -> None:
+        config_path = self.run_dir / "research-swarm-config.json"
+        config = json.loads(config_path.read_text())
+        config["fault"] = "command-rate"
+        config_path.write_text(json.dumps(config))
+
+        with self.assertRaisesRegex(ValueError, "unsupported or missing"):
+            summarize(self.run_dir)
+
+    def test_missing_fault_target_is_not_defaulted_to_another_vehicle(self) -> None:
+        config_path = self.run_dir / "research-swarm-config.json"
+        config = json.loads(config_path.read_text())
+        del config["faultCallsign"]
+        config_path.write_text(json.dumps(config))
+
+        with self.assertRaisesRegex(ValueError, "target is missing"):
+            summarize(self.run_dir)
+
     def test_state_coalescing_counts_target_events_without_changing_fault_status(self) -> None:
         path = self.run_dir / "logs" / "antoine-controller-drone-2.log"
         path.write_text(

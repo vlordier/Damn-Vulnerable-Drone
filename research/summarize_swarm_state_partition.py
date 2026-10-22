@@ -127,10 +127,12 @@ def authority_progress_during_partition(
 def summarize(run_dir: Path) -> dict[str, Any]:
     config = json.loads((run_dir / "research-swarm-config.json").read_text(encoding="utf-8"))
     run_id = run_dir.name
-    target = config.get("faultCallsign", "drone-2")
+    target = config.get("faultCallsign")
     fault = config.get("fault")
     if fault not in {"state-stream-partition", "controller-state-blackhole"}:
-        fault = "state-stream-partition"
+        raise ValueError(f"unsupported or missing state-partition fault: {fault!r}")
+    if not isinstance(target, str) or not target:
+        raise ValueError("state-partition fault target is missing from the run config")
     roster = {item["callsign"]: item["model"] for item in config.get("vehicles", [])}
     if target not in roster or len(roster) < 2:
         raise ValueError("fault target and at least one peer must be present in the run roster")
