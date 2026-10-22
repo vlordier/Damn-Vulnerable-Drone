@@ -80,6 +80,7 @@ class GazeboFailureReportTests(unittest.TestCase):
             "version": "1.0.0",
             "identity": "drone-1",
             "protocol": "antoine-gz",
+            "observedAtUnixMs": time.time_ns() // 1_000_000,
         }
         asyncio.run(deliver(json.dumps(valid).encode()))
         self.assertEqual(checker.raw_telemetry, valid)
@@ -90,8 +91,17 @@ class GazeboFailureReportTests(unittest.TestCase):
             {**valid, "protocol": "antoine"},
             {**valid, "version": "2.0.0"},
             {**valid, "identity": "another-drone"},
+            {**valid, "observedAtUnixMs": valid["observedAtUnixMs"] - 1_001},
+            {**valid, "observedAtUnixMs": valid["observedAtUnixMs"] + 251},
+            {**valid, "observedAtUnixMs": True},
+            {key: value for key, value in valid.items() if key != "observedAtUnixMs"},
         ):
-            asyncio.run(deliver(json.dumps(invalid).encode()))
+            with mock.patch.object(
+                CHECKER.time,
+                "time_ns",
+                return_value=valid["observedAtUnixMs"] * 1_000_000,
+            ):
+                asyncio.run(deliver(json.dumps(invalid).encode()))
             self.assertEqual(checker.raw_telemetry, valid)
             self.assertIsNotNone(checker.telemetry_rejection)
 

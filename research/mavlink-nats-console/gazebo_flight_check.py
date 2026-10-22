@@ -15,6 +15,8 @@ from flight_check import FlightCheck
 
 POSE_SAMPLE_MAX_AGE_SECONDS = 1.5
 MAVLINK_STATE_MAX_AGE_SECONDS = 1.5
+TELEMETRY_MAX_AGE_MS = 1_000
+TELEMETRY_MAX_FUTURE_MS = 250
 
 
 def gazebo_timestamp_seconds(value: dict) -> float | None:
@@ -113,6 +115,16 @@ class GazeboFlightCheck(FlightCheck):
             self.telemetry_rejection = (
                 "telemetry schema, Gazebo protocol, or callsign does not match this profile"
             )
+            return
+        observed_at_ms = value.get("observedAtUnixMs")
+        now_ms = time.time_ns() // 1_000_000
+        if (
+            not isinstance(observed_at_ms, int)
+            or isinstance(observed_at_ms, bool)
+            or observed_at_ms < now_ms - TELEMETRY_MAX_AGE_MS
+            or observed_at_ms > now_ms + TELEMETRY_MAX_FUTURE_MS
+        ):
+            self.telemetry_rejection = "Gazebo telemetry observation timestamp is stale or invalid"
             return
         self.raw_telemetry = value
         self.telemetry_rejection = None
