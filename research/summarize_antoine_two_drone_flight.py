@@ -22,7 +22,7 @@ DEFAULT_VEHICLES = [
 DEFAULT_SPACING_M = 8.0
 DEFAULT_ARRIVAL_HOLD_RADIUS_M = 0.15
 DEFAULT_TERMINAL_BRAKING_RADIUS_M = 0.15
-SWARM_REPORT_VERSION = "1.16.0"
+SWARM_REPORT_VERSION = "1.17.0"
 POSE_PAIR_TOLERANCE_SECONDS = 0.05
 MINIMUM_SEPARATION_METERS = 1.0
 MINIMUM_POSE_SAMPLES_PER_VEHICLE = 20
@@ -1478,6 +1478,141 @@ def load_provenance(run_dir: Path) -> tuple[bool | None, dict[str, Any]]:
     }
 
 
+def load_host_context(run_dir: Path, phase: str) -> dict[str, Any]:
+    path = run_dir / f"research-host-context-{phase}.json"
+    try:
+        context = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"status": "unavailable", "reason": "host-context-file-missing-or-invalid"}
+    if not isinstance(context, dict):
+        return {"status": "invalid", "reason": "host-context-not-an-object"}
+    load = context.get("loadAverage")
+    disk = context.get("disk")
+    processes = context.get("processes")
+    if (
+        context.get("contract") != "damn-vulnerable-drone.swarm-host-context"
+        or context.get("version") != "1.0.0"
+        or context.get("runId") != run_dir.name
+        or context.get("phase") != phase
+        or not isinstance(context.get("capturedAtUtc"), str)
+        or not isinstance(context.get("platform"), str)
+        or not isinstance(context.get("machine"), str)
+        or not isinstance(context.get("hostId"), str)
+        or len(context["hostId"]) != 64
+        or not isinstance(context.get("logicalCpuCount"), int)
+        or not isinstance(load, dict)
+        or load.get("status") != "captured"
+        or not isinstance(load.get("values"), list)
+        or len(load["values"]) != 3
+        or any(
+            not isinstance(value, (int, float)) or not math.isfinite(value)
+            for value in load["values"]
+        )
+        or not isinstance(disk, dict)
+        or not isinstance(disk.get("freeBytes"), int)
+        or not isinstance(processes, dict)
+        or processes.get("status") != "captured"
+        or not isinstance(processes.get("topCpuProcesses"), list)
+        or not isinstance(processes.get("simulationAndBuildProcesses"), list)
+    ):
+        return {"status": "invalid", "reason": "host-context-fields-invalid"}
+    return {
+        "status": "captured",
+        "capturedAtUtc": context["capturedAtUtc"],
+        "platform": context["platform"],
+        "machine": context["machine"],
+        "hostId": context["hostId"],
+        "logicalCpuCount": context["logicalCpuCount"],
+        "loadAverage": load["values"],
+        "diskFreeBytes": disk["freeBytes"],
+        "memory": context.get("memory"),
+        "processCount": processes.get("processCount"),
+        "topCpuProcesses": processes["topCpuProcesses"],
+        "simulationAndBuildProcesses": processes["simulationAndBuildProcesses"],
+    }
+
+
+def load_host_context_samples(run_dir: Path) -> dict[str, Any]:
+    path = run_dir / "research-host-context-during.jsonl"
+    samples: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return {"status": "unavailable", "reason": "host-context-samples-missing"}
+    if not lines:
+        return {"status": "invalid", "reason": "host-context-samples-empty"}
+    host_id: str | None = None
+    previous_time = -1
+    peak_cpu: dict[str, float] = {}
+    max_load = [0.0, 0.0, 0.0]
+    min_disk: int | None = None
+    relevant_names: set[str] = set()
+    for sequence, line in enumerate(lines):
+        try:
+            context = json.loads(line)
+        except json.JSONDecodeError:
+            return {"status": "invalid", "reason": "host-context-sample-json-invalid"}
+        load = context.get("loadAverage") if isinstance(context, dict) else None
+        disk = context.get("disk") if isinstance(context, dict) else None
+        processes = context.get("processes") if isinstance(context, dict) else None
+        timestamp = context.get("capturedAtUnixNs") if isinstance(context, dict) else None
+        loads = load.get("values") if isinstance(load, dict) else None
+        if (
+            not isinstance(context, dict)
+            or context.get("contract") != "damn-vulnerable-drone.swarm-host-context"
+            or context.get("version") != "1.0.0"
+            or context.get("runId") != run_dir.name
+            or context.get("phase") != "during"
+            or context.get("sampleSequence") != sequence
+            or not isinstance(timestamp, int)
+            or timestamp <= previous_time
+            or not isinstance(context.get("hostId"), str)
+            or len(context["hostId"]) != 64
+            or (host_id is not None and host_id != context["hostId"])
+            or not isinstance(load, dict)
+            or load.get("status") != "captured"
+            or not isinstance(loads, list)
+            or len(loads) != 3
+            or any(
+                not isinstance(value, (int, float)) or not math.isfinite(value) for value in loads
+            )
+            or not isinstance(disk, dict)
+            or not isinstance(disk.get("freeBytes"), int)
+            or not isinstance(processes, dict)
+            or processes.get("status") != "captured"
+            or not isinstance(processes.get("topCpuProcesses"), list)
+            or not isinstance(processes.get("simulationAndBuildProcesses"), list)
+        ):
+            return {"status": "invalid", "reason": "host-context-sample-fields-invalid"}
+        host_id = context["hostId"]
+        previous_time = timestamp
+        for index, value in enumerate(loads):
+            max_load[index] = max(max_load[index], value)
+        min_disk = disk["freeBytes"] if min_disk is None else min(min_disk, disk["freeBytes"])
+        for process in processes["topCpuProcesses"]:
+            if isinstance(process, dict) and isinstance(process.get("name"), str):
+                cpu = process.get("cpuPercent")
+                if isinstance(cpu, (int, float)) and math.isfinite(cpu):
+                    peak_cpu[process["name"]] = max(peak_cpu.get(process["name"], 0), cpu)
+        relevant_names.update(
+            process["name"]
+            for process in processes["simulationAndBuildProcesses"]
+            if isinstance(process, dict) and isinstance(process.get("name"), str)
+        )
+        samples.append(context)
+    return {
+        "status": "captured",
+        "hostId": host_id,
+        "sampleCount": len(samples),
+        "firstCapturedAtUtc": samples[0].get("capturedAtUtc"),
+        "lastCapturedAtUtc": samples[-1].get("capturedAtUtc"),
+        "maxLoadAverage": max_load,
+        "minDiskFreeBytes": min_disk,
+        "peakCpuPercentByProcess": dict(sorted(peak_cpu.items())),
+        "simulationAndBuildProcessNames": sorted(relevant_names),
+    }
+
+
 def hash_run_evidence(run_dir: Path, relative_paths: list[str]) -> dict[str, dict[str, Any]]:
     evidence: dict[str, dict[str, Any]] = {}
     for relative in relative_paths:
@@ -1512,6 +1647,7 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
         "arrivalHoldRadiusM",
         "terminalBrakingRadiusM",
         "retainPredecessorGrant",
+        "hostContext",
         "vehicleCount",
         "vehicles",
         "vehiclePairs",
@@ -1538,6 +1674,13 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
             for key in ("arrivalHoldRadiusM", "terminalBrakingRadiusM")
         )
         or type(report["retainPredecessorGrant"]) is not bool
+        or not isinstance(report["hostContext"], dict)
+        or any(
+            not isinstance(report["hostContext"].get(phase), dict)
+            or report["hostContext"][phase].get("status")
+            not in {"captured", "unavailable", "invalid"}
+            for phase in ("pre", "during", "post")
+        )
     ):
         raise ValueError("generated swarm report has invalid contract identity or status")
     vehicles = report["vehicles"]
@@ -1596,6 +1739,10 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
         or not isinstance(report["evidenceArtifacts"], dict)
     ):
         raise ValueError("generated swarm report has invalid baseline or artifact gates")
+    if report["baselineGates"].get("hostLoadContextAvailable") is not all(
+        report["hostContext"][phase]["status"] == "captured" for phase in ("pre", "during", "post")
+    ):
+        raise ValueError("generated swarm report has inconsistent host context gate")
     if report["baselineGates"].get("gazeboAttitudeWithinEnvelope") is not all(
         vehicle["attitudeQuality"]["passed"] for vehicle in vehicles.values()
     ):
@@ -1675,6 +1822,9 @@ def main() -> int:
         [
             "gazebo-pose.jsonl",
             "research-profile.env",
+            "research-host-context-pre.json",
+            "research-host-context-during.jsonl",
+            "research-host-context-post.json",
             "applier-neutral/actuator-output.jsonl",
             "applier-neutral/actuator-lifecycle.jsonl",
             *[f"applier-neutral/{item['callsign']}.armed-state.json" for item in vehicles],
@@ -1711,6 +1861,9 @@ def main() -> int:
             ],
         ],
     )
+    host_context = {phase: load_host_context(run_dir, phase) for phase in ("pre", "post")}
+    host_context["during"] = load_host_context_samples(run_dir)
+    host_context_present = all(item["status"] == "captured" for item in host_context.values())
     trajectory_available = write_trajectory_svg(run_dir, vehicles, pose_samples)
     poses_by_callsign = {
         vehicle["callsign"]: [sample[:4] for sample in pose_samples[vehicle["model"]]]
@@ -2180,6 +2333,7 @@ def main() -> int:
         "controllerStateCadenceQualified": all_controller_cadences_qualified,
         "transitionSafeStopsBoundAndRecovered": all_transition_safe_stops_qualified,
         "runOwnedSourceBuildInputsPresent": run_owned_source_build_inputs_present,
+        "hostLoadContextAvailable": host_context_present,
     }
     baseline_qualified = all(baseline_gates.values())
     baseline_status = (
@@ -2223,6 +2377,7 @@ def main() -> int:
         "baselineFailedReasons": baseline_failed_reasons,
         "baselineInconclusiveReasons": baseline_inconclusive_reasons,
         "provenance": provenance_summary,
+        "hostContext": host_context,
         "evidenceArtifacts": evidence_artifacts,
         "vehicleCount": len(vehicles),
         "vehiclePairCount": pair_count,

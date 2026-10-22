@@ -10,7 +10,11 @@ import math
 from pathlib import Path
 from typing import Any
 
-from summarize_antoine_two_drone_flight import load_swarm_config, validate_swarm_report
+from summarize_antoine_two_drone_flight import (
+    load_host_context_samples,
+    load_swarm_config,
+    validate_swarm_report,
+)
 
 FACTORS = {
     "hold-radius": "arrivalHoldRadiusM",
@@ -116,6 +120,9 @@ def verify_artifacts(run_dir: Path, report: dict[str, Any]) -> None:
     required = [
         *REQUIRED_ARTIFACTS,
         "research-profile.env",
+        "research-host-context-pre.json",
+        "research-host-context-during.jsonl",
+        "research-host-context-post.json",
         "research-swarm-config.json",
         "research-swarm-plan.json",
     ]
@@ -172,6 +179,79 @@ def verify_profile_config(run_dir: Path, config: dict[str, Any]) -> None:
         or (retention == "1") is not config["retainPredecessorGrant"]
     ):
         raise ValueError(f"run profile does not match swarm config: {run_dir.name}")
+
+
+def load_host_contexts(run_dir: Path) -> dict[str, Any]:
+    result = {}
+    for phase in ("pre", "post"):
+        context = read_object(
+            run_dir / f"research-host-context-{phase}.json", f"{phase}-run host context"
+        )
+        if (
+            context.get("contract") != "damn-vulnerable-drone.swarm-host-context"
+            or context.get("version") != "1.0.0"
+            or context.get("runId") != run_dir.name
+            or context.get("phase") != phase
+            or not isinstance(context.get("capturedAtUtc"), str)
+            or not isinstance(context.get("platform"), str)
+            or not isinstance(context.get("machine"), str)
+            or not isinstance(context.get("hostId"), str)
+            or len(context["hostId"]) != 64
+            or not isinstance(context.get("logicalCpuCount"), int)
+            or not isinstance(context.get("loadAverage"), dict)
+            or not isinstance(context.get("disk"), dict)
+            or not isinstance(context.get("processes"), dict)
+        ):
+            raise ValueError(f"invalid {phase}-run host context: {run_dir.name}")
+        loads = context["loadAverage"].get("values")
+        if (
+            context["loadAverage"].get("status") != "captured"
+            or not isinstance(loads, list)
+            or len(loads) != 3
+            or any(
+                not isinstance(value, (int, float)) or not math.isfinite(value) for value in loads
+            )
+            or not isinstance(context["disk"].get("freeBytes"), int)
+            or context["processes"].get("status") != "captured"
+            or not isinstance(context["processes"].get("topCpuProcesses"), list)
+            or not isinstance(context["processes"].get("simulationAndBuildProcesses"), list)
+        ):
+            raise ValueError(f"incomplete {phase}-run host context: {run_dir.name}")
+        result[phase] = {
+            "capturedAtUtc": context["capturedAtUtc"],
+            "platform": context.get("platform"),
+            "machine": context.get("machine"),
+            "hostId": context.get("hostId"),
+            "logicalCpuCount": context.get("logicalCpuCount"),
+            "loadAverage": context["loadAverage"],
+            "diskFreeBytes": context["disk"].get("freeBytes"),
+            "memory": context.get("memory"),
+            "processes": context["processes"],
+        }
+    result["during"] = load_host_context_samples(run_dir)
+    if result["during"].get("status") != "captured":
+        raise ValueError(f"invalid during-run host context: {run_dir.name}")
+    if any(
+        baseline_value != variant_value
+        for baseline_value, variant_value in (
+            (result["pre"]["platform"], result["post"]["platform"]),
+            (result["pre"]["machine"], result["post"]["machine"]),
+            (result["pre"]["hostId"], result["post"]["hostId"]),
+            (result["pre"]["logicalCpuCount"], result["post"]["logicalCpuCount"]),
+            (result["pre"]["hostId"], result["during"]["hostId"]),
+        )
+    ):
+        raise ValueError(f"host identity changed during run: {run_dir.name}")
+    return result
+
+
+def require_same_host(baseline: dict[str, Any], variant: dict[str, Any]) -> None:
+    phases = ("pre", "during", "post")
+    host_ids = {baseline[phase]["hostId"] for phase in phases} | {
+        variant[phase]["hostId"] for phase in phases
+    }
+    if len(host_ids) != 1:
+        raise ValueError("the matched pair was not captured on one host")
 
 
 def summarize_outcome(report: dict[str, Any]) -> dict[str, Any]:
@@ -237,6 +317,9 @@ def verify_pair(baseline_dir: Path, variant_dir: Path, factor: str) -> dict[str,
             raise ValueError(f"run-owned source/build inputs are not qualified: {run_dir.name}")
         verify_artifacts(run_dir, report)
         verify_profile_config(run_dir, config)
+    baseline_host = load_host_contexts(baseline_dir)
+    variant_host = load_host_contexts(variant_dir)
+    require_same_host(baseline_host, variant_host)
 
     return {
         "contract": "damn-vulnerable-drone.antoine-swarm-ab-pair",
@@ -248,6 +331,7 @@ def verify_pair(baseline_dir: Path, variant_dir: Path, factor: str) -> dict[str,
         "variantValue": variant_value,
         "sharedConfigSha256": shared_config_sha256,
         "sharedProvenance": baseline_report["provenance"],
+        "hostContext": {"baseline": baseline_host, "variant": variant_host},
         "baseline": summarize_outcome(baseline_report),
         "variant": summarize_outcome(variant_report),
         "interpretation": (

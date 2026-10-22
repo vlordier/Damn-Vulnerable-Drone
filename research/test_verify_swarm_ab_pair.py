@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -8,6 +9,8 @@ from pathlib import Path
 from verify_swarm_ab_pair import (
     REQUIRED_ARTIFACTS,
     config_pair,
+    load_host_contexts,
+    require_same_host,
     verify_artifacts,
     verify_profile_config,
     verify_provenance,
@@ -121,6 +124,9 @@ class PairArtifactTests(unittest.TestCase):
             names = [
                 *REQUIRED_ARTIFACTS,
                 "research-profile.env",
+                "research-host-context-pre.json",
+                "research-host-context-during.jsonl",
+                "research-host-context-post.json",
                 "research-swarm-config.json",
                 "research-swarm-plan.json",
                 "flight-evidence-drone-1.json",
@@ -139,6 +145,124 @@ class PairArtifactTests(unittest.TestCase):
             (run_dir / "gazebo-pose.jsonl").write_text("altered\n", encoding="utf-8")
             with self.assertRaisesRegex(ValueError, "changed after report generation"):
                 verify_artifacts(run_dir, report)
+
+    def test_host_context_records_pre_during_and_post_load_on_the_same_machine(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            run_dir.mkdir()
+            for phase in ("pre", "post"):
+                write = {
+                    "contract": "damn-vulnerable-drone.swarm-host-context",
+                    "version": "1.0.0",
+                    "runId": run_dir.name,
+                    "phase": phase,
+                    "capturedAtUtc": "2026-10-22T00:00:00+00:00",
+                    "platform": "macOS",
+                    "machine": "arm64",
+                    "hostId": "a" * 64,
+                    "logicalCpuCount": 10,
+                    "loadAverage": {"status": "captured", "values": [1.0, 2.0, 3.0]},
+                    "disk": {"freeBytes": 10_000},
+                    "processes": {
+                        "status": "captured",
+                        "topCpuProcesses": [],
+                        "simulationAndBuildProcesses": [],
+                    },
+                    "memory": {"status": "captured"},
+                }
+                (run_dir / f"research-host-context-{phase}.json").write_text(
+                    json.dumps(write), encoding="utf-8"
+                )
+            with (run_dir / "research-host-context-during.jsonl").open(
+                "w", encoding="utf-8"
+            ) as stream:
+                for sequence in range(2):
+                    stream.write(
+                        json.dumps(
+                            {
+                                "contract": "damn-vulnerable-drone.swarm-host-context",
+                                "version": "1.0.0",
+                                "runId": run_dir.name,
+                                "phase": "during",
+                                "sampleSequence": sequence,
+                                "capturedAtUtc": "2026-10-22T00:00:00+00:00",
+                                "capturedAtUnixNs": 1_000_000_000 + sequence,
+                                "hostId": "a" * 64,
+                                "loadAverage": {
+                                    "status": "captured",
+                                    "values": [float(sequence), 2.0, 3.0],
+                                },
+                                "disk": {"freeBytes": 10_000 - sequence},
+                                "processes": {
+                                    "status": "captured",
+                                    "topCpuProcesses": [],
+                                    "simulationAndBuildProcesses": [],
+                                },
+                            }
+                        )
+                        + "\n"
+                    )
+            result = load_host_contexts(run_dir)
+            self.assertEqual(result["pre"]["loadAverage"]["values"], [1.0, 2.0, 3.0])
+            self.assertEqual(result["post"]["diskFreeBytes"], 10_000)
+            self.assertEqual(result["during"]["sampleCount"], 2)
+            self.assertEqual(result["during"]["maxLoadAverage"], [1.0, 2.0, 3.0])
+            require_same_host(result, result)
+            other_host = {**result, "post": {**result["post"], "hostId": "b" * 64}}
+            with self.assertRaisesRegex(ValueError, "one host"):
+                require_same_host(result, other_host)
+
+    def test_rejects_out_of_order_during_host_samples(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            run_dir.mkdir()
+            # Seed complete boundary snapshots; the live sample sequence itself is malformed.
+            for phase in ("pre", "post"):
+                (run_dir / f"research-host-context-{phase}.json").write_text(
+                    json.dumps(
+                        {
+                            "contract": "damn-vulnerable-drone.swarm-host-context",
+                            "version": "1.0.0",
+                            "runId": run_dir.name,
+                            "phase": phase,
+                            "capturedAtUtc": "2026-10-22T00:00:00+00:00",
+                            "platform": "macOS",
+                            "machine": "arm64",
+                            "hostId": "a" * 64,
+                            "logicalCpuCount": 10,
+                            "loadAverage": {"status": "captured", "values": [1, 2, 3]},
+                            "disk": {"freeBytes": 10},
+                            "processes": {
+                                "status": "captured",
+                                "topCpuProcesses": [],
+                                "simulationAndBuildProcesses": [],
+                            },
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+            sample = {
+                "contract": "damn-vulnerable-drone.swarm-host-context",
+                "version": "1.0.0",
+                "runId": run_dir.name,
+                "phase": "during",
+                "sampleSequence": 1,
+                "capturedAtUtc": "2026-10-22T00:00:00+00:00",
+                "capturedAtUnixNs": 1,
+                "hostId": "a" * 64,
+                "loadAverage": {"status": "captured", "values": [1, 2, 3]},
+                "disk": {"freeBytes": 10},
+                "processes": {
+                    "status": "captured",
+                    "topCpuProcesses": [],
+                    "simulationAndBuildProcesses": [],
+                },
+            }
+            (run_dir / "research-host-context-during.jsonl").write_text(
+                json.dumps(sample) + "\n", encoding="utf-8"
+            )
+            with self.assertRaisesRegex(ValueError, "during-run host context"):
+                load_host_contexts(run_dir)
 
     def test_checks_runtime_profile_values_against_the_recorded_config(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

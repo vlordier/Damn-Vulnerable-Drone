@@ -40,6 +40,11 @@ MAVLINK_IDENTITIES=()
 MAVLINK_PROBE_PID=""
 MAVLINK_PROBE_IDENTITY="${REPORT_ROOT}/.${RUN_ID}-mavlink.identity"
 MAVLINK_STATUS=0
+HOST_CONTEXT_PRE="${REPORT_ROOT}/${RUN_ID}-host-context-pre.json"
+HOST_CONTEXT_DURING="${REPORT_ROOT}/${RUN_ID}-host-context-during.jsonl"
+HOST_CONTEXT_STOP="${REPORT_ROOT}/.${RUN_ID}-host-context-stop"
+HOST_CONTEXT_IDENTITY="${REPORT_ROOT}/.${RUN_ID}-host-context.identity"
+HOST_CONTEXT_PID=""
 ANTOINE_BRIDGE_DIR="${ANTOINE_BRIDGE_DIR:-${HOME}/Work/antoine-mavlink-jetstream-bridge}"
 FLIGHT_FAULT_ENV=()
 if [[ ! "${SWARM_SIZE}" =~ ^[0-9]+$ ]] || ((SWARM_SIZE < 2 || SWARM_SIZE > 5)); then
@@ -254,6 +259,13 @@ export ANTOINE_GZ_FLIGHT_NATS_PORT
 export ANTOINE_PROVENANCE_EXTRA_ARGS="--exclude-qgroundcontrol"
 cleanup() {
   local status=$? i
+  if [[ -n "${HOST_CONTEXT_PID}" ]]; then
+    : >"${HOST_CONTEXT_STOP}"
+    wait "${HOST_CONTEXT_PID}" 2>/dev/null || true
+    HOST_CONTEXT_PID=""
+    rm -f "${HOST_CONTEXT_IDENTITY}"
+  fi
+  rm -f "${HOST_CONTEXT_STOP}"
   # Cleanup failures must not mask the flight runner's original exit status.
   # shellcheck disable=SC2310
   [[ -z "${MAVLINK_PROBE_PID}" ]] || dvd_signal_owned_child "${PROJECT_ROOT}" "${MAVLINK_PROBE_PID}" "${MAVLINK_PROBE_IDENTITY}" TERM || true
@@ -311,6 +323,17 @@ if [[ "${SWARM_MAVLINK}" == "1" ]]; then
   fi
 fi
 
+uv run --no-project python "${PROJECT_ROOT}/research/capture_swarm_host_context.py" \
+  --run-id "${RUN_ID}" --phase pre --project-root "${PROJECT_ROOT}" \
+  --output "${HOST_CONTEXT_PRE}"
+dvd_run_owned_child "${PROJECT_ROOT}" "${HOST_CONTEXT_IDENTITY}" \
+  uv run --no-project python "${PROJECT_ROOT}/research/capture_swarm_host_context.py" \
+  --run-id "${RUN_ID}" --phase during --project-root "${PROJECT_ROOT}" \
+  --interval-seconds 5 --stop-file "${HOST_CONTEXT_STOP}" \
+  --output "${HOST_CONTEXT_DURING}" \
+  >"${REPORT_ROOT}/${RUN_ID}-host-context.log" 2>&1 &
+HOST_CONTEXT_PID=$!
+
 dvd_run_owned_child "${PROJECT_ROOT}" "${IDENTITY}" env \
   ${FLIGHT_FAULT_ENV[@]+"${FLIGHT_FAULT_ENV[@]}"} \
   "ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M=${ARRIVAL_HOLD_RADIUS}" \
@@ -331,6 +354,7 @@ for _ in {1..300}; do
 done
 if [[ "${run_dir_ready}" -eq 1 ]]; then
   printf 'swarm run evidence directory: %s\n' "${RUN_DIR}"
+  cp "${HOST_CONTEXT_PRE}" "${RUN_DIR}/research-host-context-pre.json"
 fi
 if [[ "${run_dir_ready}" -eq 1 ]]; then
   if [[ -z "${POSITIVE_TARGET}" ]]; then
@@ -631,6 +655,20 @@ if [[ ! -d "${RUN_DIR}" ]]; then
   printf 'two-drone flight did not create a run directory (launcher exit %s)\n' "${FLIGHT_STATUS}" >&2
   exit 1
 fi
+if [[ -n "${HOST_CONTEXT_PID}" ]]; then
+  : >"${HOST_CONTEXT_STOP}"
+  set +e
+  wait "${HOST_CONTEXT_PID}"
+  HOST_CONTEXT_STATUS=$?
+  set -e
+  HOST_CONTEXT_PID=""
+  rm -f "${HOST_CONTEXT_IDENTITY}" "${HOST_CONTEXT_STOP}"
+  cp "${HOST_CONTEXT_DURING}" "${RUN_DIR}/research-host-context-during.jsonl" 2>/dev/null || true
+  printf 'host context sampler exit: %s\n' "${HOST_CONTEXT_STATUS}"
+fi
+uv run --no-project python "${PROJECT_ROOT}/research/capture_swarm_host_context.py" \
+  --run-id "${RUN_ID}" --phase post --project-root "${PROJECT_ROOT}" \
+  --output "${RUN_DIR}/research-host-context-post.json"
 set +e
 uv run --project "${PROJECT_ROOT}/research" python "${PROJECT_ROOT}/research/summarize_antoine_two_drone_flight.py" "${RUN_DIR}"
 SUMMARY_STATUS=$?

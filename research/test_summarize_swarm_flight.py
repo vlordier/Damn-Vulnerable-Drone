@@ -119,6 +119,54 @@ def build_run(
         ],
     }
     write_json(run_dir / "research-swarm-config.json", config)
+    for phase in ("pre", "post"):
+        write_json(
+            run_dir / f"research-host-context-{phase}.json",
+            {
+                "contract": "damn-vulnerable-drone.swarm-host-context",
+                "version": "1.0.0",
+                "runId": run_dir.name,
+                "phase": phase,
+                "capturedAtUtc": "2026-10-22T00:00:00+00:00",
+                "platform": "macOS",
+                "machine": "arm64",
+                "hostId": "a" * 64,
+                "logicalCpuCount": 10,
+                "loadAverage": {"status": "captured", "values": [1.0, 1.2, 1.4]},
+                "disk": {"freeBytes": 10_000_000},
+                "memory": {"status": "captured", "vmStat": []},
+                "processes": {
+                    "status": "captured",
+                    "processCount": 0,
+                    "topCpuProcesses": [],
+                    "simulationAndBuildProcesses": [],
+                },
+            },
+        )
+    with (run_dir / "research-host-context-during.jsonl").open("w", encoding="utf-8") as stream:
+        for sequence in range(2):
+            stream.write(
+                json.dumps(
+                    {
+                        "contract": "damn-vulnerable-drone.swarm-host-context",
+                        "version": "1.0.0",
+                        "runId": run_dir.name,
+                        "phase": "during",
+                        "sampleSequence": sequence,
+                        "capturedAtUtc": f"2026-10-22T00:00:0{sequence}+00:00",
+                        "capturedAtUnixNs": 1_000_000_000 + sequence,
+                        "hostId": "a" * 64,
+                        "loadAverage": {"status": "captured", "values": [1.0, 1.2, 1.4]},
+                        "disk": {"freeBytes": 10_000_000 - sequence},
+                        "processes": {
+                            "status": "captured",
+                            "topCpuProcesses": [],
+                            "simulationAndBuildProcesses": [],
+                        },
+                    }
+                )
+                + "\n"
+            )
     with (run_dir / "gazebo-pose.jsonl").open("w", encoding="utf-8") as stream:
         for index, vehicle in enumerate(plan["vehicles"]):
             first, last = vehicle["spawnEnuM"], vehicle["finalSlotEnuM"]
@@ -506,6 +554,26 @@ class ConfigLoadingTests(unittest.TestCase):
 
 
 class SummaryTests(unittest.TestCase):
+    def test_missing_process_load_context_keeps_baseline_inconclusive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-host-context-test"
+            build_run(run_dir, "lanes")
+            (run_dir / "research-host-context-post.json").unlink()
+            result = run_summary(run_dir)
+        self.assertFalse(result["baselineGates"]["hostLoadContextAvailable"])
+        self.assertIn("hostLoadContextAvailable", result["baselineInconclusiveReasons"])
+        self.assertEqual(result["hostContext"]["post"]["status"], "unavailable")
+
+    def test_missing_during_host_samples_make_baseline_inconclusive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-host-context-test"
+            build_run(run_dir, "lanes")
+            (run_dir / "research-host-context-during.jsonl").unlink()
+
+            report = run_summary(run_dir)
+            self.assertFalse(report["baselineGates"]["hostLoadContextAvailable"])
+            self.assertEqual(report["hostContext"]["during"]["status"], "unavailable")
+
     def test_selected_vehicle_control_uses_independent_world_clock_with_authority_sequence(
         self,
     ) -> None:
