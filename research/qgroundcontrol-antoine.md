@@ -82,7 +82,10 @@ Supported controls:
   without another setpoint.
 - Mission upload and download using `MISSION_COUNT`,
   `MISSION_REQUEST_INT`, and `MISSION_ITEM_INT`. Missions contain 1–5
-  `MAV_CMD_NAV_WAYPOINT` items in `MAV_FRAME_LOCAL_NED` and share the same
+  `MAV_CMD_NAV_WAYPOINT` items in `MAV_FRAME_LOCAL_NED`,
+  `MAV_FRAME_GLOBAL_RELATIVE_ALT`, or
+  `MAV_FRAME_GLOBAL_RELATIVE_ALT_INT`; global coordinates are converted around
+  home into the bridge's local-NED coordinates. All frames share the same
   position envelope. The bridge audits GCS mission frames to JetStream before
   applying them, and reads the live mission from Antoine for mission-list
   responses. Each upload handshake is bound to the loopback UDP source,

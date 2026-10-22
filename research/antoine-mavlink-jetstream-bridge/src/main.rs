@@ -705,6 +705,25 @@ fn mission_waypoint_metadata_supported(payload: &[u8], sequence: usize) -> bool 
         && payload[36] == 1
 }
 
+fn mission_item_position_ned(
+    coord_frame: u8,
+    wire_x: f64,
+    wire_y: f64,
+    wire_z: f64,
+    home_lat_deg: f64,
+    home_lon_deg: f64,
+) -> Option<[f64; 3]> {
+    match coord_frame {
+        1 => Some([wire_x / 10_000.0, wire_y / 10_000.0, wire_z]),
+        3 | 6 => {
+            let north = (wire_x / 1e7 - home_lat_deg) * 111_111.0;
+            let east = (wire_y / 1e7 - home_lon_deg) * 111_111.0 * home_lat_deg.to_radians().cos();
+            Some([north, east, -wire_z])
+        }
+        _ => None,
+    }
+}
+
 async fn clear_mission(
     client: &async_nats::Client,
     subject: &str,
@@ -1668,14 +1687,23 @@ async fn qgc_to_antoine_nats(
             let wire_x = i32::from_le_bytes(frame.payload[16..20].try_into()?) as f64;
             let wire_y = i32::from_le_bytes(frame.payload[20..24].try_into()?) as f64;
             let wire_z = f32::from_le_bytes(frame.payload[24..28].try_into()?) as f64;
-            let (x, y, z) = if coord_frame == 1 {
-                (wire_x / 10_000.0, wire_y / 10_000.0, wire_z)
-            } else {
-                let north = (wire_x / 1e7 - config.home_lat_deg) * 111_111.0;
-                let east = (wire_y / 1e7 - config.home_lon_deg)
-                    * 111_111.0
-                    * config.home_lat_deg.to_radians().cos();
-                (north, east, -wire_z)
+            let Some([x, y, z]) = mission_item_position_ned(
+                coord_frame,
+                wire_x,
+                wire_y,
+                wire_z,
+                config.home_lat_deg,
+                config.home_lon_deg,
+            ) else {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    2,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
             };
             if mission_upload
                 .as_ref()
@@ -2160,6 +2188,37 @@ mod tests {
         payload[35] = 0;
         assert!(mission_waypoint_metadata_supported(&payload, 1));
         assert!(!mission_waypoint_metadata_supported(&payload[..36], 0));
+    }
+
+    #[test]
+    fn mission_item_frames_convert_to_the_local_ned_contract() {
+        assert_eq!(
+            mission_item_position_ned(1, 22_000.0, -12_000.0, -1.0, 48.0, 0.3),
+            Some([2.2, -1.2, -1.0])
+        );
+
+        let home_lat = 48.0002_f64;
+        let home_lon = 0.3564_f64;
+        let global_lat = home_lat + 2.0 / 111_111.0;
+        let global_lon = home_lon + 1.0 / (111_111.0 * home_lat.to_radians().cos());
+        for frame in [3, 6] {
+            let position = mission_item_position_ned(
+                frame,
+                (global_lat * 1e7).round(),
+                (global_lon * 1e7).round(),
+                1.0,
+                home_lat,
+                home_lon,
+            )
+            .expect("global relative-altitude frames should be supported");
+            assert!((position[0] - 2.0).abs() < 0.1);
+            assert!((position[1] - 1.0).abs() < 0.1);
+            assert_eq!(position[2], -1.0);
+        }
+        assert_eq!(
+            mission_item_position_ned(0, 0.0, 0.0, 0.0, home_lat, home_lon),
+            None
+        );
     }
 
     #[test]
