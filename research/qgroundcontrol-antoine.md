@@ -460,7 +460,14 @@ profile implementation passed two-cycle lifecycle acceptance at
 `/tmp/dvd-antoine-headless-lifecycle-20261021T224449Z.json`: both runs reported
 fresh telemetry and disarmed state; stale identity metadata could not signal
 the live second bridge; both stops confirmed all run-owned processes and ports
-closed. These test-client/headless results do not establish QGC GUI behavior.
+closed. A fresh two-cycle run at
+`/tmp/dvd-antoine-headless-lifecycle-20261022T001017Z.json` passed the same
+checks using isolated ports: both runs reported fresh `antoine-gz` telemetry,
+Gazebo/NATS simulation clocks aligned within 0.13 s, and `armed=false`; the
+stale second-run receipt returned `identity-mismatch-not-signalled` while the
+live profile remained recorded; both identity-checked stops confirmed NATS and
+bridge ports closed. QGC was not started. These test-client/headless results do
+not establish QGC GUI behavior.
 
 The configured patched QGC executable remains absent. The separate signed app
 at `/Applications/QGroundControl.app` still has SHA-256
