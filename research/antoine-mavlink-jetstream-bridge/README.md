@@ -5,6 +5,9 @@ MAVLink common-dialect surface to the native Antoine software SITL through
 Core NATS and stores command-frame evidence in JetStream. It runs on loopback
 only. It is not a hardware flight controller, and it does not bypass the
 Gazebo profile's Core/Vigie authority boundary.
+Callsigns used in NATS subjects are restricted to 1–64 ASCII letters, digits,
+hyphens, or underscores so a vehicle identity cannot introduce subject
+separators or wildcards.
 
 The default `udp` mode relays MAVLink frames between local UDP peers and audits
 accepted ingress. The `antoine-nats` mode converts native model telemetry into

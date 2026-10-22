@@ -299,6 +299,20 @@ fn arg(name: &str, default: &str) -> String {
         .unwrap_or_else(|| default.into())
 }
 
+fn validate_callsign(callsign: &str) -> Result<()> {
+    if callsign.is_empty()
+        || callsign.len() > 64
+        || !callsign
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        bail!(
+            "--callsign must be 1..64 ASCII letters, digits, '-' or '_' (one NATS subject token)"
+        );
+    }
+    Ok(())
+}
+
 fn config() -> Result<Config> {
     let mut config = Config {
         mode: arg("--mode", "udp"),
@@ -326,6 +340,7 @@ fn config() -> Result<Config> {
         },
         system_id: arg("--system-id", "1").parse()?,
     };
+    validate_callsign(&config.callsign)?;
     config.control_subject = format!("furia.mavlink.control.{}", config.callsign);
     for (name, address) in [
         ("vehicle bind", config.vehicle_bind),
@@ -2277,6 +2292,17 @@ mod tests {
             mode: mode.to_owned(),
             control_subject: "furia.mavlink.control.drone-1".to_owned(),
         }
+    }
+
+    #[test]
+    fn callsigns_are_safe_single_nats_subject_tokens() {
+        for callsign in ["drone-1", "antoine_sitl", "Vehicle42"] {
+            assert!(validate_callsign(callsign).is_ok(), "{callsign}");
+        }
+        for callsign in ["", ".", "drone.1", "*", ">", "drone >", "drone/1"] {
+            assert!(validate_callsign(callsign).is_err(), "{callsign}");
+        }
+        assert!(validate_callsign(&"a".repeat(65)).is_err());
     }
 
     #[test]
