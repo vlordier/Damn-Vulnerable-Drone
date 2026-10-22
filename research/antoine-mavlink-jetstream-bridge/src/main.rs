@@ -1180,7 +1180,13 @@ async fn qgc_to_antoine_nats(
                 gcs.send_to(&ack, source).await?;
                 continue;
             }
-            if frame.payload.len() > 5 || count > 5 {
+            if frame.payload.len() > 9
+                || frame
+                    .payload
+                    .get(5..)
+                    .is_some_and(|opaque_id| opaque_id.iter().any(|byte| *byte != 0))
+                || count > 5
+            {
                 let ack = mission_ack(
                     frame.sequence.wrapping_add(1),
                     config.system_id,

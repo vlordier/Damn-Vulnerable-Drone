@@ -1126,7 +1126,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     let _ = timeout(Duration::from_secs(2), reply_rx.recv())
         .await
         .context("empty uploaded mission query was not received")?;
-    let mut mission_count_payload = vec![0; 4];
+    let mut mission_count_payload = vec![0; 9];
     mission_count_payload[0..2].copy_from_slice(&1_u16.to_le_bytes());
     mission_count_payload[2] = 1;
     mission_count_payload[3] = 1;
@@ -1406,6 +1406,39 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     assert_eq!(readback_item.x, 480_002_000);
     assert_eq!(readback_item.y, 3_564_000);
     assert_eq!(readback_item.z, 1.0);
+
+    let mut invalid_upload_id_payload = mission_count_payload.clone();
+    invalid_upload_id_payload[5] = 1;
+    let invalid_upload_id = v2_frame(44, 41, 255, &invalid_upload_id_payload, 221);
+    gcs.send_to(&invalid_upload_id, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("nonzero upload opaque_id ACK timeout")??;
+    let (_, invalid_upload_id_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(invalid_upload_id_ack) =
+        invalid_upload_id_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for nonzero upload opaque_id");
+    };
+    assert_eq!(
+        invalid_upload_id_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
+    let no_upload_deadline = tokio::time::Instant::now() + Duration::from_millis(150);
+    while tokio::time::Instant::now() < no_upload_deadline {
+        let remaining = no_upload_deadline - tokio::time::Instant::now();
+        match timeout(remaining, gcs.recv_from(&mut buffer)).await {
+            Ok(Ok((_length, _))) if buffer[7] == 51 => {
+                anyhow::bail!("nonzero upload opaque_id must not start a mission transaction");
+            }
+            Ok(Ok(_)) => {}
+            Ok(Err(error)) => return Err(error.into()),
+            Err(_) => break,
+        }
+    }
 
     let unsupported_mission_count = v2_frame(44, 42, 255, &mission_count_payload, 221);
     gcs.send_to(&unsupported_mission_count, qgc_bind).await?;
