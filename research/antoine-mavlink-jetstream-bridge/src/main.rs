@@ -480,6 +480,120 @@ fn gazebo_telemetry_time_ms(value: &serde_json::Value, previous: Option<u64>) ->
     Ok(observed_at_ms)
 }
 
+fn parse_telemetry_json(payload: &[u8]) -> Result<serde_json::Value> {
+    let mut deserializer = serde_json::Deserializer::from_slice(payload);
+    let value = StrictJsonValue::deserialize(&mut deserializer)
+        .context("parse telemetry JSON without duplicate object keys")?;
+    deserializer
+        .end()
+        .context("trailing data after telemetry JSON")?;
+    Ok(value.into_json())
+}
+
+enum StrictJsonValue {
+    Json(serde_json::Value),
+    Array(Vec<StrictJsonValue>),
+    Object(std::collections::BTreeMap<String, StrictJsonValue>),
+}
+
+impl StrictJsonValue {
+    fn into_json(self) -> serde_json::Value {
+        match self {
+            Self::Json(value) => value,
+            Self::Array(values) => {
+                serde_json::Value::Array(values.into_iter().map(Self::into_json).collect())
+            }
+            Self::Object(values) => serde_json::Value::Object(
+                values
+                    .into_iter()
+                    .map(|(key, value)| (key, value.into_json()))
+                    .collect(),
+            ),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for StrictJsonValue {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::de::Deserializer<'de>,
+    {
+        deserializer.deserialize_any(StrictJsonVisitor)
+    }
+}
+
+struct StrictJsonVisitor;
+
+impl<'de> serde::de::Visitor<'de> for StrictJsonVisitor {
+    type Value = StrictJsonValue;
+
+    fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str("a JSON value without duplicate object keys")
+    }
+
+    fn visit_bool<E>(self, value: bool) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJsonValue::Json(value.into()))
+    }
+
+    fn visit_i64<E>(self, value: i64) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJsonValue::Json(value.into()))
+    }
+
+    fn visit_u64<E>(self, value: u64) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJsonValue::Json(value.into()))
+    }
+
+    fn visit_f64<E>(self, value: f64) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJsonValue::Json(value.into()))
+    }
+
+    fn visit_str<E>(self, value: &str) -> std::result::Result<Self::Value, E>
+    where
+        E: serde::de::Error,
+    {
+        Ok(StrictJsonValue::Json(value.into()))
+    }
+
+    fn visit_string<E>(self, value: String) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJsonValue::Json(value.into()))
+    }
+
+    fn visit_none<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJsonValue::Json(serde_json::Value::Null))
+    }
+
+    fn visit_unit<E>(self) -> std::result::Result<Self::Value, E> {
+        Ok(StrictJsonValue::Json(serde_json::Value::Null))
+    }
+
+    fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: serde::de::SeqAccess<'de>,
+    {
+        let mut values = Vec::new();
+        while let Some(value) = sequence.next_element()? {
+            values.push(value);
+        }
+        Ok(StrictJsonValue::Array(values))
+    }
+
+    fn visit_map<A>(self, mut map: A) -> std::result::Result<Self::Value, A::Error>
+    where
+        A: serde::de::MapAccess<'de>,
+    {
+        let mut values = std::collections::BTreeMap::new();
+        while let Some(key) = map.next_key::<String>()? {
+            if values.contains_key(&key) {
+                return Err(serde::de::Error::custom(format!(
+                    "duplicate object key {key:?}"
+                )));
+            }
+            values.insert(key, map.next_value()?);
+        }
+        Ok(StrictJsonValue::Object(values))
+    }
+}
+
 fn telemetry_run_id_matches(
     mode: &str,
     configured_run_id: Option<&str>,
@@ -1196,7 +1310,7 @@ async fn antoine_nats_telemetry_to_gcs(
     let mut last_gazebo_observed_at_ms = None;
     let mut last_telemetry = tokio::time::Instant::now() - std::time::Duration::from_secs(1);
     while let Some(message) = subscription.next().await {
-        let value: serde_json::Value = match serde_json::from_slice(&message.payload) {
+        let value: serde_json::Value = match parse_telemetry_json(&message.payload) {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(%error, "invalid Antoine telemetry JSON");
@@ -2695,6 +2809,22 @@ mod tests {
             &native
         ));
         assert!(!telemetry_envelope_matches("udp", "drone-1", None, &native));
+    }
+
+    #[test]
+    fn telemetry_json_rejects_duplicate_keys_at_any_object_depth() {
+        let valid = br#"{"schema":"furia.telemetry","nested":{"value":1},"items":[{"value":2}]}"#;
+        assert!(parse_telemetry_json(valid).is_ok());
+
+        for ambiguous in [
+            br#"{"identity":"drone-1","identity":"other-drone"}"#.as_slice(),
+            br#"{"nested":{"runId":"selected","runId":"other"}}"#,
+            br#"{"items":[{"protocol":"antoine","protocol":"antoine-gz"}]}"#,
+        ] {
+            let error = parse_telemetry_json(ambiguous).unwrap_err().to_string();
+            assert!(error.contains("duplicate object key"), "{error}");
+        }
+        assert!(parse_telemetry_json(br#"{"schema":"ok"} trailing"#).is_err());
     }
 
     #[test]
