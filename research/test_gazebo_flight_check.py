@@ -26,6 +26,17 @@ with mock.patch.dict(sys.modules, {"flight_check": STUB_FLIGHT_CHECK}):
 
 
 class GazeboFailureReportTests(unittest.TestCase):
+    def test_gazebo_timestamp_rejects_out_of_range_and_unbounded_values(self) -> None:
+        timestamp = CHECKER.gazebo_timestamp_seconds
+        self.assertEqual(timestamp({"header": {"stamp": {"sec": "12", "nsec": "5"}}}), 12.000000005)
+        for value in (
+            {"header": {"stamp": {"sec": 1 << 63, "nsec": 0}}},
+            {"header": {"stamp": {"sec": "9" * 20, "nsec": 0}}},
+            {"header": {"stamp": {"sec": 1, "nsec": "9" * 10}}},
+        ):
+            with self.subTest(value=value):
+                self.assertIsNone(timestamp(value))
+
     def test_failure_report_preserves_failure_pose_state_and_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             report_path = Path(directory) / "nested/acceptance.json"
@@ -131,12 +142,20 @@ class GazeboFailureReportTests(unittest.TestCase):
             self.assertEqual(observation["position"], (1.0, 2.0, 8.0))
             self.assertEqual(observation["simulationTimeSeconds"], 5.5)
 
-            invalid = {
-                **rows[-1],
-                "pose": [{"name": "isr", "position": {"x": math.nan, "y": 0, "z": 8}}],
-            }
-            pose_path.write_text(json.dumps(invalid) + "\n")
-            self.assertIsNone(checker.pose_observation())
+            invalid_positions = (
+                {"x": math.nan, "y": 0, "z": 8},
+                {"x": math.inf, "y": 0, "z": 8},
+                {"x": 1 << 10_000, "y": 0, "z": 8},
+                {"x": True, "y": 0, "z": 8},
+            )
+            for position in invalid_positions:
+                invalid = {
+                    **rows[-1],
+                    "pose": [{"name": "isr", "position": position}],
+                }
+                pose_path.write_text(json.dumps(invalid) + "\n")
+                with self.subTest(position=position):
+                    self.assertIsNone(checker.pose_observation())
 
     def test_wait_pose_requires_simulation_time_to_advance(self) -> None:
         checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)

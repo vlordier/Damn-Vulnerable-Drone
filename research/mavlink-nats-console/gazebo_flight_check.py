@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 
 from flight_check import FlightCheck
-from flight_check_support import require_check
+from flight_check_support import finite_json_number, require_check
 
 POSE_SAMPLE_MAX_AGE_SECONDS = 1.5
 MAVLINK_STATE_MAX_AGE_SECONDS = 1.5
@@ -27,9 +27,9 @@ def gazebo_timestamp_seconds(value: dict) -> float | None:
         return None
     sec = stamp.get("sec")
     nsec = stamp.get("nsec", 0)
-    if isinstance(sec, str) and sec.isascii() and sec.isdecimal():
+    if isinstance(sec, str) and len(sec) <= 19 and sec.isascii() and sec.isdecimal():
         sec = int(sec)
-    if isinstance(nsec, str) and nsec.isascii() and nsec.isdecimal():
+    if isinstance(nsec, str) and len(nsec) <= 9 and nsec.isascii() and nsec.isdecimal():
         nsec = int(nsec)
     if (
         not isinstance(sec, int)
@@ -37,6 +37,7 @@ def gazebo_timestamp_seconds(value: dict) -> float | None:
         or not isinstance(nsec, int)
         or isinstance(nsec, bool)
         or sec < 0
+        or sec > (1 << 63) - 1
         or not 0 <= nsec < 1_000_000_000
     ):
         return None
@@ -249,16 +250,12 @@ class GazeboFlightCheck(FlightCheck):
                     if not isinstance(position, dict):
                         continue
                     coordinates = [position.get(axis) for axis in ("x", "y", "z")]
-                    if any(
-                        isinstance(axis, bool)
-                        or not isinstance(axis, (int, float))
-                        or not math.isfinite(axis)
-                        for axis in coordinates
-                    ):
+                    if not all(finite_json_number(axis) for axis in coordinates):
                         continue
+                    position = tuple(float(axis) for axis in coordinates)
                     return {
                         "simulationTimeSeconds": simulation_time,
-                        "position": tuple(float(axis) for axis in coordinates),
+                        "position": position,
                         "fileAgeSeconds": max(0.0, age),
                     }
         return None
