@@ -54,12 +54,15 @@ def write_failed_report(
                 "schema": "dvd.gazebo-mavlink-flight-check.v1",
                 "passed": False,
                 "callsign": callsign,
+                "phase": getattr(check, "phase", None),
                 "failure": {
                     "type": type(failure).__name__,
                     "message": str(failure)[:2000],
                 },
                 "cleanup": cleanup,
+                "initialHomePose": getattr(check, "home_pose", None),
                 "lastGazeboPose": check.pose(),
+                "lastGazeboPoseObservation": check.pose_observation(),
                 "lastMavlinkState": dict(check.telemetry),
                 "rawGazeboTelemetry": check.raw_telemetry,
                 "validGazeboTelemetryReceived": getattr(
@@ -85,6 +88,8 @@ class GazeboFlightCheck(FlightCheck):
         self.raw_telemetry: dict = {}
         self.telemetry_rejection: str | None = None
         self.valid_telemetry_received = asyncio.Event()
+        self.phase = "connecting"
+        self.home_pose: tuple[float, float, float] | None = None
         self.keepalive_task: asyncio.Task | None = None
         self.vehicle_state_updated_at: float | None = None
         self.state_field_updated_at: dict[str, float] = {}
@@ -461,6 +466,7 @@ async def run_check() -> dict:
     armed = False
     try:
         await check.start()
+        check.phase = "waiting-for-valid-gazebo-telemetry"
         try:
             await asyncio.wait_for(check.valid_telemetry_received.wait(), timeout=3.0)
         except TimeoutError as error:
@@ -468,6 +474,7 @@ async def run_check() -> dict:
                 "did not receive valid Antoine Gazebo-profile NATS telemetry"
                 + (f": {check.telemetry_rejection}" if check.telemetry_rejection else "")
             ) from error
+        check.phase = "waiting-for-prearm"
         await check.wait_state(
             lambda state: state.get("prearm_ready") is True,
             5,
@@ -477,6 +484,8 @@ async def run_check() -> dict:
         initial_state = dict(check.telemetry)
         initial = await check.wait_pose(lambda point: True, 3, "initial pose")
         home = initial
+        check.home_pose = home
+        check.phase = "mission-clear"
         if not check.telemetry.get("prearm_ready"):
             raise AssertionError(f"Gazebo model is not pre-arm ready: {check.telemetry}")
         # Always exercise and audit MISSION_CLEAR_ALL, including on a fresh
@@ -488,6 +497,7 @@ async def run_check() -> dict:
 
         await check.request(check.long(400, p1=1.0), 400)
         armed = True
+        check.phase = "arm"
         await check.wait_state(
             lambda state: state.get("armed") is True,
             4,
@@ -496,6 +506,7 @@ async def run_check() -> dict:
         )
 
         await check.request(check.long(22, p7=1.0), 22)
+        check.phase = "takeoff"
         await check.wait_state(
             lambda state: state.get("mode") == "GUIDED",
             4,
@@ -507,6 +518,7 @@ async def run_check() -> dict:
         )
 
         await check.set_mode(3)
+        check.phase = "position-flight"
         await check.set_mode(1)
         # Antoine's local controller captures horizontal targets inside 0.75 m.
         # Keep this waypoint beyond that band so the check proves actual travel,
@@ -519,6 +531,7 @@ async def run_check() -> dict:
 
         waypoints = [[2.0, 0.0, -1.0], [2.0, 0.0, -0.5], [0.0, 0.0, -0.5]]
         await check.mission_upload(waypoints)
+        check.phase = "mission-flight"
         mission_count, mission_readback = await check.mission_list()
         assert mission_count == len(waypoints), mission_count
         assert all(
@@ -560,6 +573,7 @@ async def run_check() -> dict:
             35,
             "AUTO mission target before direct-NATS boundary probes",
         )
+        check.phase = "direct-nats-boundary-probes"
         wrong_callsign = await check.direct_control(
             {"type": "rtl"},
             request_id="gazebo-rtl-wrong-callsign",
@@ -678,6 +692,7 @@ async def run_check() -> dict:
             35,
             "direct unsigned RTL returns to the configured home at cruise altitude",
         )
+        check.phase = "rtl-home"
         rtl_home = await check.wait_pose(
             lambda point: math.dist(point, home) <= 0.25,
             35,
@@ -688,11 +703,15 @@ async def run_check() -> dict:
             (home[0], home[1], attack_start[2]),
         )
         await check.request(check.long(22, p7=0.8), 22)
+        check.phase = "second-takeoff"
         await check.wait_pose(lambda point: point[2] >= home[2] + 0.55, 25, "second takeoff")
         await check.request(check.long(21), 21)
+        check.phase = "land-at-home"
         await check.wait_pose(lambda point: math.dist(point, home) <= 0.25, 30, "LAND at home")
+        check.phase = "settled-home-before-disarm"
         await check.disarm_after_settle(home)
         armed = False
+        check.phase = "confirm-disarmed"
         final_state = await check.wait_state(
             lambda state: state.get("armed") is False,
             5,
@@ -703,6 +722,7 @@ async def run_check() -> dict:
             lambda point: math.dist(point, home) <= 0.25, 3, "disarmed on ground"
         )
 
+        check.phase = "audit-completeness"
         await asyncio.sleep(0.4)
         audit_ids = {record.get("message_id") for record in check.audit_frames}
         if not {43, 44, 45, 51, 73, 76, 84} <= audit_ids:

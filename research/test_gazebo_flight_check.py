@@ -30,8 +30,14 @@ class GazeboFailureReportTests(unittest.TestCase):
             report_path = Path(directory) / "nested/acceptance.json"
             check = types.SimpleNamespace(
                 pose=lambda: (0.1, -0.02, 0.09),
+                pose_observation=lambda: {
+                    "simulationTimeSeconds": 12.5,
+                    "position": (0.1, -0.02, 0.09),
+                },
                 telemetry={"armed": False, "mode": "STABILIZE"},
                 raw_telemetry={"identity": "drone-1", "control_authority": "safe-hold"},
+                phase="land-at-home",
+                home_pose=(0.0, 0.0, 0.09),
                 audit_frames=[{}, {}],
             )
 
@@ -52,6 +58,9 @@ class GazeboFailureReportTests(unittest.TestCase):
             self.assertFalse(report["passed"])
             self.assertEqual(report["failure"]["type"], "AssertionError")
             self.assertEqual(report["lastGazeboPose"], [0.1, -0.02, 0.09])
+            self.assertEqual(report["phase"], "land-at-home")
+            self.assertEqual(report["initialHomePose"], [0.0, 0.0, 0.09])
+            self.assertEqual(report["lastGazeboPoseObservation"]["simulationTimeSeconds"], 12.5)
             self.assertFalse(report["lastMavlinkState"]["armed"])
             self.assertTrue(report["cleanup"]["disarmConfirmed"])
             self.assertEqual(report["auditFrameCount"], 2)
