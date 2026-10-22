@@ -473,6 +473,19 @@ fn native_telemetry_time_s(
     }
 }
 
+fn telemetry_run_id_matches(
+    mode: &str,
+    configured_run_id: Option<&str>,
+    value: &serde_json::Value,
+) -> bool {
+    if mode != "gazebo-nats" {
+        return true;
+    }
+    configured_run_id.is_some_and(|run_id| {
+        value.get("runId").and_then(serde_json::Value::as_str) == Some(run_id)
+    })
+}
+
 fn telemetry_armed(value: &serde_json::Value, fallback: bool) -> Result<bool> {
     match value.get("armed") {
         None => Ok(fallback),
@@ -1157,6 +1170,10 @@ async fn antoine_nats_telemetry_to_gcs(
             }
         };
         if value.get("identity").and_then(serde_json::Value::as_str) != Some(&config.callsign) {
+            continue;
+        }
+        if !telemetry_run_id_matches(&config.mode, config.run_id.as_deref(), &value) {
+            tracing::warn!("Gazebo telemetry run ID does not match the selected profile");
             continue;
         }
         let native_time_s = match native_telemetry_time_s(&config.mode, &value, last_native_time_s)
@@ -2523,6 +2540,31 @@ mod tests {
         );
         assert!(native_telemetry_time_s("antoine-nats", &gazebo, None).is_err());
         assert!(native_telemetry_time_s("gazebo-nats", &sample, None).is_err());
+    }
+
+    #[test]
+    fn gazebo_telemetry_must_match_the_configured_run_identity() {
+        let telemetry = serde_json::json!({"runId":"selected-run"});
+        assert!(telemetry_run_id_matches(
+            "gazebo-nats",
+            Some("selected-run"),
+            &telemetry
+        ));
+        assert!(!telemetry_run_id_matches(
+            "gazebo-nats",
+            Some("selected-run"),
+            &serde_json::json!({"runId":"other-run"})
+        ));
+        assert!(!telemetry_run_id_matches(
+            "gazebo-nats",
+            Some("selected-run"),
+            &serde_json::json!({})
+        ));
+        assert!(telemetry_run_id_matches(
+            "antoine-nats",
+            None,
+            &serde_json::json!({})
+        ));
     }
 
     #[test]

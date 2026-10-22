@@ -1,7 +1,7 @@
 use std::{
     net::{SocketAddr, TcpListener, UdpSocket as StdUdpSocket},
     process::{Child, Command, Stdio},
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{Context, Result};
@@ -1907,6 +1907,49 @@ async fn gazebo_nats_mode_routes_gcs_arm_through_local_authority() -> Result<()>
         ack.result,
         mavlink::dialects::common::MavResult::MAV_RESULT_ACCEPTED
     );
+
+    let observed_at_unix_ms = SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64;
+    let gazebo_telemetry = |run_id: &str| {
+        serde_json::json!({
+            "schema":"furia.telemetry", "version":"1.0.0", "protocol":"antoine-gz",
+            "identity":callsign, "runId":run_id, "observedAtUnixMs":observed_at_unix_ms,
+            "lat_deg":48.0002, "lon_deg":0.3564, "alt_m":0.2,
+            "vn_mps":0.0, "ve_mps":0.0, "vd_mps":0.0,
+            "battery_pct":95, "control_authority":"core-execution-grant"
+        })
+    };
+    client
+        .publish(
+            format!("furia.telemetry.{callsign}"),
+            gazebo_telemetry("other-run").to_string().into(),
+        )
+        .await?;
+    client.flush().await?;
+    let mut buffer = [0_u8; 512];
+    assert!(
+        timeout(Duration::from_millis(250), gcs.recv_from(&mut buffer))
+            .await
+            .is_err(),
+        "telemetry from a different profile run must not cross into MAVLink"
+    );
+
+    client
+        .publish(
+            format!("furia.telemetry.{callsign}"),
+            gazebo_telemetry("gazebo-authority-test-run")
+                .to_string()
+                .into(),
+        )
+        .await?;
+    client.flush().await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("run-matched Gazebo telemetry was not forwarded")??;
+    assert_eq!(
+        buffer[7], 0,
+        "run-matched telemetry should produce HEARTBEAT"
+    );
+    assert!(length >= 21);
 
     let stream = js.get_stream(STREAM).await?;
     let audit = wait_for_raw_subject(&stream, &format!("furia.mavlink.command.{callsign}")).await?;
