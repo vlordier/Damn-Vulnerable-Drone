@@ -9,13 +9,12 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from dvd_research.run_files import read_run_text, write_run_json
 from dvd_research.run_nats import read_run_nats_log
 
-
-def atomic_json(path: Path, value: dict) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(json.dumps(value, indent=2, sort_keys=True) + "\n")
-    temporary.replace(path)
+CONTROLLER_LOG = Path("logs/antoine-controller.log")
+MOTOR_SEQUENCE = Path("applier-authorized/drone-1.motors")
+ACTUATOR_AUDIT = Path("applier-neutral/actuator-output.jsonl")
 
 
 def read_one_json(output: str) -> dict:
@@ -32,10 +31,16 @@ def read_one_json(output: str) -> dict:
     raise ValueError("NATS raw subscription did not return a JSON object")
 
 
-def last_motor_sequence(path: Path) -> int:
+def last_motor_sequence(run_dir: Path) -> int:
     try:
-        return int(path.read_text().strip())
-    except (OSError, ValueError):
+        value = read_run_text(run_dir, MOTOR_SEQUENCE)
+    except OSError:
+        return 0
+    if value is None:
+        return 0
+    try:
+        return int(value.strip())
+    except ValueError:
         return 0
 
 
@@ -61,42 +66,40 @@ def validate_server(server: str, run_dir: Path, deadline: float) -> None:
     raise TimeoutError("NATS endpoint was not confirmed by this run's broker startup log")
 
 
-def wait_for_controller_ready(run_dir: Path, deadline: float) -> tuple[Path, Path]:
-    controller_log = run_dir / "logs" / "antoine-controller.log"
-    motor_sequence = run_dir / "applier-authorized" / "drone-1.motors"
+def wait_for_controller_ready(run_dir: Path, deadline: float) -> None:
     while time.monotonic() < deadline:
         try:
-            log = controller_log.read_text(errors="replace")
+            log = read_run_text(run_dir, CONTROLLER_LOG, errors="replace") or ""
         except OSError:
             log = ""
         if (
             "ANTOINE_GZ_SETPOINT_RECEIVED callsign=drone-1" in log
-            and last_motor_sequence(motor_sequence) > 10
+            and last_motor_sequence(run_dir) > 10
         ):
-            return controller_log, motor_sequence
+            return
         time.sleep(0.1)
     raise TimeoutError("authorized setpoint and actuator traffic did not become ready")
 
 
-def read_audit_rows(audit_path: Path) -> list[dict]:
+def read_audit_rows(run_dir: Path) -> list[dict]:
     rows = []
     try:
-        with audit_path.open(encoding="utf-8") as stream:
-            for line in stream:
-                try:
-                    row = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(row, dict):
-                    rows.append(row)
+        content = read_run_text(run_dir, ACTUATOR_AUDIT)
     except OSError:
-        pass
+        content = None
+    if content is not None:
+        for line in content.splitlines():
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
     return rows
 
 
 def wait_for_mutation_effect(
-    controller_log: Path,
-    audit_path: Path,
+    run_dir: Path,
     sequence: int,
     run_id: str,
     prior_audit_rows: int,
@@ -110,7 +113,7 @@ def wait_for_mutation_effect(
     neutral_stop = None
     while time.monotonic() < deadline:
         try:
-            log_text = controller_log.read_text(errors="replace")
+            log_text = read_run_text(run_dir, CONTROLLER_LOG, errors="replace") or ""
             accepted_line = next((line for line in log_text.splitlines() if marker in line), None)
             if accepted_line:
                 timestamp = accepted_line.partition(marker)[2].strip()
@@ -120,7 +123,7 @@ def wait_for_mutation_effect(
                         accepted_observed_at = int(timestamp)
         except OSError:
             pass
-        rows = read_audit_rows(audit_path)
+        rows = read_audit_rows(run_dir)
         new_rows = rows[prior_audit_rows:]
         neutral_stop = next(
             (
@@ -149,7 +152,6 @@ def main() -> int:
     args = parser.parse_args()
 
     run_dir = args.run_dir
-    result_path = run_dir / "research-waypoint-injection.json"
     base = {
         "scenario": "waypoint-injection-antoine",
         "scope": "single local run, loopback NATS, Gazebo X500",
@@ -164,7 +166,7 @@ def main() -> int:
         deadline = time.monotonic() + 100
         validate_server(args.server, run_dir, deadline)
         run_id = run_dir.name
-        controller_log, _ = wait_for_controller_ready(run_dir, deadline)
+        wait_for_controller_ready(run_dir, deadline)
         subject = base["targetSubject"]
         captured = subprocess.run(
             ["nats", "--no-context", "--server", args.server, "sub", "--count=1", "--raw", subject],
@@ -203,8 +205,7 @@ def main() -> int:
         message["issuedAtMs"] = now_ms
         message["expiresAtMs"] = now_ms + 1_500
 
-        audit_path = run_dir / "applier-neutral" / "actuator-output.jsonl"
-        prior_audit_rows = len(read_audit_rows(audit_path))
+        prior_audit_rows = len(read_audit_rows(run_dir))
         publish_started_at = int(time.time() * 1000)
         published = subprocess.run(
             [
@@ -222,8 +223,7 @@ def main() -> int:
             timeout=8,
         )
         accepted, neutral_stop, accepted_observed_at = wait_for_mutation_effect(
-            controller_log,
-            audit_path,
+            run_dir,
             attack_sequence,
             run_id,
             prior_audit_rows,
@@ -274,12 +274,12 @@ def main() -> int:
                 "observedAtUnixMs": int(time.time() * 1000),
             }
         )
-        atomic_json(result_path, base)
+        write_run_json(run_dir, Path("research-waypoint-injection.json"), base)
         print(json.dumps(base, indent=2))
         return 0 if accepted and neutralized and causal_order_observed else 2
     except Exception as error:  # persist partial evidence for failed/inconclusive attempts
         base.update({"status": "inconclusive", "error": f"{type(error).__name__}: {error}"})
-        atomic_json(result_path, base)
+        write_run_json(run_dir, Path("research-waypoint-injection.json"), base)
         print(json.dumps(base, indent=2), file=sys.stderr)
         return 2
 

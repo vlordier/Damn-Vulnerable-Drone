@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 
 from antoine_setpoint_mutation import (
+    CONTROLLER_LOG,
     last_motor_sequence,
     read_audit_rows,
     read_one_json,
@@ -16,6 +17,7 @@ from antoine_setpoint_mutation import (
     wait_for_controller_ready,
     wait_for_mutation_effect,
 )
+from dvd_research.run_files import read_run_text, write_run_json
 
 
 def publish(server: str, subject: str, message: dict) -> None:
@@ -46,7 +48,6 @@ def main() -> int:
     run_dir = args.run_dir
     run_id = run_dir.name
     subject = "furia.gzsitl.setpoint.drone-1"
-    result_path = run_dir / "research-sequence-poisoning.json"
     result = {
         "contract": "damn-vulnerable-drone.sequence-poisoning-observation",
         "version": "1.0.0",
@@ -69,7 +70,7 @@ def main() -> int:
     try:
         deadline = time.monotonic() + 100
         validate_server(args.server, run_dir, deadline)
-        controller_log, motor_path = wait_for_controller_ready(run_dir, deadline)
+        wait_for_controller_ready(run_dir, deadline)
         captured = subprocess.run(
             ["nats", "--no-context", "--server", args.server, "sub", "--count=1", "--raw", subject],
             check=True,
@@ -105,12 +106,10 @@ def main() -> int:
         poisoned["issuedAtMs"] = now_ms
         poisoned["expiresAtMs"] = now_ms + 1_500
         high_water_publish_ms = int(time.time() * 1000)
-        audit_path = run_dir / "applier-neutral" / "actuator-output.jsonl"
-        prior_rows = len(read_audit_rows(audit_path))
+        prior_rows = len(read_audit_rows(run_dir))
         publish(args.server, subject, poisoned)
         accepted, stop, accepted_at = wait_for_mutation_effect(
-            controller_log,
-            audit_path,
+            run_dir,
             high_water,
             run_id,
             prior_rows,
@@ -121,7 +120,7 @@ def main() -> int:
                 "high-water message acceptance or same-run neutral stop was not observed"
             )
 
-        stop_motor_sequence = last_motor_sequence(motor_path)
+        stop_motor_sequence = last_motor_sequence(run_dir)
         stop_matches = stop.get("stage") == "explicit-stop" and stop.get("runId") == run_id
         recovery_sequence = high_water + 1
         recovery = dict(message)
@@ -137,7 +136,8 @@ def main() -> int:
         recovery_deadline = time.monotonic() + 5
         while time.monotonic() < recovery_deadline:
             try:
-                for line in controller_log.read_text(errors="replace").splitlines():
+                log_text = read_run_text(run_dir, CONTROLLER_LOG, errors="replace") or ""
+                for line in log_text.splitlines():
                     if marker in line:
                         value = line.partition(marker)[2].strip()
                         if value.isdigit():
@@ -145,7 +145,7 @@ def main() -> int:
                             break
             except OSError:
                 pass
-            current_motor_sequence = last_motor_sequence(motor_path)
+            current_motor_sequence = last_motor_sequence(run_dir)
             if current_motor_sequence > stop_motor_sequence:
                 progress_at = int(time.time() * 1000)
                 break
@@ -168,7 +168,7 @@ def main() -> int:
                 "recoveryPublishAtUnixMs": recovery_publish_ms,
                 "recoveryParserAccepted": accepted_recovery_at is not None,
                 "recoveryAcceptedAtUnixMs": accepted_recovery_at,
-                "motorSequenceAfterRecovery": last_motor_sequence(motor_path),
+                "motorSequenceAfterRecovery": last_motor_sequence(run_dir),
                 "actuatorProgressAfterRecovery": progress_at is not None,
                 "recoveryToActuatorProgressMs": progress_at - recovery_publish_ms
                 if progress_at
@@ -191,7 +191,7 @@ def main() -> int:
         )
     except Exception as error:
         result["error"] = f"{type(error).__name__}: {error}"
-    result_path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    write_run_json(run_dir, Path("research-sequence-poisoning.json"), result)
     print(json.dumps(result, indent=2))
     return 0 if result["qualification"] == "bounded_sequence_recovery_observed" else 2
 
