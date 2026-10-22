@@ -2877,6 +2877,20 @@ mod tests {
     }
 
     #[test]
+    fn truncated_mission_frames_still_require_a_valid_checksum() {
+        let truncated_count = mavlink_v2_frame(44, 9, 255, 190, &[1, 0], 221);
+        assert_eq!(parsed(&truncated_count).payload, [1, 0]);
+
+        let mut corrupted_count = truncated_count;
+        let final_byte = corrupted_count.len() - 1;
+        corrupted_count[final_byte] ^= 0x80;
+        assert!(validate_frame(&corrupted_count)
+            .unwrap_err()
+            .to_string()
+            .contains("mission MAVLink checksum mismatch"));
+    }
+
+    #[test]
     fn command_long_preserves_unknown_command_ids_after_crc_validation() {
         let mut payload = vec![0_u8; 32];
         payload[28..30].copy_from_slice(&9999_u16.to_le_bytes());
