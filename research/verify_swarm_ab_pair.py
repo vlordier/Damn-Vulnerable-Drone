@@ -254,6 +254,48 @@ def require_same_host(baseline: dict[str, Any], variant: dict[str, Any]) -> None
         raise ValueError("the matched pair was not captured on one host")
 
 
+def summarize_host_load_comparison(
+    baseline: dict[str, Any], variant: dict[str, Any]
+) -> dict[str, Any]:
+    baseline_during = baseline["during"]
+    variant_during = variant["during"]
+    baseline_load = baseline_during["maxLoadAverage"]
+    variant_load = variant_during["maxLoadAverage"]
+    return {
+        "sampleCounts": {
+            "baseline": baseline_during["sampleCount"],
+            "variant": variant_during["sampleCount"],
+        },
+        "maxLoadAverage": {
+            "baseline": baseline_load,
+            "variant": variant_load,
+            "variantMinusBaseline": [
+                round(after - before, 3)
+                for before, after in zip(baseline_load, variant_load, strict=True)
+            ],
+        },
+        "minimumDiskFreeBytes": {
+            "baseline": baseline_during["minDiskFreeBytes"],
+            "variant": variant_during["minDiskFreeBytes"],
+            "variantMinusBaseline": (
+                variant_during["minDiskFreeBytes"] - baseline_during["minDiskFreeBytes"]
+            ),
+        },
+        "peakCpuPercentByProcess": {
+            "baseline": baseline_during["peakCpuPercentByProcess"],
+            "variant": variant_during["peakCpuPercentByProcess"],
+        },
+        "simulationAndBuildProcessNames": {
+            "baseline": baseline_during["simulationAndBuildProcessNames"],
+            "variant": variant_during["simulationAndBuildProcessNames"],
+        },
+        "interpretation": (
+            "Descriptive host context only; this does not qualify equivalent load or establish "
+            "a causal effect."
+        ),
+    }
+
+
 def summarize_outcome(report: dict[str, Any]) -> dict[str, Any]:
     return {
         "runId": report["runId"],
@@ -320,6 +362,7 @@ def verify_pair(baseline_dir: Path, variant_dir: Path, factor: str) -> dict[str,
     baseline_host = load_host_contexts(baseline_dir)
     variant_host = load_host_contexts(variant_dir)
     require_same_host(baseline_host, variant_host)
+    host_load_comparison = summarize_host_load_comparison(baseline_host, variant_host)
 
     return {
         "contract": "damn-vulnerable-drone.antoine-swarm-ab-pair",
@@ -332,6 +375,7 @@ def verify_pair(baseline_dir: Path, variant_dir: Path, factor: str) -> dict[str,
         "sharedConfigSha256": shared_config_sha256,
         "sharedProvenance": baseline_report["provenance"],
         "hostContext": {"baseline": baseline_host, "variant": variant_host},
+        "hostLoadComparison": host_load_comparison,
         "baseline": summarize_outcome(baseline_report),
         "variant": summarize_outcome(variant_report),
         "interpretation": (

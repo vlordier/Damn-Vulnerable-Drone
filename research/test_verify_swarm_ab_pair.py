@@ -11,6 +11,7 @@ from verify_swarm_ab_pair import (
     config_pair,
     load_host_contexts,
     require_same_host,
+    summarize_host_load_comparison,
     verify_artifacts,
     verify_profile_config,
     verify_provenance,
@@ -211,6 +212,33 @@ class PairArtifactTests(unittest.TestCase):
             other_host = {**result, "post": {**result["post"], "hostId": "b" * 64}}
             with self.assertRaisesRegex(ValueError, "one host"):
                 require_same_host(result, other_host)
+
+    def test_summarizes_load_and_disk_deltas_without_claiming_causality(self) -> None:
+        baseline = {
+            "during": {
+                "sampleCount": 12,
+                "maxLoadAverage": [2.0, 3.0, 4.0],
+                "minDiskFreeBytes": 9_000,
+                "peakCpuPercentByProcess": {"gz": 75.0},
+                "simulationAndBuildProcessNames": ["gz", "nats-server"],
+            }
+        }
+        variant = {
+            "during": {
+                "sampleCount": 10,
+                "maxLoadAverage": [3.25, 2.5, 5.0],
+                "minDiskFreeBytes": 8_500,
+                "peakCpuPercentByProcess": {"gz": 90.0, "cargo": 35.0},
+                "simulationAndBuildProcessNames": ["cargo", "gz"],
+            }
+        }
+
+        result = summarize_host_load_comparison(baseline, variant)
+
+        self.assertEqual(result["sampleCounts"], {"baseline": 12, "variant": 10})
+        self.assertEqual(result["maxLoadAverage"]["variantMinusBaseline"], [1.25, -0.5, 1.0])
+        self.assertEqual(result["minimumDiskFreeBytes"]["variantMinusBaseline"], -500)
+        self.assertIn("does not qualify equivalent load", result["interpretation"])
 
     def test_rejects_out_of_order_during_host_samples(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
