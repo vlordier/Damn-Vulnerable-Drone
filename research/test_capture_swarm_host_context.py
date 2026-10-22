@@ -16,11 +16,12 @@ class ProcessInventoryTests(unittest.TestCase):
             args=["ps"],
             returncode=0,
             stdout=(
-                " 10 1 2.0 0.5 00:10 /usr/local/bin/nats-server\n"
-                " 11 1 40.0 1.0 00:05 /Applications/Gazebo.app/Contents/MacOS/gz sim -g\n"
-                " 12 1 10.0 0.2 00:02 /usr/bin/node\n"
-                " 13 1 30.0 0.4 00:01 /Users/vincent/.rustup/toolchains/stable/bin/rustc\n"
-                " 14 1 20.0 0.3 00:01 /opt/homebrew/bin/cmake\n"
+                " 10 1 2.0 0.5 00:10 nats-server\n"
+                " 11 1 40.0 1.0 00:05 gz\n"
+                " 12 1 10.0 0.2 00:02 node\n"
+                " 13 1 30.0 0.4 00:01 rustc\n"
+                " 14 1 20.0 0.3 00:01 cmake\n"
+                " 15 1 50.0 1.2 00:04 Google Chrome He\n"
                 "invalid line\n"
             ),
             stderr="",
@@ -28,8 +29,12 @@ class ProcessInventoryTests(unittest.TestCase):
 
         result = process_inventory()
 
+        self.assertEqual(
+            run.call_args.args[0], ["ps", "-Ao", "pid=,ppid=,%cpu=,%mem=,etime=,ucomm="]
+        )
         self.assertEqual(result["status"], "captured")
-        self.assertEqual(result["topCpuProcesses"][0]["pid"], 11)
+        self.assertEqual(result["topCpuProcesses"][0]["pid"], 15)
+        self.assertEqual(result["topCpuProcesses"][0]["name"], "Google Chrome He")
         self.assertEqual(
             [item["name"] for item in result["simulationAndBuildProcesses"]],
             ["gz", "rustc", "cmake", "node", "nats-server"],

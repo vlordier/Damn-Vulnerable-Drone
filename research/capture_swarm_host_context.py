@@ -26,7 +26,7 @@ def request_stop(_signal: int, _frame: Any) -> None:
 
 def process_inventory() -> dict[str, Any]:
     result = subprocess.run(
-        ["ps", "-Ao", "pid=,ppid=,%cpu=,%mem=,etime=,comm="],
+        ["ps", "-Ao", "pid=,ppid=,%cpu=,%mem=,etime=,ucomm="],
         check=False,
         capture_output=True,
         text=True,
@@ -45,7 +45,7 @@ def process_inventory() -> dict[str, Any]:
                 "cpuPercent": float(fields[2]),
                 "memoryPercent": float(fields[3]),
                 "elapsed": fields[4],
-                "name": Path(fields[5].split(None, 1)[0]).name,
+                "name": fields[5],
             }
         except (ValueError, OSError):
             continue
