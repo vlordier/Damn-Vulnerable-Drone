@@ -146,10 +146,26 @@ def summarize(run_dir: Path) -> dict[str, Any]:
         value for line in lines if (value := marker(line, "ANTOINE_GZ_STATE_PARTITION_ENTER"))
     ]
     exited = [value for line in lines if (value := marker(line, "ANTOINE_GZ_STATE_PARTITION_EXIT"))]
-    hold_enter = [
-        line for line in lines if f"ANTOINE_GZ_STALE_HOLD_ENTER callsign={target}" in line
+    entered_lines = [
+        index
+        for index, line in enumerate(lines)
+        if marker(line, "ANTOINE_GZ_STATE_PARTITION_ENTER") is not None
     ]
-    hold_exit = [line for line in lines if f"ANTOINE_GZ_STALE_HOLD_EXIT callsign={target}" in line]
+    exited_lines = [
+        index
+        for index, line in enumerate(lines)
+        if marker(line, "ANTOINE_GZ_STATE_PARTITION_EXIT") is not None
+    ]
+    hold_enter = [
+        index
+        for index, line in enumerate(lines)
+        if f"ANTOINE_GZ_STALE_HOLD_ENTER callsign={target}" in line
+    ]
+    hold_exit = [
+        index
+        for index, line in enumerate(lines)
+        if f"ANTOINE_GZ_STALE_HOLD_EXIT callsign={target}" in line
+    ]
     if len(entered) != 1 or len(exited) != 1:
         raise ValueError("partition entry and recovery markers must each be unique")
     start, end = entered[0], exited[0]
@@ -189,6 +205,14 @@ def summarize(run_dir: Path) -> dict[str, Any]:
         before = pose_window(samples, before_time)
         during = pose_window(samples, partition_time)
         recovered = pose_window(samples, recovery_time)
+        phase_timestamps_valid = (
+            before is not None
+            and before["simulationTimeSeconds"] < first_sim / 1e9
+            and during is not None
+            and first_sim / 1e9 <= during["simulationTimeSeconds"] < recovery_sim / 1e9
+            and recovered is not None
+            and recovered["simulationTimeSeconds"] >= recovery_sim / 1e9
+        )
         displacement = (
             math.dist(before["positionEnuM"], recovered["positionEnuM"])
             if before and recovered
@@ -200,7 +224,8 @@ def summarize(run_dir: Path) -> dict[str, Any]:
             "partitionEnd": during,
             "afterRecovery": recovered,
             "poseDisplacementM": round(displacement, 4) if displacement is not None else None,
-            "poseEvidenceComplete": all(item is not None for item in (before, during, recovered)),
+            "poseEvidenceComplete": phase_timestamps_valid,
+            "phaseTimestampsValid": phase_timestamps_valid,
         }
     pair_separations = []
     if all(windows[callsign]["poseEvidenceComplete"] for callsign in roster):
@@ -247,9 +272,15 @@ def summarize(run_dir: Path) -> dict[str, Any]:
             )
         ordered = [selected[key] for key in ("before", "during", "recovered")]
         valid = all(row is not None and row.get("vehicleId") == callsign for row in ordered)
+        phase_timestamps_valid = valid and (
+            ordered[0]["recordedAtUnixMs"] < start_unix
+            and start_unix <= ordered[1]["recordedAtUnixMs"] <= end_unix
+            and ordered[2]["recordedAtUnixMs"] > end_unix
+        )
         if valid:
             sequences = [row["sequence"] for row in ordered]
             valid = sequences[0] < sequences[1] < sequences[2]
+        valid = valid and phase_timestamps_valid
         vectors = [actuator_vector(row) for row in ordered]
         valid = valid and all(vector is not None for vector in vectors)
         deltas = (
@@ -278,12 +309,19 @@ def summarize(run_dir: Path) -> dict[str, Any]:
         actuator_windows[callsign] = {
             **window_evidence,
             "identitySequenceAndValuesValid": valid,
+            "phaseTimestampsValid": phase_timestamps_valid,
         }
     authority_progress = authority_progress_during_partition(
         run_dir, target, run_id, start_unix, end_unix
     )
     authority_continued = authority_progress["status"] == "measured"
-    watchdog_recovered = bool(hold_enter and hold_exit)
+    watchdog_recovered = (
+        len(entered_lines) == 1
+        and len(exited_lines) == 1
+        and len(hold_enter) == 1
+        and len(hold_exit) == 1
+        and entered_lines[0] < hold_enter[0] < exited_lines[0] < hold_exit[0]
+    )
     pose_complete = all(value["poseEvidenceComplete"] for value in windows.values())
     actuator_complete = all(
         value["identitySequenceAndValuesValid"] for value in actuator_windows.values()
@@ -303,7 +341,7 @@ def summarize(run_dir: Path) -> dict[str, Any]:
     )
     return {
         "contract": "damn-vulnerable-drone.antoine-state-partition-evidence",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "runId": run_id,
         "fault": fault,
         "status": status,
@@ -331,6 +369,7 @@ def summarize(run_dir: Path) -> dict[str, Any]:
             "partitionExited": len(exited) == 1,
             "watchdogEntered": bool(hold_enter),
             "watchdogExited": bool(hold_exit),
+            "watchdogOrderValid": watchdog_recovered,
             "authoritySourceContinued": authority_continued,
             "authorityProgress": authority_progress,
         },

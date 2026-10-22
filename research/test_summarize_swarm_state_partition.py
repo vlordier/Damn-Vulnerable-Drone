@@ -25,8 +25,8 @@ class StatePartitionSummaryTests(unittest.TestCase):
         }
         (self.run_dir / "research-swarm-config.json").write_text(json.dumps(config))
         controller = """ANTOINE_GZ_STATE_PARTITION_ENTER run_id=antoine-swarm-flight-test callsign=drone-2 unix_ms=10000 after_ms=5000 duration_ms=1000 source_sequence=20 simulation_time_ns=9000000000
-ANTOINE_GZ_STATE_PARTITION_EXIT run_id=antoine-swarm-flight-test callsign=drone-2 unix_ms=11000 elapsed_ms=6000 dropped_messages=10 last_dropped_source_sequence=29 recovery_source_sequence=30 last_dropped_simulation_time_ns=9990000000 recovery_simulation_time_ns=10000000000
 ANTOINE_GZ_STALE_HOLD_ENTER callsign=drone-2 stale_limit_ms=250 behavior=zero-velocity-setpoint
+ANTOINE_GZ_STATE_PARTITION_EXIT run_id=antoine-swarm-flight-test callsign=drone-2 unix_ms=11000 elapsed_ms=6000 dropped_messages=10 last_dropped_source_sequence=29 recovery_source_sequence=30 last_dropped_simulation_time_ns=9990000000 recovery_simulation_time_ns=10000000000
 ANTOINE_GZ_STALE_HOLD_EXIT callsign=drone-2 stale_limit_ms=250 behavior=zero-velocity-setpoint
 """
         (self.run_dir / "logs" / "antoine-controller-drone-2.log").write_text(controller)
@@ -42,7 +42,7 @@ ANTOINE_GZ_STALE_HOLD_EXIT callsign=drone-2 stale_limit_ms=250 behavior=zero-vel
         evidence = {"runId": self.run_id, "callsign": "drone-2", "missionProgress": events}
         (self.run_dir / "flight-evidence-drone-2.json").write_text(json.dumps(evidence))
         frames = []
-        for sim_time in (8.75, 9.99, 10.25):
+        for sim_time in (8.75, 9.99, 10.0, 10.25):
             frames.append(
                 {
                     "header": {"stamp": {"sec": int(sim_time), "nsec": int((sim_time % 1) * 1e9)}},
@@ -94,6 +94,45 @@ ANTOINE_GZ_STALE_HOLD_EXIT callsign=drone-2 stale_limit_ms=250 behavior=zero-vel
         report = summarize(self.run_dir)
         self.assertEqual(report["status"], "inconclusive")
         self.assertFalse(report["markers"]["authoritySourceContinued"])
+
+    def test_watchdog_markers_outside_the_partition_do_not_qualify(self) -> None:
+        log_path = self.run_dir / "logs" / "antoine-controller-drone-2.log"
+        lines = log_path.read_text().splitlines()
+        hold_enter = next(line for line in lines if "STALE_HOLD_ENTER" in line)
+        lines.remove(hold_enter)
+        lines.insert(0, hold_enter)
+        log_path.write_text("\n".join(lines) + "\n")
+
+        report = summarize(self.run_dir)
+
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertFalse(report["markers"]["watchdogOrderValid"])
+
+    def test_actuator_during_sample_must_be_inside_the_partition(self) -> None:
+        path = self.run_dir / "applier-neutral" / "actuator-output.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        for row in rows:
+            if row["recordedAtUnixMs"] == 10500:
+                row["recordedAtUnixMs"] = 9999
+        path.write_text("\n".join(json.dumps(row) for row in rows))
+
+        report = summarize(self.run_dir)
+
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertFalse(report["actuatorWindows"]["drone-2"]["phaseTimestampsValid"])
+
+    def test_pose_during_sample_must_precede_recovery(self) -> None:
+        path = self.run_dir / "gazebo-pose.jsonl"
+        frames = [json.loads(line) for line in path.read_text().splitlines()]
+        frame = next(row for row in frames if row["header"]["stamp"]["sec"] == 9)
+        frame["header"]["stamp"]["sec"] = 10
+        frame["header"]["stamp"]["nsec"] = 10_010_000
+        path.write_text("\n".join(json.dumps(row) for row in frames))
+
+        report = summarize(self.run_dir)
+
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertFalse(report["vehicles"]["drone-2"]["phaseTimestampsValid"])
 
 
 if __name__ == "__main__":
