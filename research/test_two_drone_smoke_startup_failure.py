@@ -15,7 +15,12 @@ RUNNER = ROOT / "research" / "run-antoine-two-drone-smoke.sh"
 
 
 class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
-    def _run_to_provenance_preflight(self, fixture: Path, config_override: str = "") -> Path:
+    def _run_startup_fixture(
+        self,
+        fixture: Path,
+        config_override: str = "",
+        continue_to_gazebo: bool = False,
+    ) -> Path:
         real_uv = shutil.which("uv")
         self.assertIsNotNone(real_uv)
         bin_dir = fixture / "bin"
@@ -41,13 +46,25 @@ class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
         (gz_root / "lib").mkdir()
         (gz_root / "setup.bash").write_text("")
         gz_bin = gz_root / "bin" / "gz"
-        gz_bin.write_text("#!/bin/sh\nexit 0\n")
+        gz_bin.write_text(
+            '#!/bin/sh\nif [ "$1" = topic ]; then echo /other/topic; exit 0; fi\nsleep 30\n'
+        )
         gz_bin.chmod(0o755)
 
-        for tool in ("nats", "nats-server"):
-            executable = bin_dir / tool
-            executable.write_text("#!/bin/sh\nexit 0\n")
-            executable.chmod(0o755)
+        nats = bin_dir / "nats"
+        nats.write_text("#!/bin/sh\nexit 0\n")
+        nats.chmod(0o755)
+        nats_server = bin_dir / "nats-server"
+        if continue_to_gazebo:
+            nats_server.write_text(
+                "#!/bin/sh\n"
+                'echo "Listening for client connections on 127.0.0.1:14599"\n'
+                'echo "Server is ready"\n'
+                "sleep 30\n"
+            )
+        else:
+            nats_server.write_text("#!/bin/sh\nexit 0\n")
+        nats_server.chmod(0o755)
 
         uv_wrapper = bin_dir / "uv"
         uv_wrapper.write_text(
@@ -55,7 +72,7 @@ class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
             'case "$*" in\n'
             '  *"socket"*) echo 14599; exit 0 ;;\n'
             '  *"prepare_antoine_two_drone_world.py"*) printf world >"$6"; exit 0 ;;\n'
-            '  *"capture_antoine_provenance.py"*) exit 9 ;;\n'
+            f'  *"capture_antoine_provenance.py"*) exit {0 if continue_to_gazebo else 9} ;;\n'
             "esac\n"
             f'exec "{real_uv}" "$@"\n'
         )
@@ -76,6 +93,8 @@ class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
             environment["GZ_CONFIG_PATH"] = config_override
         else:
             environment.pop("GZ_CONFIG_PATH", None)
+        if continue_to_gazebo:
+            environment["ANTOINE_GZ_STARTUP_TIMEOUT_SECONDS"] = "1"
         result = subprocess.run(
             ["bash", str(RUNNER)],
             cwd=ROOT,
@@ -84,13 +103,19 @@ class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
             text=True,
             check=False,
         )
-        self.assertEqual(result.returncode, 9, result.stderr)
+        self.assertEqual(result.returncode, 1 if continue_to_gazebo else 9, result.stderr)
         run_dirs = list(report_root.glob("antoine-two-drone-smoke-*"))
         self.assertEqual(len(run_dirs), 1)
         run_dir = run_dirs[0]
         failure = (run_dir / "research-run-failure.txt").read_text(encoding="utf-8")
-        self.assertIn("stage=preflight-provenance", failure)
+        self.assertIn(
+            "stage=start-gazebo" if continue_to_gazebo else "stage=preflight-provenance",
+            failure,
+        )
         return run_dir
+
+    def _run_to_provenance_preflight(self, fixture: Path, config_override: str = "") -> Path:
+        return self._run_startup_fixture(fixture, config_override)
 
     def test_gazebo_runtime_paths_are_derived_and_recorded(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -105,6 +130,20 @@ class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
             run_dir = self._run_to_provenance_preflight(Path(directory), override)
             profile = (run_dir / "research-profile.env").read_text(encoding="utf-8")
             self.assertIn(f"GZ_CONFIG_PATH={Path(directory) / 'gz/share/gz'}:{override}\n", profile)
+
+    def test_gazebo_startup_timeout_preserves_topic_and_server_diagnostics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self._run_startup_fixture(Path(directory), continue_to_gazebo=True)
+            diagnostics = (run_dir / "gazebo-startup-diagnostics.txt").read_text(encoding="utf-8")
+            self.assertIn("expected_topic=/world/antoine_gz_flight_proof/pose/info", diagnostics)
+            self.assertIn("/other/topic", diagnostics)
+            manifest = json.loads(
+                (run_dir / "research-evidence-manifest.json").read_text(encoding="utf-8")
+            )
+            self.assertIn(
+                "gazebo-startup-diagnostics.txt",
+                {item["name"] for item in manifest["publicEvidence"]},
+            )
 
     def test_early_failure_is_preserved_in_a_verifiable_manifest(self) -> None:
         real_uv = shutil.which("uv")

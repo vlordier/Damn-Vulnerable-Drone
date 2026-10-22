@@ -8,6 +8,11 @@ SIM_SOURCE="${AGR_SIM:-$HOME/Work/durandal-gz-swarm-sim}"
 C2_SCRIPTS="${AGR_C2_SCRIPTS:-$HOME/Work/furia-c2/scripts}"
 GZ_BIN="${GZ_BIN:-$HOME/Work/gz-macOS/ws/install/bin/gz}"
 GZ_INSTALL="$(cd "$(dirname "$GZ_BIN")/.." && pwd)"
+GZ_STARTUP_TIMEOUT_SECONDS="${ANTOINE_GZ_STARTUP_TIMEOUT_SECONDS:-20}"
+[[ "$GZ_STARTUP_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] && ((GZ_STARTUP_TIMEOUT_SECONDS <= 180)) || {
+  echo "ANTOINE_GZ_STARTUP_TIMEOUT_SECONDS must be an integer from 1 to 180" >&2
+  exit 2
+}
 REPORT_ROOT="${ANTOINE_REPORT_DIR:-$PROJECT_ROOT/build_logs/research/antoine-scenarios}"
 RUN_ID="antoine-two-drone-smoke-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$REPORT_ROOT/$RUN_ID"
@@ -100,6 +105,7 @@ export DYLD_LIBRARY_PATH="$GZ_INSTALL/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PAT
   printf 'GZ_CONFIG_PATH=%s\n' "$GZ_CONFIG_PATH"
   printf 'GZ_SIM_SYSTEM_PLUGIN_PATH=%s\n' "$GZ_SIM_SYSTEM_PLUGIN_PATH"
   printf 'GZ_SIM_RESOURCE_PATH=%s\n' "$GZ_SIM_RESOURCE_PATH"
+  printf 'ANTOINE_GZ_STARTUP_TIMEOUT_SECONDS=%s\n' "$GZ_STARTUP_TIMEOUT_SECONDS"
   printf 'ANTOINE_GZ_FLIGHT_NATS_PORT=%s\n' "$ANTOINE_GZ_FLIGHT_NATS_PORT"
 } >"$RUN_DIR/research-profile.env"
 PROVENANCE_ARGS=(
@@ -145,17 +151,33 @@ dvd_run_owned_child "$PROJECT_ROOT" "$SIM_ID" "$GZ_BIN" sim -s -r \
   >"$RUN_DIR/gazebo.log" 2>&1 &
 SIM_PID=$!
 ready=0
-ready_deadline=$((SECONDS + 20))
+ready_deadline=$((SECONDS + GZ_STARTUP_TIMEOUT_SECONDS))
+capture_gazebo_startup_diagnostics() {
+  {
+    printf 'expected_topic=/world/antoine_gz_flight_proof/pose/info\n'
+    printf 'gazebo_pid=%s\n' "$SIM_PID"
+    ps -p "$SIM_PID" -o pid=,stat=,etime=,command= 2>&1 || true
+    printf '\n--- visible Gazebo topics ---\n'
+    timeout 3 "$GZ_BIN" topic --list 2>&1 || true
+    printf '\n--- Gazebo server log ---\n'
+    tail -40 "$RUN_DIR/gazebo.log" 2>&1 || true
+  } >"$RUN_DIR/gazebo-startup-diagnostics.txt"
+}
 while ((SECONDS < ready_deadline)); do
   if timeout 2 "$GZ_BIN" topic --list 2>/dev/null | grep -q '^/world/antoine_gz_flight_proof/pose/info$'; then ready=1; break; fi
   if ! kill -0 "$SIM_PID" 2>/dev/null; then
-    echo "run-owned Gazebo exited before the two-drone world became ready; see $RUN_DIR/gazebo.log" >&2
+    capture_gazebo_startup_diagnostics
+    echo "run-owned Gazebo exited before the two-drone world became ready; see $RUN_DIR/gazebo-startup-diagnostics.txt" >&2
     tail -40 "$RUN_DIR/gazebo.log" >&2
     exit 1
   fi
   sleep 0.25
 done
-[[ "$ready" == 1 ]] || { echo "two-drone Gazebo world did not become ready" >&2; exit 1; }
+if [[ "$ready" != 1 ]]; then
+  capture_gazebo_startup_diagnostics
+  echo "two-drone Gazebo world did not become ready; see $RUN_DIR/gazebo-startup-diagnostics.txt" >&2
+  exit 1
+fi
 
 # Verify the actuator layer can address both model-specific Gazebo command
 # topics. No Antoine controller or non-neutral actuator command is started.
