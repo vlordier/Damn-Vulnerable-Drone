@@ -55,7 +55,7 @@ def gazebo_timestamp_seconds(value: dict) -> float | None:
 def write_failed_report(
     run_directory: Path,
     callsign: str,
-    failure: Exception,
+    failure: BaseException,
     cleanup: dict,
     check: GazeboFlightCheck,
 ) -> Path:

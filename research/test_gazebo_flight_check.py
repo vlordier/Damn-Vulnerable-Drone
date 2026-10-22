@@ -135,7 +135,7 @@ class GazeboFailureReportTests(unittest.TestCase):
             report_path = CHECKER.write_failed_report(
                 run_directory,
                 "drone-1",
-                AssertionError("timed out waiting for second takeoff"),
+                asyncio.CancelledError("operator interrupted the run"),
                 {
                     "attempted": True,
                     "rtlConfirmed": True,
@@ -147,7 +147,8 @@ class GazeboFailureReportTests(unittest.TestCase):
 
             report = json.loads(report_path.read_text())
             self.assertFalse(report["passed"])
-            self.assertEqual(report["failure"]["type"], "AssertionError")
+            self.assertEqual(report["failure"]["type"], "CancelledError")
+            self.assertEqual(report["failure"]["message"], "operator interrupted the run")
             self.assertEqual(report["lastGazeboPose"], [0.1, -0.02, 0.09])
             self.assertEqual(report["phase"], "land-at-home")
             self.assertEqual(report["initialHomePose"], [0.0, 0.0, 0.09])
