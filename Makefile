@@ -154,6 +154,9 @@ doctor: ## Check the local Antoine/Gazebo prerequisites without starting a run
 	  echo 'Apply research/patches/antoine-gazebo-battery-drain.patch from the repository root.' >&2; \
 	  exit 1; \
 	fi; \
+	MIN_FREE_MIB="$(ANTOINE_SWARM_MIN_FREE_MIB)" ./research/check-free-space.sh \
+	  "$${ANTOINE_REPORT_DIR:-$(CURDIR)/build_logs/research/antoine-scenarios}" \
+	  "$(ANTOINE_GZ_CARGO_TARGET_DIR)" "$(ANTOINE_BRIDGE_TARGET_DIR)"; \
 	echo 'Antoine/Gazebo prerequisites are present.'
 
 console-start: ## Start the local research console
