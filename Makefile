@@ -406,9 +406,10 @@ qgc-gazebo-check: ## Verify GCS-style UDP frames are audited by the active Gazeb
 	NATS_URL="$${MAVLINK_NATS_URL:-nats://127.0.0.1:14226}" MAVLINK_CALLSIGN="$${MAVLINK_CALLSIGN:-drone-1}" QGC_BRIDGE_PORT="$(QGC_BRIDGE_PORT)" $(UV) run --project research --group mavlink-check research/mavlink-nats-console/check_qgc_bridge.py
 
 mavlink-gazebo-flight-check: ## Exercise modes, takeoff, position, mission, RTL, land and disarm against Gazebo truth
-	@pose_file="$${ANTOINE_GZ_POSE_FILE:-$$(ls -td /tmp/antoine-gz-mavlink-*/gazebo-pose.jsonl 2>/dev/null | head -1)}"; \
+	@pose_file="$${ANTOINE_GZ_POSE_FILE:-$$(ls -td /tmp/antoine-gz-mavlink-*/flight-proof/gazebo-pose.jsonl 2>/dev/null | head -1)}"; \
 	test -f "$$pose_file" || { echo "Set ANTOINE_GZ_POSE_FILE to the active run's gazebo-pose.jsonl" >&2; exit 1; }; \
-	ANTOINE_GZ_POSE_FILE="$$pose_file" MAVLINK_NATS_URL="$${MAVLINK_NATS_URL:-nats://127.0.0.1:14226}" MAVLINK_CALLSIGN="$${MAVLINK_CALLSIGN:-drone-1}" QGC_BRIDGE_PORT="$(QGC_BRIDGE_PORT)" $(UV) run --project research --group mavlink-check research/mavlink-nats-console/gazebo_flight_check.py
+	run_dir="$${ANTOINE_GZ_RUN_DIR:-$$(dirname "$$(dirname "$$pose_file")")}"; \
+	ANTOINE_GZ_POSE_FILE="$$pose_file" ANTOINE_GZ_RUN_DIR="$$run_dir" MAVLINK_NATS_URL="$${MAVLINK_NATS_URL:-nats://127.0.0.1:14226}" MAVLINK_CALLSIGN="$${MAVLINK_CALLSIGN:-drone-1}" QGC_BRIDGE_PORT="$(QGC_BRIDGE_PORT)" $(UV) run --project research --group mavlink-check research/mavlink-nats-console/gazebo_flight_check.py
 
 lint: ## Run focused Python and shell lint checks
 	$(RESEARCH_PYTHON) --group lint ruff check research

@@ -14,6 +14,8 @@ from pathlib import Path
 from flight_check import FlightCheck
 from flight_check_support import finite_json_number, require_check
 
+from dvd_research.run_files import read_run_tail_text, resolve_run_file, write_run_json
+
 POSE_SAMPLE_MAX_AGE_SECONDS = 1.5
 MAVLINK_STATE_MAX_AGE_SECONDS = 1.5
 TELEMETRY_MAX_AGE_MS = 1_000
@@ -45,49 +47,56 @@ def gazebo_timestamp_seconds(value: dict) -> float | None:
 
 
 def write_failed_report(
-    report_path: Path,
+    run_directory: Path,
     callsign: str,
     failure: Exception,
     cleanup: dict,
     check: GazeboFlightCheck,
-) -> None:
-    report_path.parent.mkdir(parents=True, exist_ok=True)
-    report_path.write_text(
-        json.dumps(
-            {
-                "schema": "dvd.gazebo-mavlink-flight-check.v1",
-                "passed": False,
-                "callsign": callsign,
-                "phase": getattr(check, "phase", None),
-                "failure": {
-                    "type": type(failure).__name__,
-                    "message": str(failure)[:2000],
-                },
-                "cleanup": cleanup,
-                "initialHomePose": getattr(check, "home_pose", None),
-                "lastGazeboPose": check.pose(),
-                "lastGazeboPoseObservation": check.pose_observation(),
-                "lastMavlinkState": dict(check.telemetry),
-                "rawGazeboTelemetry": check.raw_telemetry,
-                "validGazeboTelemetryReceived": getattr(
-                    check, "valid_telemetry_received", asyncio.Event()
-                ).is_set(),
-                "telemetryRejection": getattr(check, "telemetry_rejection", None),
-                "auditFrameCount": len(check.audit_frames),
+) -> Path:
+    return write_run_json(
+        run_directory,
+        Path("gazebo-mavlink-acceptance.json"),
+        {
+            "schema": "dvd.gazebo-mavlink-flight-check.v1",
+            "passed": False,
+            "callsign": callsign,
+            "phase": getattr(check, "phase", None),
+            "failure": {
+                "type": type(failure).__name__,
+                "message": str(failure)[:2000],
             },
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
+            "cleanup": cleanup,
+            "initialHomePose": getattr(check, "home_pose", None),
+            "lastGazeboPose": check.pose(),
+            "lastGazeboPoseObservation": check.pose_observation(),
+            "lastMavlinkState": dict(check.telemetry),
+            "rawGazeboTelemetry": check.raw_telemetry,
+            "validGazeboTelemetryReceived": getattr(
+                check, "valid_telemetry_received", asyncio.Event()
+            ).is_set(),
+            "telemetryRejection": getattr(check, "telemetry_rejection", None),
+            "auditFrameCount": len(check.audit_frames),
+        },
     )
 
 
 class GazeboFlightCheck(FlightCheck):
     def __init__(
-        self, url: str, bind_port: int, bridge_port: int, callsign: str, pose_file: Path, agent: str
+        self,
+        url: str,
+        bind_port: int,
+        bridge_port: int,
+        callsign: str,
+        pose_file: Path,
+        run_directory: Path,
+        agent: str,
     ):
         super().__init__(url, bind_port, bridge_port, callsign)
         self.pose_file = pose_file
+        self.run_directory = run_directory
+        expected_pose = run_directory / "flight-proof" / "gazebo-pose.jsonl"
+        if pose_file.absolute() != expected_pose.absolute():
+            raise ValueError("Gazebo pose file must be the selected run's flight-proof artifact")
         self.agent = agent
         self.raw_telemetry: dict = {}
         self.telemetry_rejection: str | None = None
@@ -220,16 +229,23 @@ class GazeboFlightCheck(FlightCheck):
 
     def pose_observation(self) -> dict | None:
         try:
-            if self.pose_file.is_symlink():
+            pose_path = resolve_run_file(self.run_directory, Path("flight-proof/gazebo-pose.jsonl"))
+            if pose_path is None:
                 return None
-            file_stat = self.pose_file.stat()
+            file_stat = pose_path.stat()
             age = time.time() - file_stat.st_mtime
             if age < -0.25 or age > POSE_SAMPLE_MAX_AGE_SECONDS:
                 return None
-            with self.pose_file.open("rb") as stream:
-                stream.seek(max(0, file_stat.st_size - 512_000))
-                lines = stream.read().splitlines()
-        except (FileNotFoundError, OSError):
+            content = read_run_tail_text(
+                self.run_directory,
+                Path("flight-proof/gazebo-pose.jsonl"),
+                512_000,
+                errors="replace",
+            )
+            if content is None:
+                return None
+            lines = content.splitlines()
+        except (FileNotFoundError, OSError, ValueError):
             return None
         for line in reversed(lines):
             try:
@@ -404,15 +420,19 @@ class GazeboFlightCheck(FlightCheck):
 
     def actuator_audit(self) -> list[dict]:
         """Read independent Gazebo applier output, not Antoine telemetry."""
-        path = self.pose_file.parent / "applier-neutral" / "actuator-output.jsonl"
         try:
-            with path.open("rb") as stream:
-                stream.seek(max(0, path.stat().st_size - 2_000_000))
-                lines = stream.read().decode("utf-8", errors="replace").splitlines()
-        except OSError:
+            content = read_run_tail_text(
+                self.run_directory,
+                Path("flight-proof/applier-neutral/actuator-output.jsonl"),
+                2_000_000,
+                errors="replace",
+            )
+        except (OSError, ValueError):
+            return []
+        if content is None:
             return []
         records = []
-        for line in lines:
+        for line in content.splitlines():
             try:
                 record = json.loads(line)
             except json.JSONDecodeError:
@@ -469,9 +489,12 @@ async def run_check() -> dict:
     callsign = os.environ.get("MAVLINK_CALLSIGN", "drone-1")
     agent = os.environ.get("ANTOINE_GZ_AGENT", "isr")
     pose_file = Path(os.environ["ANTOINE_GZ_POSE_FILE"])
+    run_directory = Path(os.environ["ANTOINE_GZ_RUN_DIR"])
     bind_port = int(os.environ.get("MAVLINK_GAZEBO_CHECK_PORT", "14574"))
     bridge_port = int(os.environ.get("QGC_BRIDGE_PORT", "14651"))
-    check = GazeboFlightCheck(url, bind_port, bridge_port, callsign, pose_file, agent)
+    check = GazeboFlightCheck(
+        url, bind_port, bridge_port, callsign, pose_file, run_directory, agent
+    )
     home = None
     armed = False
     try:
@@ -808,21 +831,17 @@ async def run_check() -> dict:
                     f"Safety cleanup could not confirm LAND/DISARM: {cleanup_error}",
                     file=sys.stderr,
                 )
-        report_path = Path(
-            os.environ.get("MAVLINK_GAZEBO_REPORT", "/tmp/dvd-gazebo-mavlink-check.json")
-        )
-        write_failed_report(report_path, callsign, failure, cleanup, check)
+        report_path = write_failed_report(run_directory, callsign, failure, cleanup, check)
+        print(f"Gazebo MAVLink failure report: {report_path}", file=sys.stderr)
         raise
     finally:
         await check.close()
 
 
 async def main() -> None:
-    report_path = Path(
-        os.environ.get("MAVLINK_GAZEBO_REPORT", "/tmp/dvd-gazebo-mavlink-check.json")
-    )
     result = await run_check()
-    report_path.write_text(json.dumps(result, indent=2) + "\n", encoding="utf-8")
+    run_directory = Path(os.environ["ANTOINE_GZ_RUN_DIR"])
+    report_path = write_run_json(run_directory, Path("gazebo-mavlink-acceptance.json"), result)
     print(json.dumps(result, indent=2))
     print(f"Gazebo MAVLink acceptance report: {report_path}")
 

@@ -440,9 +440,9 @@ fi
 if [[ "${HEADLESS_ACCEPTANCE}" == "1" ]]; then
   echo "Running bounded headless MAVLink-to-NATS-to-Antoine/Gazebo acceptance..."
   ANTOINE_GZ_POSE_FILE="${FLIGHT_RUN_DIR}/gazebo-pose.jsonl" \
+    ANTOINE_GZ_RUN_DIR="${RUN_DIR}" \
     MAVLINK_NATS_URL="${NATS_URL}" MAVLINK_CALLSIGN="${CALLSIGN}" \
     QGC_BRIDGE_PORT="${QGC_BIND_PORT}" MAVLINK_GAZEBO_CHECK_PORT="${GAZEBO_CHECK_PORT}" \
-    MAVLINK_GAZEBO_REPORT="${RUN_DIR}/gazebo-mavlink-acceptance.json" \
     UV_PROJECT_ENVIRONMENT="${MAVLINK_PYTHON_ENV}" \
       uv run --locked --project research --python "${MAVLINK_PYTHON}" \
       --group mavlink-check \

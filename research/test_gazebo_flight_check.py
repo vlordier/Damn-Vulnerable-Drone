@@ -26,6 +26,14 @@ with mock.patch.dict(sys.modules, {"flight_check": STUB_FLIGHT_CHECK}):
 
 
 class GazeboFailureReportTests(unittest.TestCase):
+    def test_standalone_target_selects_run_owned_flight_proof_paths(self) -> None:
+        makefile = SCRIPT.parents[2] / "Makefile"
+        content = makefile.read_text(encoding="utf-8")
+        self.assertIn("/flight-proof/gazebo-pose.jsonl", content)
+        self.assertIn('ANTOINE_GZ_RUN_DIR="$$run_dir"', content)
+        runner = SCRIPT.parents[1] / "run-antoine-gazebo-mavlink.sh"
+        self.assertIn('ANTOINE_GZ_RUN_DIR="${RUN_DIR}"', runner.read_text(encoding="utf-8"))
+
     def test_gazebo_timestamp_rejects_out_of_range_and_unbounded_values(self) -> None:
         timestamp = CHECKER.gazebo_timestamp_seconds
         self.assertEqual(timestamp({"header": {"stamp": {"sec": "12", "nsec": "5"}}}), 12.000000005)
@@ -39,8 +47,10 @@ class GazeboFailureReportTests(unittest.TestCase):
 
     def test_failure_report_preserves_failure_pose_state_and_cleanup(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            report_path = Path(directory) / "nested/acceptance.json"
+            run_directory = Path(directory) / "run"
+            run_directory.mkdir()
             check = types.SimpleNamespace(
+                run_directory=run_directory,
                 pose=lambda: (0.1, -0.02, 0.09),
                 pose_observation=lambda: {
                     "simulationTimeSeconds": 12.5,
@@ -53,8 +63,8 @@ class GazeboFailureReportTests(unittest.TestCase):
                 audit_frames=[{}, {}],
             )
 
-            CHECKER.write_failed_report(
-                report_path,
+            report_path = CHECKER.write_failed_report(
+                run_directory,
                 "drone-1",
                 AssertionError("timed out waiting for second takeoff"),
                 {
@@ -76,6 +86,50 @@ class GazeboFailureReportTests(unittest.TestCase):
             self.assertFalse(report["lastMavlinkState"]["armed"])
             self.assertTrue(report["cleanup"]["disarmConfirmed"])
             self.assertEqual(report["auditFrameCount"], 2)
+
+    def test_failure_report_refuses_linked_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            outside = root / "outside"
+            outside.mkdir()
+            run_alias = root / "run"
+            run_alias.symlink_to(outside, target_is_directory=True)
+            check = types.SimpleNamespace(
+                pose=lambda: None,
+                pose_observation=lambda: None,
+                telemetry={},
+                raw_telemetry={},
+                phase="connecting",
+                home_pose=None,
+                audit_frames=[],
+                valid_telemetry_received=asyncio.Event(),
+            )
+            with self.assertRaisesRegex(ValueError, "run directory is a symlink"):
+                CHECKER.write_failed_report(run_alias, "drone-1", RuntimeError("failed"), {}, check)
+            self.assertEqual(list(outside.iterdir()), [])
+
+    def test_failure_report_refuses_linked_report_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_directory = Path(directory) / "run"
+            run_directory.mkdir()
+            outside = Path(directory) / "external-report.json"
+            outside.write_text("preserve", encoding="utf-8")
+            (run_directory / "gazebo-mavlink-acceptance.json").symlink_to(outside)
+            check = types.SimpleNamespace(
+                pose=lambda: None,
+                pose_observation=lambda: None,
+                telemetry={},
+                raw_telemetry={},
+                phase="connecting",
+                home_pose=None,
+                audit_frames=[],
+                valid_telemetry_received=asyncio.Event(),
+            )
+            with self.assertRaisesRegex(ValueError, "destination is a symlink"):
+                CHECKER.write_failed_report(
+                    run_directory, "drone-1", RuntimeError("failed"), {}, check
+                )
+            self.assertEqual(outside.read_text(encoding="utf-8"), "preserve")
 
     def test_nats_telemetry_accepts_only_the_gazebo_profile_contract(self) -> None:
         checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
@@ -123,8 +177,11 @@ class GazeboFailureReportTests(unittest.TestCase):
 
     def test_pose_observation_requires_fresh_finite_timestamped_vehicle_pose(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
-            pose_path = Path(directory) / "gazebo-pose.jsonl"
+            run_directory = Path(directory)
+            pose_path = run_directory / "flight-proof" / "gazebo-pose.jsonl"
+            pose_path.parent.mkdir(parents=True)
             checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
+            checker.run_directory = run_directory
             checker.pose_file = pose_path
             checker.agent = "isr"
             rows = [
@@ -156,6 +213,50 @@ class GazeboFailureReportTests(unittest.TestCase):
                 pose_path.write_text(json.dumps(invalid) + "\n")
                 with self.subTest(position=position):
                     self.assertIsNone(checker.pose_observation())
+
+            external_pose = Path(directory) / "external-pose.jsonl"
+            external_pose.write_text(json.dumps(rows[-1]) + "\n", encoding="utf-8")
+            pose_path.unlink()
+            pose_path.symlink_to(external_pose)
+            self.assertIsNone(checker.pose_observation())
+
+    def test_actuator_audit_ignores_symlinked_run_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_directory = Path(directory) / "run"
+            audit_directory = run_directory / "flight-proof" / "applier-neutral"
+            audit_directory.mkdir(parents=True)
+            outside = Path(directory) / "external-actuator-output.jsonl"
+            outside.write_text(
+                json.dumps(
+                    {
+                        "vehicleId": "drone-1",
+                        "actuatorKind": "motors",
+                        "sequence": 99,
+                        "neutral": False,
+                        "executionGrant": {
+                            "contract": "furia.prime.execution-grant",
+                            "targetEnuMm": [0, 0, 1000],
+                        },
+                    }
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+            audit_path = audit_directory / "actuator-output.jsonl"
+            audit_path.write_text(outside.read_text(encoding="utf-8"), encoding="utf-8")
+            checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
+            checker.run_directory = run_directory
+            checker.callsign = "drone-1"
+            self.assertEqual(checker.actuator_audit()[0]["sequence"], 99)
+
+            audit_path.unlink()
+            audit_path.symlink_to(outside)
+            self.assertEqual(checker.actuator_audit(), [])
+
+            audit_path.unlink()
+            audit_directory.rmdir()
+            audit_directory.symlink_to(outside.parent, target_is_directory=True)
+            self.assertEqual(checker.actuator_audit(), [])
 
     def test_wait_pose_requires_simulation_time_to_advance(self) -> None:
         checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
