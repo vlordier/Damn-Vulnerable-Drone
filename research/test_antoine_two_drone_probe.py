@@ -72,7 +72,7 @@ class TwoDroneProbeTests(unittest.TestCase):
             self.assertEqual(observation["status"], "inconclusive")
             self.assertTrue((run_dir / "gazebo-pose-info.jsonl").is_file())
 
-    def test_pass_requires_separation_in_both_nats_and_gazebo(self) -> None:
+    def test_pass_requires_correlated_separation_in_nats_and_gazebo(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run"
             (run_dir / "logs").mkdir(parents=True)
@@ -87,8 +87,8 @@ class TwoDroneProbeTests(unittest.TestCase):
                 "startup-neutral-zero-published drone-1\nstartup-neutral-zero-published drone-2\n"
             )
             states = [
-                json.dumps(self.state("drone-1", "isr", [0, 0, 0])),
-                json.dumps(self.state("drone-2", "fpv-a", [8, 0, 0])),
+                json.dumps(self.state("drone-1", "isr", [100, 0, 0])),
+                json.dumps(self.state("drone-2", "fpv-a", [108, 0, 0])),
             ]
             gazebo_samples = "\n".join(
                 json.dumps(
@@ -96,7 +96,7 @@ class TwoDroneProbeTests(unittest.TestCase):
                         "header": {"stamp": {"sec": second, "nsec": 0}},
                         "pose": [
                             {"name": "isr", "position": {"x": 0, "y": 0, "z": 0}},
-                            {"name": "fpv-a", "position": {"x": 2, "y": 0, "z": 0}},
+                            {"name": "fpv-a", "position": {"x": 8, "y": 0, "z": 0}},
                         ],
                     }
                 )
@@ -130,7 +130,7 @@ class TwoDroneProbeTests(unittest.TestCase):
                 self.assertEqual(antoine_two_drone_probe.main(), 2)
             report = json.loads((run_dir / "research-two-drone-smoke.json").read_text())
             self.assertTrue(report["natsStateSeparationAtLeast5m"])
-            self.assertFalse(report["gazeboTruth"]["separationAtLeast5m"])
+            self.assertTrue(report["gazeboTruth"]["separationAtLeast5m"])
             self.assertEqual(report["natsGazeboCorrelation"]["status"], "inconclusive")
             self.assertFalse(report["initialSeparationAtLeast5m"])
 

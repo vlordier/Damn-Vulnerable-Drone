@@ -309,7 +309,11 @@ def main() -> int:
         "natsStateSeparationAtLeast5m": separated,
         "gazeboTruth": gazebo_truth,
         "natsGazeboCorrelation": state_truth,
-        "initialSeparationAtLeast5m": separated and gazebo_truth.get("separationAtLeast5m") is True,
+        "initialSeparationAtLeast5m": (
+            separated
+            and gazebo_truth.get("separationAtLeast5m") is True
+            and state_truth.get("status") == "matched"
+        ),
         "status": "passed"
         if all(item.get("received") for item in states.values())
         and all(actuator_ready.values())
