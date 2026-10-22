@@ -794,8 +794,36 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         "a duplicate native telemetry clock must not be projected as fresh MAVLink state"
     );
 
+    let pending_upload_count = v2_frame(44, 25, 255, &[1, 0, 1, 1], 221);
+    gcs.send_to(&pending_upload_count, qgc_bind).await?;
+    let (_length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("pending upload's first mission-item request timeout")??;
+    assert_eq!(buffer[7], 51, "bridge should start the pending upload");
+
     let mission_list_request = v2_frame(43, 11, 255, &[1, 1, 0], 132);
     gcs.send_to(&mission_list_request, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("pending upload rejection ACK timeout")??;
+    assert_eq!(
+        buffer[7], 47,
+        "mission-list read should reject pending upload"
+    );
+    let (_, pending_upload_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(pending_upload_ack) =
+        pending_upload_response
+    else {
+        anyhow::bail!("expected MISSION_ACK before mission-list response");
+    };
+    assert_eq!(
+        pending_upload_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
+
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
         .context("MISSION_COUNT timeout")??;
