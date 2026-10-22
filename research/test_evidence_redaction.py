@@ -32,6 +32,7 @@ class EvidenceRedactionTests(unittest.TestCase):
     def test_csv_schema_is_explicit_and_excludes_host_and_secret_fields(self) -> None:
         forbidden = {"hostPath", "runtimeControlFile", "signingKey", "privateKey", "secret"}
         self.assertFalse(forbidden.intersection(FIELDS))
+        self.assertIn("cameraRunScopeMatches", FIELDS)
         self.assertEqual(len(FIELDS), len(set(FIELDS)))
 
     def test_nats_observer_redacts_nested_secret_fields(self) -> None:

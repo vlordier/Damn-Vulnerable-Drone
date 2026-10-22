@@ -20,6 +20,7 @@ FIELDS = [
     "runIdentityMatches",
     "observationBoundsValid",
     "cameraObservationBoundsValid",
+    "cameraRunScopeMatches",
     "runId",
     "scenario",
     "physicsEngine",
