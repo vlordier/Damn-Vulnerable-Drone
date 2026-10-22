@@ -22,8 +22,11 @@ def main() -> int:
 
     try:
         validate_run_nats_endpoint(args.server, args.run_dir, time.monotonic() + 20)
-        run_dir = args.run_dir.resolve(strict=True)
-        applier_log = args.applier_log.resolve(strict=True).relative_to(run_dir)
+        run_dir = args.run_dir.absolute()
+        applier_log = args.applier_log.absolute().relative_to(run_dir)
+        applier_log_text = read_run_text(run_dir, applier_log, errors="replace")
+        if applier_log_text is None:
+            raise ValueError("run-owned actuator applier log is unavailable")
     except (OSError, ValueError, TimeoutError) as error:
         raise SystemExit(f"refusing unverified two-drone run inputs: {error}") from error
 
@@ -68,9 +71,6 @@ def main() -> int:
         }
 
     positions = [states.get(name, {}).get("positionEnuM") for name in vehicles]
-    applier_log_text = read_run_text(run_dir, applier_log, errors="replace")
-    if applier_log_text is None:
-        raise SystemExit("run-owned actuator applier log is unavailable")
     actuator_ready = {
         "drone-1": "startup-neutral-zero-published drone-1" in applier_log_text,
         "drone-2": "startup-neutral-zero-published drone-2" in applier_log_text,

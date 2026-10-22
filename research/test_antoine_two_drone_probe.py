@@ -40,6 +40,34 @@ class TwoDroneProbeTests(unittest.TestCase):
                     antoine_two_drone_probe.main()
             run.assert_not_called()
 
+    def test_rejects_symlinked_applier_log_before_subscribing(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            (run_dir / "logs").mkdir(parents=True)
+            (run_dir / "logs/nats.log").write_text(
+                "Listening for client connections on 127.0.0.1:4222\nServer is ready\n"
+            )
+            (run_dir / "actual-applier.log").write_text("startup-neutral-zero-published drone-1\n")
+            (run_dir / "applier.log").symlink_to(run_dir / "actual-applier.log")
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "probe",
+                        "--server",
+                        "nats://127.0.0.1:4222",
+                        "--run-dir",
+                        str(run_dir),
+                        "--applier-log",
+                        str(run_dir / "applier.log"),
+                    ],
+                ),
+                patch.object(antoine_two_drone_probe.subprocess, "run") as run,
+            ):
+                with self.assertRaises(SystemExit):
+                    antoine_two_drone_probe.main()
+            run.assert_not_called()
+
     def test_accepts_only_run_owned_broker_and_logs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run"
