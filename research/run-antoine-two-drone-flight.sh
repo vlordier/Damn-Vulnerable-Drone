@@ -48,6 +48,15 @@ HOST_CONTEXT_IDENTITY="${REPORT_ROOT}/.${RUN_ID}-host-context.identity"
 HOST_CONTEXT_PID=""
 ANTOINE_BRIDGE_DIR="${ANTOINE_BRIDGE_DIR:-${PROJECT_ROOT}/research/antoine-mavlink-jetstream-bridge}"
 FLIGHT_FAULT_ENV=()
+
+run_owned_nats_ready() {
+  local endpoint="Listening for client connections on 127.0.0.1:${ANTOINE_GZ_FLIGHT_NATS_PORT}"
+  [[ -f "${RUN_DIR}/logs/nats.log" ]] &&
+    rg -Fq "${endpoint}" "${RUN_DIR}/logs/nats.log" &&
+    rg -Fq 'Server is ready' "${RUN_DIR}/logs/nats.log" &&
+    nats --no-context --server "nats://127.0.0.1:${ANTOINE_GZ_FLIGHT_NATS_PORT}" \
+      rtt >/dev/null 2>&1
+}
 if [[ ! "${SWARM_SIZE}" =~ ^[0-9]+$ ]] || ((SWARM_SIZE < 2 || SWARM_SIZE > 5)); then
   echo "Swarm size must be an integer from 2 through 5" >&2
   exit 2
@@ -429,9 +438,7 @@ fi
 if [[ "${FAULT}" == cross-vehicle-authorization ]]; then
   broker_ready=0
   for _ in {1..300}; do
-    if [[ -f "${RUN_DIR}/logs/nats.log" ]] &&
-      rg -q 'Server is ready' "${RUN_DIR}/logs/nats.log" &&
-      nats --no-context --server "nats://127.0.0.1:${ANTOINE_GZ_FLIGHT_NATS_PORT}" rtt >/dev/null 2>&1; then
+    if run_owned_nats_ready; then
       broker_ready=1
       break
     fi
@@ -453,9 +460,7 @@ fi
 if [[ "${FAULT}" == command-rate ]]; then
   broker_ready=0
   for _ in {1..300}; do
-    if [[ -f "${RUN_DIR}/logs/nats.log" ]] &&
-      rg -q 'Server is ready' "${RUN_DIR}/logs/nats.log" &&
-      nats --no-context --server "nats://127.0.0.1:${ANTOINE_GZ_FLIGHT_NATS_PORT}" rtt >/dev/null 2>&1; then
+    if run_owned_nats_ready; then
       broker_ready=1
       break
     fi
@@ -482,8 +487,7 @@ if [[ "${SWARM_MAVLINK}" == "1" ]]; then
   fi
   broker_ready=0
   for _ in {1..300}; do
-    nats --no-context --server "nats://127.0.0.1:${ANTOINE_GZ_FLIGHT_NATS_PORT}" rtt >/dev/null 2>&1 &&
-      broker_ready=1
+    run_owned_nats_ready && broker_ready=1
     [[ "${broker_ready}" -eq 1 ]] && break
     sleep 0.2
   done

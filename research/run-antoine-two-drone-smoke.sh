@@ -67,7 +67,12 @@ dvd_run_owned_child "$PROJECT_ROOT" "$NATS_ID" nats-server -a 127.0.0.1 -p "$SER
 NATS_PID=$!
 ready=0
 for _ in {1..80}; do
-  if grep -q 'Server is ready' "$RUN_DIR/nats.log" && nats --no-context --server "$SERVER" rtt >/dev/null 2>&1; then ready=1; break; fi
+  if grep -Fq "Listening for client connections on 127.0.0.1:$SERVER_PORT" "$RUN_DIR/nats.log" \
+    && grep -Fq 'Server is ready' "$RUN_DIR/nats.log" \
+    && nats --no-context --server "$SERVER" rtt >/dev/null 2>&1; then
+    ready=1
+    break
+  fi
   sleep 0.25
 done
 [[ "$ready" == 1 ]] || { echo "run-owned NATS broker did not become ready" >&2; exit 1; }
