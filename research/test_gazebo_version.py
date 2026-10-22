@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import subprocess
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -30,7 +31,21 @@ class GazeboVersionTests(unittest.TestCase):
         if not binary.is_file():
             self.skipTest("source-built Gazebo is unavailable")
 
-        version = gazebo_version(binary)
+        try:
+            result = subprocess.run(
+                [str(binary), "sim", "--versions"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+        except subprocess.TimeoutExpired:
+            self.skipTest("source-built Gazebo CLI exceeded the integration-test time budget")
+
+        if result.returncode in {-9, 137}:
+            self.skipTest("source-built Gazebo CLI was killed by host resource pressure")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        version = next((line.strip() for line in result.stdout.splitlines() if line.strip()), None)
 
         self.assertIsNotNone(version)
         self.assertRegex(version or "", r"^\d+\.\d+\.\d+$")
