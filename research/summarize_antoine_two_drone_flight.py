@@ -14,6 +14,7 @@ from typing import Any
 
 from actuator_lifecycle import disarmed_status
 from swarm_behavior import build_plan, evaluate_plan
+from swarm_controller_diagnostics import state_coalescing_diagnostic
 
 DEFAULT_VEHICLES = [
     {"callsign": "drone-1", "model": "isr"},
@@ -22,7 +23,7 @@ DEFAULT_VEHICLES = [
 DEFAULT_SPACING_M = 8.0
 DEFAULT_ARRIVAL_HOLD_RADIUS_M = 0.15
 DEFAULT_TERMINAL_BRAKING_RADIUS_M = 0.15
-SWARM_REPORT_VERSION = "1.17.0"
+SWARM_REPORT_VERSION = "1.18.0"
 POSE_PAIR_TOLERANCE_SECONDS = 0.05
 MINIMUM_SEPARATION_METERS = 1.0
 MINIMUM_POSE_SAMPLES_PER_VEHICLE = 20
@@ -1420,6 +1421,15 @@ def controller_state_cadence_status(
     }
 
 
+def controller_state_coalescing_status(run_dir: Path, callsign: str) -> dict[str, Any]:
+    path = run_dir / "logs" / f"antoine-controller-{callsign}.log"
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = None
+    return state_coalescing_diagnostic(lines, callsign)
+
+
 def load_provenance(run_dir: Path) -> tuple[bool | None, dict[str, Any]]:
     try:
         comparison = json.loads(
@@ -1702,6 +1712,36 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
     ):
         raise ValueError("generated swarm report has an invalid vehicle or pair roster")
     for callsign, vehicle in vehicles.items():
+        coalescing = vehicle.get("controllerStateCoalescing") if isinstance(vehicle, dict) else None
+        if (
+            not isinstance(coalescing, dict)
+            or coalescing.get("callsign") != callsign
+            or coalescing.get("status") not in {"measured", "unavailable", "invalid"}
+            or coalescing.get("qualifiesFlightOutcome") is not False
+            or not isinstance(coalescing.get("events"), list)
+            or type(coalescing.get("eventCount")) is not int
+            or coalescing["eventCount"] != len(coalescing["events"])
+            or (
+                coalescing["status"] == "measured"
+                and (
+                    coalescing.get("enabledMarkerCount") != 1
+                    or type(coalescing.get("droppedSupersededMessages")) is not int
+                    or coalescing["droppedSupersededMessages"]
+                    != sum(
+                        event.get("droppedSupersededMessages", -1)
+                        for event in coalescing["events"]
+                        if isinstance(event, dict)
+                    )
+                )
+            )
+            or (
+                coalescing["status"] == "unavailable"
+                and coalescing.get("droppedSupersededMessages") is not None
+            )
+        ):
+            raise ValueError(
+                f"generated swarm report has invalid coalescing diagnostics for {callsign}"
+            )
         if (
             not isinstance(vehicle, dict)
             or vehicle.get("controllerIdentity", {}).get("callsign") != callsign
@@ -2026,6 +2066,7 @@ def main() -> int:
             "controllerStateCadence": controller_state_cadence_status(
                 report, run_dir.name, callsign
             ),
+            "controllerStateCoalescing": controller_state_coalescing_status(run_dir, callsign),
             "controllerIdentity": {
                 "process": "antoine_sitl_nats",
                 "callsign": callsign,

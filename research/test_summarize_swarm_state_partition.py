@@ -24,7 +24,8 @@ class StatePartitionSummaryTests(unittest.TestCase):
             ],
         }
         (self.run_dir / "research-swarm-config.json").write_text(json.dumps(config))
-        controller = """ANTOINE_GZ_STATE_PARTITION_ENTER run_id=antoine-swarm-flight-test callsign=drone-2 unix_ms=10000 after_ms=5000 duration_ms=1000 source_sequence=20 simulation_time_ns=9000000000
+        controller = """ANTOINE_GZ_STATE_COALESCING_ENABLED callsign=drone-2
+ANTOINE_GZ_STATE_PARTITION_ENTER run_id=antoine-swarm-flight-test callsign=drone-2 unix_ms=10000 after_ms=5000 duration_ms=1000 source_sequence=20 simulation_time_ns=9000000000
 ANTOINE_GZ_STALE_HOLD_ENTER callsign=drone-2 stale_limit_ms=250 behavior=zero-velocity-setpoint
 ANTOINE_GZ_STATE_PARTITION_EXIT run_id=antoine-swarm-flight-test callsign=drone-2 unix_ms=11000 elapsed_ms=6000 dropped_messages=10 last_dropped_source_sequence=29 recovery_source_sequence=30 last_dropped_simulation_time_ns=9990000000 recovery_simulation_time_ns=10000000000
 ANTOINE_GZ_STALE_HOLD_EXIT callsign=drone-2 stale_limit_ms=250 behavior=zero-velocity-setpoint
@@ -85,6 +86,49 @@ ANTOINE_GZ_STALE_HOLD_EXIT callsign=drone-2 stale_limit_ms=250 behavior=zero-vel
             report["actuatorWindows"]["drone-2"]["duringPartition"]["deltaFromBeforeL2"],
             1.0,
         )
+        self.assertEqual(
+            report["stateCoalescing"],
+            {
+                "status": "measured",
+                "callsign": "drone-2",
+                "enabledMarkerCount": 1,
+                "eventCount": 0,
+                "droppedSupersededMessages": 0,
+                "events": [],
+                "qualifiesFlightOutcome": False,
+            },
+        )
+
+    def test_state_coalescing_counts_target_events_without_changing_fault_status(self) -> None:
+        path = self.run_dir / "logs" / "antoine-controller-drone-2.log"
+        path.write_text(
+            path.read_text()
+            + "ANTOINE_GZ_STATE_COALESCED callsign=drone-2 dropped_superseded=4\n"
+            + "ANTOINE_GZ_STATE_COALESCED callsign=drone-2 dropped_superseded=3\n"
+            + "ANTOINE_GZ_STATE_COALESCED callsign=drone-1 dropped_superseded=9\n"
+        )
+
+        report = summarize(self.run_dir)
+
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["stateCoalescing"]["status"], "measured")
+        self.assertEqual(report["stateCoalescing"]["callsign"], "drone-2")
+        self.assertEqual(report["stateCoalescing"]["eventCount"], 2)
+        self.assertEqual(report["stateCoalescing"]["droppedSupersededMessages"], 7)
+        self.assertFalse(report["stateCoalescing"]["qualifiesFlightOutcome"])
+
+    def test_malformed_state_coalescing_marker_is_reported_invalid(self) -> None:
+        path = self.run_dir / "logs" / "antoine-controller-drone-2.log"
+        path.write_text(
+            path.read_text()
+            + "ANTOINE_GZ_STATE_COALESCED callsign=drone-2 dropped_superseded=zero\n"
+        )
+
+        report = summarize(self.run_dir)
+
+        self.assertEqual(report["status"], "passed")
+        self.assertEqual(report["stateCoalescing"]["status"], "invalid")
+        self.assertEqual(report["stateCoalescing"]["eventCount"], 0)
 
     def test_authority_progress_outside_partition_is_inconclusive(self) -> None:
         evidence_path = self.run_dir / "flight-evidence-drone-2.json"

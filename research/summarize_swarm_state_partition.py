@@ -5,22 +5,16 @@ from __future__ import annotations
 
 import json
 import math
-import re
 import sys
 from pathlib import Path
 from typing import Any
+
+from swarm_controller_diagnostics import marker, state_coalescing_diagnostic
 
 MAX_DROPPED_MESSAGES = 200
 MAX_POSE_TIME_SKEW_SECONDS = 0.15
 MAX_PARTITION_WINDOW_SECONDS = 10.0
 MINIMUM_SEPARATION_METERS = 1.0
-
-
-def marker(line: str, name: str) -> dict[str, str] | None:
-    match = re.search(rf"{re.escape(name)}\s+(.*)$", line)
-    if not match:
-        return None
-    return dict(re.findall(r"([A-Za-z][A-Za-z0-9_]*)=([^\s]+)", match.group(1)))
 
 
 def read_poses(run_dir: Path, models: set[str]) -> dict[str, list[tuple[float, list[float]]]]:
@@ -322,6 +316,7 @@ def summarize(run_dir: Path) -> dict[str, Any]:
         and len(hold_exit) == 1
         and entered_lines[0] < hold_enter[0] < exited_lines[0] < hold_exit[0]
     )
+    state_coalescing = state_coalescing_diagnostic(lines, target)
     pose_complete = all(value["poseEvidenceComplete"] for value in windows.values())
     actuator_complete = all(
         value["identitySequenceAndValuesValid"] for value in actuator_windows.values()
@@ -341,7 +336,7 @@ def summarize(run_dir: Path) -> dict[str, Any]:
     )
     return {
         "contract": "damn-vulnerable-drone.antoine-state-partition-evidence",
-        "version": "1.2.0",
+        "version": "1.3.0",
         "runId": run_id,
         "fault": fault,
         "status": status,
@@ -373,6 +368,7 @@ def summarize(run_dir: Path) -> dict[str, Any]:
             "authoritySourceContinued": authority_continued,
             "authorityProgress": authority_progress,
         },
+        "stateCoalescing": state_coalescing,
         "vehicles": windows,
         "actuatorWindows": actuator_windows,
         "minimumSynchronizedWindowSeparationM": round(min_separation, 4)

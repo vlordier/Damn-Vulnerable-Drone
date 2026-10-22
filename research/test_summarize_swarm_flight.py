@@ -1342,6 +1342,37 @@ class SummaryTests(unittest.TestCase):
         self.assertFalse(result["baselineGates"]["controllerStateCadenceQualified"])
         self.assertEqual(result["status"], "inconclusive")
 
+    def test_controller_state_coalescing_is_reported_without_qualifying_flight(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-test"
+            build_run(run_dir, "lanes")
+            log_path = run_dir / "logs" / "antoine-controller-drone-2.log"
+            log_path.write_text(
+                log_path.read_text()
+                + "ANTOINE_GZ_STATE_COALESCING_ENABLED callsign=drone-2\n"
+                + "ANTOINE_GZ_STATE_COALESCED callsign=drone-2 dropped_superseded=2\n"
+                + "ANTOINE_GZ_STATE_COALESCED callsign=drone-2 dropped_superseded=5\n",
+                encoding="utf-8",
+            )
+            result = run_summary(run_dir)
+
+        diagnostic = result["vehicles"]["drone-2"]["controllerStateCoalescing"]
+        self.assertEqual(result["version"], "1.18.0")
+        self.assertEqual(diagnostic["status"], "measured")
+        self.assertEqual(diagnostic["eventCount"], 2)
+        self.assertEqual(diagnostic["droppedSupersededMessages"], 7)
+        self.assertFalse(diagnostic["qualifiesFlightOutcome"])
+
+    def test_missing_coalescing_instrumentation_is_unavailable_not_zero(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-test"
+            build_run(run_dir, "lanes")
+            result = run_summary(run_dir)
+
+        diagnostic = result["vehicles"]["drone-2"]["controllerStateCoalescing"]
+        self.assertEqual(diagnostic["status"], "unavailable")
+        self.assertIsNone(diagnostic["droppedSupersededMessages"])
+
     def test_missing_rate_telemetry_is_inconclusive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "antoine-swarm-flight-test"

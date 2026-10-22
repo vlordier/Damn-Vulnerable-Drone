@@ -26,6 +26,20 @@ def populate(root: Path, ew_wire: Path) -> None:
 
 
 class AntoineSourceSnapshotTests(unittest.TestCase):
+    def test_swarm_coalescing_marker_uses_the_rate_trace_enabled_by_the_runner(self) -> None:
+        repository = Path(__file__).resolve().parent.parent
+        patch = (repository / "research/patches/antoine-swarm-state-partition.patch").read_text(
+            encoding="utf-8"
+        )
+        runner = (repository / "research/run-antoine-two-drone-flight.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("+                if rate_trace && coalesced > 0 {", patch)
+        self.assertIn("ANTOINE_GZ_STATE_COALESCING_ENABLED callsign={state_callsign}", patch)
+        self.assertNotIn("+                if trace && coalesced > 0 {", patch)
+        self.assertIn("export ANTOINE_GZ_RATE_TRACE=1", runner)
+
     def test_local_path_contract_and_conformance_fixtures_are_frozen(self) -> None:
         from record_antoine_run_build import source_manifest
         from seal_antoine_source_snapshot import seal
