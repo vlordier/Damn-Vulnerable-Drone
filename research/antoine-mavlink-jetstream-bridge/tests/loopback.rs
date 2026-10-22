@@ -399,6 +399,69 @@ async fn local_bridge_routes_qgc_commands_bidirectionally_and_gates_nats_egress(
     let heartbeat: serde_json::Value = serde_json::from_slice(&heartbeat.payload)?;
     assert_eq!(heartbeat["direction"], "vehicle_to_gcs");
     assert_eq!(heartbeat["message_id"], 0);
+
+    let second_vehicle = UdpSocket::bind("127.0.0.1:0").await?;
+    let second_vehicle_peer = second_vehicle.local_addr()?;
+    let second_gcs = UdpSocket::bind("127.0.0.1:0").await?;
+    let second_vehicle_bind = free_udp_addr()?;
+    let second_qgc_bind = free_udp_addr()?;
+    let second_callsign = "integration-sitl-2";
+    let second_bridge = Command::new(env!("CARGO_BIN_EXE_antoine-mavlink-jetstream-bridge"))
+        .args([
+            "--run-id",
+            "bridge-run-2",
+            "--nats-url",
+            &nats_url,
+            "--callsign",
+            second_callsign,
+            "--vehicle-bind",
+            &second_vehicle_bind.to_string(),
+            "--vehicle-peer",
+            &second_vehicle_peer.to_string(),
+            "--qgc-bind",
+            &second_qgc_bind.to_string(),
+            "--qgc-peer",
+            &second_gcs.local_addr()?.to_string(),
+            "--system-id",
+            "2",
+        ])
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+    let _second_bridge_guard = ChildGuard(second_bridge);
+    timeout(Duration::from_secs(5), async {
+        loop {
+            if stream.info().await?.state.consumer_count >= 2 {
+                return Ok::<(), anyhow::Error>(());
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .context("second vehicle bridge did not create its callsign-scoped consumer")??;
+    let second_request = v1_frame(66, 1, 255, &[2, 1, 0, 5, 0, 1], 148);
+    let ack = js
+        .publish(
+            format!("furia.mavlink.request.{second_callsign}"),
+            serde_json::json!({
+                "runId": "bridge-run-2",
+                "raw_base64": BASE64.encode(second_request.as_slice())
+            })
+            .to_string()
+            .into(),
+        )
+        .await?;
+    ack.await?;
+    let (len, _) = timeout(Duration::from_secs(2), second_vehicle.recv_from(&mut buf))
+        .await
+        .context("second vehicle request did not reach its own SITL")??;
+    assert_eq!(&buf[..len], second_request.as_slice());
+    assert!(
+        timeout(Duration::from_millis(150), vehicle.recv_from(&mut buf))
+            .await
+            .is_err(),
+        "second vehicle request must not reach the first SITL"
+    );
     Ok(())
 }
 

@@ -1073,6 +1073,10 @@ fn read_only_request(frame: &FrameInfo, target_system: u8) -> bool {
     }
 }
 
+fn readonly_consumer_name(callsign: &str) -> String {
+    format!("{DURABLE}_{callsign}")
+}
+
 fn request_run_id_matches(configured_run_id: Option<&str>, value: &serde_json::Value) -> bool {
     configured_run_id
         .is_none_or(|run_id| value.get("runId").and_then(serde_json::Value::as_str) == Some(run_id))
@@ -2156,11 +2160,12 @@ async fn readonly_jetstream_to_vehicle(
     vehicle: std::sync::Arc<tokio::net::UdpSocket>,
 ) -> Result<()> {
     let stream = js.get_stream(STREAM).await?;
+    let durable_name = readonly_consumer_name(&config.callsign);
     let consumer = stream
         .get_or_create_consumer(
-            DURABLE,
+            durable_name.as_str(),
             consumer::pull::Config {
-                durable_name: Some(DURABLE.into()),
+                durable_name: Some(durable_name.clone()),
                 filter_subject: format!("{COMMAND_SUBJECT}.{}", config.callsign),
                 ack_policy: consumer::AckPolicy::Explicit,
                 deliver_policy: consumer::DeliverPolicy::New,
@@ -2655,6 +2660,18 @@ mod tests {
             None,
             &serde_json::json!({"raw_base64":"legacy request"})
         ));
+    }
+
+    #[test]
+    fn readonly_consumers_are_scoped_to_vehicle_callsign() {
+        assert_ne!(
+            readonly_consumer_name("drone-1"),
+            readonly_consumer_name("drone-2")
+        );
+        assert_eq!(
+            readonly_consumer_name("drone-1"),
+            readonly_consumer_name("drone-1")
+        );
     }
 
     #[test]
