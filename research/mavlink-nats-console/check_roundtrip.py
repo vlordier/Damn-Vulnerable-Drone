@@ -12,6 +12,7 @@ import time
 import uuid
 
 import nats
+from flight_check_support import require_check
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy
 
 
@@ -51,7 +52,7 @@ async def main() -> None:
         raise TimeoutError(f"NATS telemetry did not report armed={armed}")
 
     before = await next_json(telemetry)
-    assert before.get("identity") == callsign, before
+    require_check(before.get("identity") == callsign, before)
     print(f"NATS telemetry live: identity={callsign} thrust={before.get('actuator_thrust')}")
     js = client.jetstream()
     stream_name = os.environ.get("MAVLINK_AUDIT_STREAM", "ANTOINE_MAVLINK")
@@ -129,7 +130,7 @@ async def main() -> None:
                 audit_records.append(record)
                 audit_sequences.append(message.metadata.sequence.stream)
                 observed_arm_values.append(arm_value)
-        assert observed_arm_values == [1.0, 0.0], (observed_arm_values, audit_records)
+        require_check(observed_arm_values == [1.0, 0.0], (observed_arm_values, audit_records))
         print(
             "JetStream audited ARM then DISARM COMMAND_LONG frames: "
             f"param1={observed_arm_values} stream_sequences={audit_sequences}"

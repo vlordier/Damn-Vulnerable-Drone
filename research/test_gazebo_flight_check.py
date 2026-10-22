@@ -15,6 +15,7 @@ from pathlib import Path
 from unittest import mock
 
 SCRIPT = Path(__file__).parent / "mavlink-nats-console/gazebo_flight_check.py"
+sys.path.insert(0, str(SCRIPT.parent))
 STUB_FLIGHT_CHECK = types.ModuleType("flight_check")
 STUB_FLIGHT_CHECK.FlightCheck = object
 SPEC = importlib.util.spec_from_file_location("gazebo_flight_check_under_test", SCRIPT)

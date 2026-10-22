@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from flight_check import FlightCheck
+from flight_check_support import require_check
 
 POSE_SAMPLE_MAX_AGE_SECONDS = 1.5
 MAVLINK_STATE_MAX_AGE_SECONDS = 1.5
@@ -401,7 +402,7 @@ class GazeboFlightCheck(FlightCheck):
         )
         response = json.loads(reply.data)
         response["requestIdMatched"] = response.get("requestId") == request_id
-        assert response["requestIdMatched"], response
+        require_check(response["requestIdMatched"], response)
         return response
 
     def actuator_audit(self) -> list[dict]:
@@ -505,7 +506,7 @@ async def run_check() -> dict:
         # whether a previous run happened to leave a mission behind.
         await check.mission_clear()
         mission_count, mission = await check.mission_list()
-        assert (mission_count, mission) == (0, []), (mission_count, mission)
+        require_check((mission_count, mission) == (0, []), (mission_count, mission))
 
         await check.request(check.long(400, p1=1.0), 400)
         armed = True
@@ -545,12 +546,15 @@ async def run_check() -> dict:
         await check.mission_upload(waypoints)
         check.phase = "mission-flight"
         mission_count, mission_readback = await check.mission_list()
-        assert mission_count == len(waypoints), mission_count
-        assert all(
-            math.isclose(actual, expected, abs_tol=1e-4)
-            for actual_point, expected_point in zip(mission_readback, waypoints, strict=True)
-            for actual, expected in zip(actual_point, expected_point, strict=True)
-        ), mission_readback
+        require_check(mission_count == len(waypoints), mission_count)
+        require_check(
+            all(
+                math.isclose(actual, expected, abs_tol=1e-4)
+                for actual_point, expected_point in zip(mission_readback, waypoints, strict=True)
+                for actual, expected in zip(actual_point, expected_point, strict=True)
+            ),
+            mission_readback,
+        )
         mission_response = await check.nc.request(
             f"furia.mavlink.control.{callsign}",
             json.dumps(
@@ -565,8 +569,8 @@ async def run_check() -> dict:
             timeout=2,
         )
         mission_state = json.loads(mission_response.data)
-        assert mission_state.get("missionUploaded") is True, mission_state
-        assert len(mission_state.get("waypoints", [])) == len(waypoints), mission_state
+        require_check(mission_state.get("missionUploaded") is True, mission_state)
+        require_check(len(mission_state.get("waypoints", [])) == len(waypoints), mission_state)
         await check.request(check.long(300), 300)
         await check.wait_state(
             lambda state: state.get("mode") == "AUTO",
@@ -591,14 +595,15 @@ async def run_check() -> dict:
             request_id="gazebo-rtl-wrong-callsign",
             identity=f"{callsign}-spoofed",
         )
-        assert wrong_callsign.get("accepted") is False, wrong_callsign
+        require_check(wrong_callsign.get("accepted") is False, wrong_callsign)
         unsupported_return_target = await check.direct_control(
             {"type": "set_return_target", "payload": {"north_m": 2.0, "east_m": 2.0}},
             request_id="gazebo-unsupported-return-target",
         )
-        assert unsupported_return_target.get("accepted") is False, unsupported_return_target
-        assert "unsupported command type" in unsupported_return_target.get("reason", ""), (
-            unsupported_return_target
+        require_check(unsupported_return_target.get("accepted") is False, unsupported_return_target)
+        require_check(
+            "unsupported command type" in unsupported_return_target.get("reason", ""),
+            unsupported_return_target,
         )
         out_of_envelope = await check.direct_control(
             {
@@ -607,8 +612,10 @@ async def run_check() -> dict:
             },
             request_id="gazebo-position-out-of-envelope",
         )
-        assert out_of_envelope.get("accepted") is False, out_of_envelope
-        assert out_of_envelope.get("reason") == "position-out-of-lab-envelope", out_of_envelope
+        require_check(out_of_envelope.get("accepted") is False, out_of_envelope)
+        require_check(
+            out_of_envelope.get("reason") == "position-out-of-lab-envelope", out_of_envelope
+        )
 
         actuator_before_rtl = check.actuator_audit()
         actuator_sequence_before_rtl = max(
@@ -695,8 +702,8 @@ async def run_check() -> dict:
         }
         for probe_name, probe in rtl_probes.items():
             response = probe["response"]
-            assert response.get("accepted") is True, (probe_name, response)
-            assert response.get("mode") == "RTL", (probe_name, response)
+            require_check(response.get("accepted") is True, (probe_name, response))
+            require_check(response.get("mode") == "RTL", (probe_name, response))
         return_cruise = await check.wait_pose(
             lambda point: (
                 math.dist(point[:2], home[:2]) <= 0.65 and abs(point[2] - attack_start[2]) <= 0.3

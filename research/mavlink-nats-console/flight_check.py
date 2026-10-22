@@ -19,6 +19,7 @@ import uuid
 from pathlib import Path
 
 import nats
+from flight_check_support import require_check
 
 logging.getLogger("nats").setLevel(logging.ERROR)
 
@@ -114,8 +115,8 @@ class FlightCheck:
             if self.telemetry and self.bridge_heartbeat:
                 break
             await asyncio.sleep(0.05)
-        assert self.telemetry, "did not receive native Antoine NATS telemetry"
-        assert self.bridge_heartbeat, "bridge did not return a MAVLink HEARTBEAT"
+        require_check(self.telemetry, "did not receive native Antoine NATS telemetry")
+        require_check(self.bridge_heartbeat, "bridge did not return a MAVLink HEARTBEAT")
 
     async def on_telemetry(self, msg):
         value = json.loads(msg.data)
@@ -175,11 +176,15 @@ class FlightCheck:
                     command is None or message.command == command
                 ):
                     if result_ok:
-                        assert message.result == 0, (
-                            f"COMMAND_ACK result {message.result} for command {command}"
+                        require_check(
+                            message.result == 0,
+                            f"COMMAND_ACK result {message.result} for command {command}",
                         )
                     else:
-                        assert message.result != 0, f"unexpectedly accepted command {command}"
+                        require_check(
+                            message.result != 0,
+                            f"unexpectedly accepted command {command}",
+                        )
                     return message
         raise AssertionError(
             f"no COMMAND_ACK for command={command}; last telemetry={self.telemetry}"
@@ -218,7 +223,7 @@ class FlightCheck:
         )
         response = json.loads(reply.data)
         response["requestIdMatched"] = response.get("requestId") == request_id
-        assert response["requestIdMatched"], response
+        require_check(response["requestIdMatched"], response)
         return response
 
     def long(self, command: int, p1=0.0, p2=0.0, p7=0.0):
@@ -303,14 +308,14 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
     check = FlightCheck(url, qgc_port, bridge_port, callsign)
     try:
         await check.start()
-        assert await check.mission_list() == (0, [])
+        require_check(await check.mission_list() == (0, []), "initial mission list was not empty")
         await check.request(check.long(400, p1=1.0), 400)
         armed = await check.wait_state(lambda t: t.get("armed") is True, 2, "armed state")
-        assert armed["ground_contact"] is True
+        require_check(armed["ground_contact"] is True, armed)
 
         await check.request(check.long(22, p7=1.0), 22)
         await check.wait_state(lambda t: t.get("alt_m", 0) >= 0.75, 12, "takeoff above 0.75m")
-        assert check.telemetry["mode"] == "GUIDED"
+        require_check(check.telemetry["mode"] == "GUIDED", check.telemetry)
         await check.request(check.long(176, p1=1.0, p2=3.0), 176)
         await check.wait_state(lambda t: t.get("mode") == "HOLD", 2, "HOLD mode")
         await check.request(check.long(176, p1=1.0, p2=1.0), 176)
@@ -344,15 +349,18 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
             timeout=2,
         )
         mission_state = json.loads(mission.data)
-        assert mission_state["missionUploaded"] is True
+        require_check(mission_state.get("missionUploaded") is True, mission_state)
         expected_waypoints = [[0.5, 0.0, -1.0], [0.0, 0.0, -0.4]]
-        assert all(
-            math.isclose(actual, expected, abs_tol=1e-5)
-            for actual_waypoint, expected_waypoint in zip(
-                mission_state["waypoints"], expected_waypoints, strict=True
-            )
-            for actual, expected in zip(actual_waypoint, expected_waypoint, strict=True)
-        ), mission_state["waypoints"]
+        require_check(
+            all(
+                math.isclose(actual, expected, abs_tol=1e-5)
+                for actual_waypoint, expected_waypoint in zip(
+                    mission_state["waypoints"], expected_waypoints, strict=True
+                )
+                for actual, expected in zip(actual_waypoint, expected_waypoint, strict=True)
+            ),
+            mission_state.get("waypoints"),
+        )
         await check.request(check.long(300), 300)
         await check.wait_state(
             lambda t: t.get("mode") == "HOLD" and t.get("alt_m", 9) >= 0.2,
@@ -373,19 +381,31 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
             timeout=2,
         )
         mission_after_execution = json.loads(mission_after_execution_reply.data)
-        assert mission_after_execution["accepted"] is True, mission_after_execution
-        assert mission_after_execution["missionUploaded"] is True, mission_after_execution
-        assert len(mission_after_execution["waypoints"]) == 2, mission_after_execution
+        require_check(mission_after_execution.get("accepted") is True, mission_after_execution)
+        require_check(
+            mission_after_execution.get("missionUploaded") is True, mission_after_execution
+        )
+        require_check(
+            len(mission_after_execution.get("waypoints", [])) == 2, mission_after_execution
+        )
         mission_count, listed = await check.mission_list()
-        assert mission_count == 2, {
-            "missionCount": mission_count,
-            "nativeMissionAfterExecution": mission_after_execution,
-        }
-        assert all(
-            math.isclose(actual, expected, abs_tol=1e-5)
-            for actual_waypoint, expected_waypoint in zip(listed, expected_waypoints, strict=True)
-            for actual, expected in zip(actual_waypoint, expected_waypoint, strict=True)
-        ), listed
+        require_check(
+            mission_count == 2,
+            {
+                "missionCount": mission_count,
+                "nativeMissionAfterExecution": mission_after_execution,
+            },
+        )
+        require_check(
+            all(
+                math.isclose(actual, expected, abs_tol=1e-5)
+                for actual_waypoint, expected_waypoint in zip(
+                    listed, expected_waypoints, strict=True
+                )
+                for actual, expected in zip(actual_waypoint, expected_waypoint, strict=True)
+            ),
+            listed,
+        )
 
         await check.request(check.long(176, p1=1.0, p2=1.0), 176)
         await check.wait_state(lambda t: t.get("mode") == "GUIDED", 2, "GUIDED mode")
@@ -405,14 +425,14 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
             request_id="direct-rtl-wrong-identity",
             identity=f"{callsign}-spoofed",
         )
-        assert wrong_identity["accepted"] is False, wrong_identity
+        require_check(wrong_identity.get("accepted") is False, wrong_identity)
         unsigned_stale_run_rtl = await check.direct_control(
             {"type": "rtl"},
             request_id="direct-rtl-unsigned-wrong-run",
             extra_fields={"runId": "stale-run-without-authority"},
         )
-        assert unsigned_stale_run_rtl["accepted"] is True, unsigned_stale_run_rtl
-        assert unsigned_stale_run_rtl["mode"] == "RTL", unsigned_stale_run_rtl
+        require_check(unsigned_stale_run_rtl.get("accepted") is True, unsigned_stale_run_rtl)
+        require_check(unsigned_stale_run_rtl.get("mode") == "RTL", unsigned_stale_run_rtl)
         unsigned_target_override = await check.direct_control(
             {
                 "type": "rtl",
@@ -420,7 +440,7 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
             },
             request_id="direct-rtl-unsigned-target-override",
         )
-        assert unsigned_target_override["accepted"] is True, unsigned_target_override
+        require_check(unsigned_target_override.get("accepted") is True, unsigned_target_override)
 
         def horizontal_distance_from_home(telemetry: dict) -> float:
             return math.hypot(
@@ -447,8 +467,9 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
                 break
             await asyncio.sleep(0.05)
         audited_ids = {frame["message_id"] for frame in check.audit_frames}
-        assert {43, 44, 51, 73, 76, 84} <= audited_ids, (
-            f"JetStream-backed frame audit missing MAVLink IDs: {audited_ids}"
+        require_check(
+            {43, 44, 51, 73, 76, 84} <= audited_ids,
+            f"JetStream-backed frame audit missing MAVLink IDs: {audited_ids}",
         )
         final = await check.wait_state(
             lambda t: (

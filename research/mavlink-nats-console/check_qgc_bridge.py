@@ -10,6 +10,7 @@ import time
 import uuid
 
 import nats
+from flight_check_support import require_check
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy
 
 
@@ -100,9 +101,10 @@ async def main() -> None:
                 if row.get("direction") == "gcs_to_antoine" and row.get("message_id") in (0, 66):
                     observed[row["message_id"]] = row
 
-        assert {0, 66} <= observed.keys(), (
+        require_check(
+            {0, 66} <= observed.keys(),
             "bridge audit did not contain both a GCS heartbeat and a targeted "
-            f"REQUEST_DATA_STREAM; observed IDs={sorted(observed)}"
+            f"REQUEST_DATA_STREAM; observed IDs={sorted(observed)}",
         )
         print(
             "Bridge audited GCS heartbeat and REQUEST_DATA_STREAM:",
