@@ -66,6 +66,9 @@ FIELDS = [
     "horizontalTravelDeltaM",
     "baselinePeakAltitudeM",
     "peakAltitudeDeltaM",
+    "swarmFlightStatus",
+    "baselineQualified",
+    "gazeboAttitudeQualified",
 ]
 
 

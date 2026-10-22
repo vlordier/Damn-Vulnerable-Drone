@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import ast
+import json
+import tempfile
 import unittest
 from pathlib import Path
 
+from build_evidence_manifest import build as build_evidence_manifest
 from dvd_research.evidence_contract import classify_measurements
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -89,10 +92,22 @@ FIXTURES = (
         "observation_only",
     ),
     (
+        "measured swarm failure",
+        {
+            "provenanceStable": True,
+            "runIdentityMatches": True,
+            "swarmFlightStatus": "failed",
+            "baselineQualified": False,
+            "gazeboAttitudeQualified": False,
+        },
+        "failed_swarm_flight",
+    ),
+    (
         "swarm flight without behaviour evidence",
         {
             "provenanceStable": True,
             "runIdentityMatches": True,
+            "swarmFlightStatus": "passed",
             "swarmFlightPassed": True,
             "poseStreamQualityPassed": True,
             "allPairwiseSeparationsMeasured": True,
@@ -101,11 +116,48 @@ FIXTURES = (
         "inconclusive",
     ),
     (
-        "scripted swarm behaviour",
+        "swarm flight with measured attitude breach",
         {
             "provenanceStable": True,
             "runIdentityMatches": True,
+            "swarmFlightStatus": "passed",
             "swarmFlightPassed": True,
+            "baselineQualified": True,
+            "gazeboAttitudeQualified": False,
+            "poseStreamQualityPassed": True,
+            "allPairwiseSeparationsMeasured": True,
+            "allPairwiseSeparationsAtLeast1m": True,
+            "behaviorPassed": True,
+            "mavlinkSwarmPassed": None,
+        },
+        "inconclusive",
+    ),
+    (
+        "swarm flight without complete baseline evidence",
+        {
+            "provenanceStable": True,
+            "runIdentityMatches": True,
+            "swarmFlightStatus": "passed",
+            "swarmFlightPassed": True,
+            "baselineQualified": False,
+            "gazeboAttitudeQualified": True,
+            "poseStreamQualityPassed": True,
+            "allPairwiseSeparationsMeasured": True,
+            "allPairwiseSeparationsAtLeast1m": True,
+            "behaviorPassed": True,
+            "mavlinkSwarmPassed": None,
+        },
+        "inconclusive",
+    ),
+    (
+        "scripted swarm behaviour with baseline and attitude evidence",
+        {
+            "provenanceStable": True,
+            "runIdentityMatches": True,
+            "swarmFlightStatus": "passed",
+            "swarmFlightPassed": True,
+            "baselineQualified": True,
+            "gazeboAttitudeQualified": True,
             "poseStreamQualityPassed": True,
             "allPairwiseSeparationsMeasured": True,
             "allPairwiseSeparationsAtLeast1m": True,
@@ -119,7 +171,10 @@ FIXTURES = (
         {
             "provenanceStable": True,
             "runIdentityMatches": True,
+            "swarmFlightStatus": "passed",
             "swarmFlightPassed": True,
+            "baselineQualified": True,
+            "gazeboAttitudeQualified": True,
             "poseStreamQualityPassed": True,
             "allPairwiseSeparationsMeasured": True,
             "allPairwiseSeparationsAtLeast1m": True,
@@ -133,7 +188,10 @@ FIXTURES = (
         {
             "provenanceStable": True,
             "runIdentityMatches": True,
+            "swarmFlightStatus": "passed",
             "swarmFlightPassed": True,
+            "baselineQualified": True,
+            "gazeboAttitudeQualified": True,
             "allPairwiseSeparationsMeasured": True,
             "allPairwiseSeparationsAtLeast1m": True,
             "behaviorPassed": True,
@@ -173,6 +231,82 @@ class EvidenceClassifierParityTests(unittest.TestCase):
         for family, measurements, expected in FIXTURES:
             with self.subTest(family=family):
                 self.assertEqual(classify_measurements(measurements), expected)
+
+    def test_manifest_preserves_measured_swarm_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-manifest-test"
+            run_dir.mkdir()
+            report = {
+                "runId": run_dir.name,
+                "scenario": "independent-antoine-controllers-gazebo-nats",
+                "status": "failed",
+                "allVehicleRunIdentityMatches": True,
+                "allFlightsPassed": False,
+                "baselineStatus": "failed",
+                "baselineGates": {"gazeboAttitudeWithinEnvelope": False},
+                "poseStreamQualityPassed": True,
+                "allPairwiseSeparationsMeasured": True,
+                "allPairwiseSeparationsAtLeast1m": True,
+                "behaviorPassed": True,
+            }
+            (run_dir / "research-swarm-flight.json").write_text(
+                json.dumps(report), encoding="utf-8"
+            )
+            (run_dir / "research-provenance-comparison.json").write_text(
+                json.dumps(
+                    {
+                        "runId": run_dir.name,
+                        "prePhaseValid": True,
+                        "postPhaseValid": True,
+                        "profileMatches": True,
+                        "stable": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = build_evidence_manifest(run_dir)
+
+        self.assertFalse(manifest["measurements"]["gazeboAttitudeQualified"])
+        self.assertEqual(manifest["measurementClassification"], "failed_swarm_flight")
+
+    def test_manifest_does_not_qualify_pass_status_with_failed_attitude_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-manifest-invalid-test"
+            run_dir.mkdir()
+            report = {
+                "runId": run_dir.name,
+                "scenario": "independent-antoine-controllers-gazebo-nats",
+                "status": "passed",
+                "allVehicleRunIdentityMatches": True,
+                "allFlightsPassed": True,
+                "baselineStatus": "qualified_baseline",
+                "baselineGates": {"gazeboAttitudeWithinEnvelope": False},
+                "poseStreamQualityPassed": True,
+                "allPairwiseSeparationsMeasured": True,
+                "allPairwiseSeparationsAtLeast1m": True,
+                "behaviorPassed": True,
+            }
+            (run_dir / "research-swarm-flight.json").write_text(
+                json.dumps(report), encoding="utf-8"
+            )
+            (run_dir / "research-provenance-comparison.json").write_text(
+                json.dumps(
+                    {
+                        "runId": run_dir.name,
+                        "prePhaseValid": True,
+                        "postPhaseValid": True,
+                        "profileMatches": True,
+                        "stable": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = build_evidence_manifest(run_dir)
+
+        self.assertFalse(manifest["measurements"]["gazeboAttitudeQualified"])
+        self.assertEqual(manifest["measurementClassification"], "inconclusive")
 
     def test_ui_and_csv_import_the_shared_classifier(self) -> None:
         consumers = (

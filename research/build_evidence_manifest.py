@@ -136,6 +136,12 @@ def build(run_dir: Path) -> dict[str, Any]:
             "runIdentityMatches": swarm_flight.get("allVehicleRunIdentityMatches") is True,
             "swarmFlightPassed": swarm_flight.get("status") == "passed"
             and swarm_flight.get("allFlightsPassed") is True,
+            "swarmFlightStatus": swarm_flight.get("status", "unavailable"),
+            "baselineQualified": swarm_flight.get("baselineStatus") == "qualified_baseline",
+            "gazeboAttitudeQualified": (
+                isinstance(swarm_flight.get("baselineGates"), dict)
+                and swarm_flight["baselineGates"].get("gazeboAttitudeWithinEnvelope") is True
+            ),
             "poseStreamQualityPassed": swarm_flight.get("poseStreamQualityPassed") is True,
             "baselineStatus": swarm_flight.get("baselineStatus", "unavailable"),
             "baselineGates": swarm_flight.get("baselineGates"),
@@ -406,7 +412,9 @@ def build(run_dir: Path) -> dict[str, Any]:
 
     measurement_classification = classify_measurements(measurements)
     qualification = source.get("qualification", source.get("qualificationNote"))
-    if measurement_classification == "inconclusive":
+    if measurement_classification == "failed_swarm_flight":
+        qualification = f"Measured swarm failure. {qualification or ''}".strip()
+    elif measurement_classification == "inconclusive":
         if measurements.get("provenanceStable") is not True:
             reason = "pre/post provenance is missing or unstable"
         elif measurements.get("runIdentityMatches") is not True:

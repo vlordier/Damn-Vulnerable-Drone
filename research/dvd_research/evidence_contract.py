@@ -255,9 +255,14 @@ def classify_measurements(measurements: dict) -> str:
     if measurements.get("provenanceStable") is not True:
         return "inconclusive"
     bound = measurements.get("runIdentityMatches") is True
+    if bound and measurements.get("swarmFlightStatus") == "failed":
+        return "failed_swarm_flight"
     if (
         bound
+        and measurements.get("swarmFlightStatus") == "passed"
         and measurements.get("swarmFlightPassed") is True
+        and measurements.get("baselineQualified") is True
+        and measurements.get("gazeboAttitudeQualified") is True
         and measurements.get("poseStreamQualityPassed") is True
         and measurements.get("allPairwiseSeparationsMeasured") is True
         and measurements.get("allPairwiseSeparationsAtLeast1m") is True

@@ -466,6 +466,9 @@ def antoine_research_index():
                         f"{mavlink_suffix}{suffix}"
                     )
                     outcome_variant = "success"
+                elif qualification_status == "failed_swarm_flight":
+                    outcome = "Measured swarm flight or probe failure; inspect the Gazebo and controller evidence"
+                    outcome_variant = "warning"
                 else:
                     outcome = "Evidence inconclusive or qualification gates missing"
                     outcome_variant = "warning"
