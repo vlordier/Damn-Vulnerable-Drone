@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import importlib.util
 import inspect
+import json
 import sys
 import types
 import unittest
@@ -27,6 +29,44 @@ SUPPORT_SPEC.loader.exec_module(GATE_SUPPORT)
 
 
 class MavlinkFlightCheckGateTests(unittest.TestCase):
+    def test_nats_callbacks_reject_non_object_payloads_and_keep_later_valid_data(self) -> None:
+        self.assertIs(FLIGHT_CHECK.json.JSONDecodeError, json.JSONDecodeError)
+        checker = FLIGHT_CHECK.FlightCheck.__new__(FLIGHT_CHECK.FlightCheck)
+        checker.callsign = "drone-1"
+        checker.telemetry = {}
+        checker.telemetry_history = []
+        checker.audit_frames = []
+        checker.callback_rejections = []
+
+        class Message:
+            def __init__(self, data: bytes):
+                self.data = data
+
+        async def deliver() -> None:
+            await checker.on_telemetry(Message(b"not-json"))
+            await checker.on_telemetry(Message(b"[]"))
+            await checker.on_audit(Message(b"{"))
+            await checker.on_audit(Message(b"null"))
+            await checker.on_audit(Message(b'{"message_id":true}'))
+            await checker.on_telemetry(Message(b'{"identity":"drone-1","armed":true}'))
+            await checker.on_audit(Message(b'{"message_id":76}'))
+
+        asyncio.run(deliver())
+
+        self.assertEqual(checker.telemetry, {"identity": "drone-1", "armed": True})
+        self.assertEqual(checker.telemetry_history[0]["armed"], True)
+        self.assertEqual(checker.audit_frames, [{"message_id": 76}])
+        self.assertEqual(
+            checker.callback_rejections,
+            [
+                "telemetry payload is not valid JSON",
+                "telemetry payload is not a JSON object",
+                "audit payload is not valid JSON",
+                "audit payload is not a JSON object",
+                "audit payload has no valid MAVLink message ID",
+            ],
+        )
+
     def test_acceptance_checker_has_no_optimization_removable_asserts(self) -> None:
         scripts = [
             CHECKER_DIR / name

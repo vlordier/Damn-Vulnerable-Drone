@@ -67,6 +67,7 @@ class FlightCheck:
         self.frames: list[bytes] = []
         self.received_frames: list[str] = []
         self.audit_frames: list[dict] = []
+        self.callback_rejections: list[str] = []
         self.telemetry: dict = {}
         self.bridge_heartbeat = False
         self.telemetry_history: list[dict] = []
@@ -119,7 +120,14 @@ class FlightCheck:
         require_check(self.bridge_heartbeat, "bridge did not return a MAVLink HEARTBEAT")
 
     async def on_telemetry(self, msg):
-        value = json.loads(msg.data)
+        try:
+            value = json.loads(msg.data)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._record_callback_rejection("telemetry payload is not valid JSON")
+            return
+        if not isinstance(value, dict):
+            self._record_callback_rejection("telemetry payload is not a JSON object")
+            return
         if value.get("identity") == self.callsign:
             self.telemetry = value
             self.telemetry_history.append(
@@ -142,7 +150,23 @@ class FlightCheck:
             self.telemetry_history = self.telemetry_history[-80:]
 
     async def on_audit(self, msg):
-        self.audit_frames.append(json.loads(msg.data))
+        try:
+            value = json.loads(msg.data)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._record_callback_rejection("audit payload is not valid JSON")
+            return
+        if not isinstance(value, dict):
+            self._record_callback_rejection("audit payload is not a JSON object")
+            return
+        message_id = value.get("message_id")
+        if type(message_id) is not int or not 0 <= message_id <= 0xFFFFFF:
+            self._record_callback_rejection("audit payload has no valid MAVLink message ID")
+            return
+        self.audit_frames.append(value)
+
+    def _record_callback_rejection(self, reason: str) -> None:
+        self.callback_rejections.append(reason)
+        self.callback_rejections = self.callback_rejections[-20:]
 
     def send_heartbeat(self):
         self.socket.sendto(self.heartbeat(), self.bridge)
@@ -222,6 +246,7 @@ class FlightCheck:
             timeout=2,
         )
         response = json.loads(reply.data)
+        require_check(isinstance(response, dict), "direct NATS response is not a JSON object")
         response["requestIdMatched"] = response.get("requestId") == request_id
         require_check(response["requestIdMatched"], response)
         return response
@@ -349,6 +374,9 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
             timeout=2,
         )
         mission_state = json.loads(mission.data)
+        require_check(
+            isinstance(mission_state, dict), "mission query response is not a JSON object"
+        )
         require_check(mission_state.get("missionUploaded") is True, mission_state)
         expected_waypoints = [[0.5, 0.0, -1.0], [0.0, 0.0, -0.4]]
         require_check(
@@ -381,6 +409,10 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
             timeout=2,
         )
         mission_after_execution = json.loads(mission_after_execution_reply.data)
+        require_check(
+            isinstance(mission_after_execution, dict),
+            "post-execution mission query response is not a JSON object",
+        )
         require_check(mission_after_execution.get("accepted") is True, mission_after_execution)
         require_check(
             mission_after_execution.get("missionUploaded") is True, mission_after_execution
@@ -488,6 +520,7 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
                     "callsign": callsign,
                     "passed": True,
                     "finalTelemetry": final,
+                    "callbackRejections": check.callback_rejections,
                     "checked": [
                         "NATS telemetry",
                         "ARM ACK",
@@ -581,6 +614,7 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
                     "passed": False,
                     "lastTelemetry": check.telemetry,
                     "telemetryHistory": check.telemetry_history,
+                    "callbackRejections": check.callback_rejections,
                 },
                 indent=2,
             )
