@@ -315,6 +315,26 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertIn("Gazebo protocol", result["reason"])
         read_messages.assert_called_once_with(14226, "furia.telemetry.drone-1")
 
+    def test_sample_telemetry_requires_matching_run_id(self) -> None:
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        samples = [
+            {
+                "schema": "furia.telemetry",
+                "version": "1.0.0",
+                "protocol": "antoine-gz",
+                "identity": "drone-1",
+                "runId": "another-run",
+                "time_s": simulation_time,
+                "armed": False,
+            }
+            for simulation_time in (1.0, 1.1)
+        ]
+        with patch("interactive_profile.read_nats_messages", return_value=(samples, None)):
+            result = interactive_profile.sample_telemetry(receipt)
+
+        self.assertEqual(result["status"], "invalid")
+        self.assertIn("runId", result["reason"])
+
     def test_sample_telemetry_rejects_nats_log_through_symlinked_directory(self) -> None:
         flight_directory = Path(self.temp.name) / "flight-proof"
         external_logs = Path(self.temp.name) / "external-logs"
@@ -515,6 +535,7 @@ class InteractiveProfileTests(unittest.TestCase):
             "version": "1.0.0",
             "protocol": "antoine-gz",
             "identity": "drone-1",
+            "runId": Path(self.temp.name).name,
             "time_s": 4.0,
             "armed": False,
         }
@@ -574,6 +595,7 @@ class InteractiveProfileTests(unittest.TestCase):
             "version": "1.0.0",
             "protocol": "antoine-gz",
             "identity": "drone-1",
+            "runId": Path(self.temp.name).name,
             "time_s": 12.5,
             "armed": False,
             "mode": "SAFE-HOLD",
@@ -932,6 +954,7 @@ class InteractiveProfileTests(unittest.TestCase):
             "version": "1.0.0",
             "protocol": "antoine-gz",
             "identity": "drone-1",
+            "runId": Path(self.temp.name).name,
             "armed": False,
         }
         states = [
@@ -939,12 +962,14 @@ class InteractiveProfileTests(unittest.TestCase):
                 "schema": "furia.gzsitl.state",
                 "version": "1.1.0",
                 "identity": "drone-1",
+                "runId": Path(self.temp.name).name,
                 "simulation_time_ns": 1_000_000_000,
             },
             {
                 "schema": "furia.gzsitl.state",
                 "version": "1.1.0",
                 "identity": "drone-1",
+                "runId": Path(self.temp.name).name,
                 "simulation_time_ns": 1_100_000_000,
             },
         ]
@@ -979,11 +1004,13 @@ class InteractiveProfileTests(unittest.TestCase):
             "version": "1.0.0",
             "protocol": "antoine-gz",
             "identity": "drone-1",
+            "runId": Path(self.temp.name).name,
         }
         state = {
             "schema": "furia.gzsitl.state",
             "version": "1.1.0",
             "identity": "drone-1",
+            "runId": Path(self.temp.name).name,
             "simulation_time_ns": 1_000_000_000,
         }
         with patch("interactive_profile.subprocess.run") as run:
@@ -1044,6 +1071,7 @@ class InteractiveProfileTests(unittest.TestCase):
             "version": "1.0.0",
             "protocol": "antoine-gz",
             "identity": "drone-1",
+            "runId": Path(self.temp.name).name,
             "time_s": 12.5,
             "armed": False,
         }

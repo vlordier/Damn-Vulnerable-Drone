@@ -179,9 +179,10 @@ status command requires matching identities for the run supervisor and MAVLink
 bridge, and subscribes for at most
 1.5 seconds to two messages on the run's loopback
 `furia.telemetry.<callsign>` subject. It reports armed state only when both
-messages have the expected schema, protocol, and callsign, and their finite
-simulation timestamps advance. Missing, malformed, mismatched, or
-non-advancing telemetry leaves armed state unknown and the profile partial.
+messages have the expected schema, protocol, callsign, and receipt-matching
+`runId`, and their finite simulation timestamps advance. Missing, malformed,
+mismatched, or non-advancing telemetry leaves armed state unknown and the
+profile partial.
 `qgcPeerRouting` distinguishes the bridge's identity-pinned peer
 configuration from a fresh inbound heartbeat in the run-owned `ANTOINE_MAVLINK`
 audit. `qgcHeartbeat` labels this evidence explicitly: status reads the latest

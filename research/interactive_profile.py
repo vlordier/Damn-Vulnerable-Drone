@@ -180,10 +180,11 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
             or message.get("version") != "1.0.0"
             or message.get("identity") != callsign
             or message.get("protocol") != "antoine-gz"
+            or message.get("runId") != run_id
         ):
             return {
                 "status": "invalid",
-                "reason": "telemetry schema, Gazebo protocol, or callsign does not match this profile",
+                "reason": "telemetry schema, Gazebo protocol, callsign, or runId does not match this profile",
             }
     times = [message.get("time_s") for message in messages[-2:]]
     if all(
@@ -200,10 +201,14 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
         if len(states) < 2 or not all(isinstance(state, dict) for state in states):
             return {"status": "invalid", "reason": "NATS did not return two Gazebo state samples"}
         for state in states[-2:]:
-            if state.get("schema") != "furia.gzsitl.state" or state.get("identity") != callsign:
+            if (
+                state.get("schema") != "furia.gzsitl.state"
+                or state.get("identity") != callsign
+                or state.get("runId") != run_id
+            ):
                 return {
                     "status": "invalid",
-                    "reason": "Gazebo state schema or callsign does not match this profile",
+                    "reason": "Gazebo state schema, callsign, or runId does not match this profile",
                 }
             simulation_time_ns = state.get("simulation_time_ns")
             if (
