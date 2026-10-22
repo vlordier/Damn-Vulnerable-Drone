@@ -222,9 +222,11 @@ with MAVLink system ID 1, matching the system-ID restriction in the C++
 capability gate; it does not enable that control for every generic quad
 connected to QGC. The Fly View guided
 position command also enforces a 3 m radial distance from home. This is
-stricter than the bridge/controller envelope, which independently bounds north
-and east to ±3 m, so the GUI's supported area is a circle inside the adapter's
-square envelope. Both paths keep down position within -3..0 m.
+matched by the bridge before forwarding the setpoint. Antoine's controller
+independently bounds north and east to ±3 m, so direct controller requests have
+a square envelope while QGC-originated guided targets are limited to the 3 m
+circle. Mission waypoints retain the controller's per-axis bounds. All paths
+keep down position within -3..0 m.
 
 Gazebo telemetry must also be no more than 1,000 ms old or 250 ms in the
 future; stale and future observations are dropped before they can produce a
