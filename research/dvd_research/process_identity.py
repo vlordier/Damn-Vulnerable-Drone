@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from dvd_research.strict_json import loads as strict_json_loads
+
 
 def inspect(pid: int) -> dict[str, str] | None:
     if pid <= 1:
@@ -40,7 +42,7 @@ def capture(pid: int) -> dict[str, str]:
 
 def matches(path: Path, pid: int) -> bool:
     try:
-        expected = json.loads(path.read_text(encoding="utf-8"))
+        expected = strict_json_loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
     actual = inspect(pid)
@@ -55,7 +57,7 @@ def matches(path: Path, pid: int) -> bool:
 def matches_owned_child(path: Path, pid: int) -> bool:
     """Match a child across exec while rejecting PID reuse and PGID changes."""
     try:
-        expected = json.loads(path.read_text(encoding="utf-8"))
+        expected = strict_json_loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return False
     actual = inspect(pid)

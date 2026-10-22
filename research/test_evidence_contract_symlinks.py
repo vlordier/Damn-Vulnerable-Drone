@@ -6,11 +6,56 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from build_evidence_manifest import build, write_manifest
-from dvd_research.evidence_contract import verify_manifest
+from build_evidence_manifest import build, read_json, write_manifest
+from dvd_research.evidence_contract import verify_manifest, verify_signature
 
 
 class EvidenceManifestSymlinkTests(unittest.TestCase):
+    def test_manifest_reader_rejects_duplicate_qualification_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            run_dir.mkdir()
+            manifest_path = run_dir / "research-evidence-manifest.json"
+            manifest_path.write_text(
+                '{"contract":"damn-vulnerable-drone.antoine-evidence-manifest",'
+                '"runId":"wrong-run","runId":"run-a","publicEvidence":[]}',
+                encoding="utf-8",
+            )
+            self.assertEqual(verify_manifest(manifest_path)[0], False)
+
+    def test_manifest_builder_rejects_duplicate_summary_status(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "research-result.json"
+            path.write_text('{"status":"failed","status":"passed"}', encoding="utf-8")
+            self.assertIsNone(read_json(path))
+
+    def test_signature_verifier_rejects_duplicate_sidecar_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            run_dir.mkdir()
+            manifest_path = run_dir / "research-evidence-manifest.json"
+            manifest_path.write_text("{}", encoding="utf-8")
+            (run_dir / "research-evidence-signature.json").write_text(
+                '{"contract":"wrong","contract":"damn-vulnerable-drone.antoine-evidence-signature"}',
+                encoding="utf-8",
+            )
+
+            status, _errors = verify_signature(manifest_path)
+
+        self.assertEqual(status, "invalid_signature")
+
+    def test_duplicate_applier_session_event_does_not_qualify_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            audit_dir = run_dir / "applier-neutral"
+            audit_dir.mkdir(parents=True)
+            (audit_dir / "applier-session.jsonl").write_text(
+                '{"event":"invalid","event":"session-start"}\n{"event":"clean-shutdown"}\n',
+                encoding="utf-8",
+            )
+            manifest = build(run_dir)
+        self.assertFalse(manifest["measurements"]["applierSessionAuditComplete"])
+
     def test_builder_exports_and_marks_incomplete_applier_session_audit(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run-a"

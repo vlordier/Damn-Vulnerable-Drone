@@ -23,6 +23,22 @@ class SignalOwnedProcessTests(unittest.TestCase):
         }
         self.identity_path.write_text(json.dumps(self.identity), encoding="utf-8")
 
+    @patch(
+        "dvd_research.process_identity.inspect",
+        return_value={
+            "lstart": "Mon Oct 20 10:00:00 2026",
+            "command": "owned-service --run test",
+            "pgid": "9001",
+        },
+    )
+    def test_duplicate_identity_field_never_matches(self, _inspect):
+        self.identity_path.write_text(
+            '{"pid":"1","pid":"9001","lstart":"Mon Oct 20 10:00:00 2026",'
+            '"command":"owned-service --run test","pgid":"9001"}',
+            encoding="utf-8",
+        )
+        self.assertFalse(process_identity.matches(self.identity_path, 9001))
+
     @patch("dvd_research.process_identity.platform.system", return_value="Linux")
     @patch(
         "dvd_research.process_identity.inspect",

@@ -9,6 +9,8 @@ import re
 import tempfile
 from pathlib import Path
 
+from dvd_research.strict_json import loads as strict_json_loads
+
 MANIFEST_CONTRACT = "damn-vulnerable-drone.antoine-evidence-manifest"
 SIGNATURE_CONTRACT = "damn-vulnerable-drone.antoine-evidence-signature"
 SIGNATURE_FILENAME = "research-evidence-signature.json"
@@ -29,10 +31,8 @@ def verify_manifest(manifest_path: Path) -> tuple[bool, list[str]]:
     if manifest_path.is_symlink() or manifest_path.parent.is_symlink():
         return False, ["manifest or run directory is a symlink"]
     try:
-        import json
-
         run_dir = manifest_path.parent.resolve(strict=True)
-        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest = strict_json_loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, ValueError) as exc:
         return False, [f"cannot read manifest: {type(exc).__name__}"]
     if not isinstance(manifest, dict) or manifest.get("contract") != MANIFEST_CONTRACT:
@@ -141,7 +141,7 @@ def sign_manifest(manifest_path: Path, key_path: Path) -> Path:
     integrity_ok, integrity_errors = verify_manifest(manifest_path)
     if not integrity_ok:
         raise ValueError(f"refusing to sign an invalid manifest: {integrity_errors}")
-    manifest = json.loads(_manifest_bytes(manifest_path))
+    manifest = strict_json_loads(_manifest_bytes(manifest_path))
     if not isinstance(manifest, dict) or manifest.get("contract") != MANIFEST_CONTRACT:
         raise ValueError("cannot sign an unsupported evidence manifest")
     key = _load_signing_key(key_path)
@@ -203,7 +203,7 @@ def verify_signature(
             "signature sidecar is not a regular file or exceeds the size limit"
         ]
     try:
-        sidecar = json.loads(signature_path.read_text(encoding="utf-8"))
+        sidecar = strict_json_loads(signature_path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return "unsigned", ["signature sidecar is missing"]
     except (OSError, json.JSONDecodeError):
@@ -211,7 +211,7 @@ def verify_signature(
     if not isinstance(sidecar, dict) or sidecar.get("contract") != SIGNATURE_CONTRACT:
         return "invalid_signature", ["signature sidecar contract is invalid"]
     try:
-        manifest = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        manifest = strict_json_loads(Path(manifest_path).read_text(encoding="utf-8"))
         actual_digest = hashlib.sha256(_manifest_bytes(Path(manifest_path))).hexdigest()
         public_key = bytes.fromhex(sidecar.get("publicKeyHex", ""))
         signature = bytes.fromhex(sidecar.get("signatureHex", ""))

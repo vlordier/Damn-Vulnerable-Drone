@@ -18,6 +18,7 @@ from dvd_research.evidence_contract import (
 )
 from dvd_research.run_files import read_run_text
 from dvd_research.scenario_catalog import load_scenario_catalog
+from dvd_research.strict_json import loads as strict_json_loads
 
 PUBLIC_EVIDENCE = {
     "research-result.json",
@@ -95,7 +96,7 @@ def read_json(path: Path) -> dict[str, Any] | None:
     if path.is_symlink():
         return None
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = strict_json_loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     return value if isinstance(value, dict) else None
@@ -450,7 +451,7 @@ def build(run_dir: Path) -> dict[str, Any]:
         if safe_session_audit:
             try:
                 for line in session_audit.read_text(encoding="utf-8").splitlines():
-                    event = json.loads(line)
+                    event = strict_json_loads(line)
                     if isinstance(event, dict):
                         session_events.append(event.get("event"))
             except (OSError, json.JSONDecodeError):
