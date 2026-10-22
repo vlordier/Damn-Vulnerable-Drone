@@ -50,6 +50,38 @@ class GazeboFailureReportTests(unittest.TestCase):
             'export ANTOINE_GZ_FLIGHT_STATE_HZ="${ANTOINE_GZ_FLIGHT_STATE_HZ:-75}"', runner
         )
 
+    def test_runner_validates_ports_before_build_work(self) -> None:
+        runner = (SCRIPT.parents[1] / "run-antoine-gazebo-mavlink.sh").read_text(encoding="utf-8")
+        validation = runner.index("validate_port() {")
+        build = runner.index('echo "Building the versioned MAVLink/NATS bridge..."')
+
+        self.assertLess(validation, build)
+        self.assertIn("^[0-9]{1,5}$", runner[validation:build])
+        self.assertIn("through 65535", runner[validation:build])
+        self.assertIn("UDP ports must be distinct", runner[validation:build])
+        self.assertNotIn('while [[ "${QGC_BIND_PORT}" ==', runner[validation:build])
+
+        function_end = runner.index("\n}", validation) + 2
+        validate_port = runner[validation:function_end]
+        for value in ("1", "14550", "65535"):
+            with self.subTest(valid_port=value):
+                result = subprocess.run(
+                    ["bash", "-c", f'{validate_port}\nvalidate_port TEST "$1"', "bash", value],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+        for value in ("", "abc", "0", "00000", "65536", "100000"):
+            with self.subTest(invalid_port=value):
+                result = subprocess.run(
+                    ["bash", "-c", f'{validate_port}\nvalidate_port TEST "$1"', "bash", value],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 2)
+
     def test_launcher_exits_on_interrupt_and_runs_cleanup_once(self) -> None:
         runner = SCRIPT.parents[1] / "run-antoine-gazebo-mavlink.sh"
         content = runner.read_text(encoding="utf-8")

@@ -48,11 +48,23 @@ fi
 QGC_BIND_PORT="${QGC_BRIDGE_PORT:-${QGC_BIND_DEFAULT}}"
 QGC_LISTEN_PORT="${QGC_UDP_LISTEN_PORT:-${QGC_LISTEN_DEFAULT}}"
 GAZEBO_CHECK_PORT="${MAVLINK_GAZEBO_CHECK_PORT:-${GAZEBO_CHECK_DEFAULT}}"
-while [[ "${QGC_BIND_PORT}" == "${QGC_LISTEN_PORT}" || "${QGC_BIND_PORT}" == "${GAZEBO_CHECK_PORT}" || "${QGC_LISTEN_PORT}" == "${GAZEBO_CHECK_PORT}" ]]; do
-  QGC_BIND_PORT="$(loopback_port)"
-  QGC_LISTEN_PORT="$(loopback_port)"
-  GAZEBO_CHECK_PORT="$(loopback_port)"
-done
+validate_port() {
+  local name="$1" value="$2"
+  if [[ ! "${value}" =~ ^[0-9]{1,5}$ ]] || (( 10#${value} < 1 || 10#${value} > 65535 )); then
+    echo "${name} must be a decimal port from 1 through 65535 (got '${value}')." >&2
+    exit 2
+  fi
+}
+validate_port "ANTOINE_GZ_MAVLINK_NATS_PORT" "${NATS_PORT}"
+validate_port "QGC_BRIDGE_PORT" "${QGC_BIND_PORT}"
+validate_port "QGC_UDP_LISTEN_PORT" "${QGC_LISTEN_PORT}"
+validate_port "MAVLINK_GAZEBO_CHECK_PORT" "${GAZEBO_CHECK_PORT}"
+if [[ "${QGC_BIND_PORT}" == "${QGC_LISTEN_PORT}" \
+  || "${QGC_BIND_PORT}" == "${GAZEBO_CHECK_PORT}" \
+  || "${QGC_LISTEN_PORT}" == "${GAZEBO_CHECK_PORT}" ]]; then
+  echo "QGC bridge, QGC listen, and Gazebo check UDP ports must be distinct." >&2
+  exit 2
+fi
 PROFILE_PID=""
 BRIDGE_PID=""
 GUI_PID=""
