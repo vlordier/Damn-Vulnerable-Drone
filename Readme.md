@@ -317,9 +317,11 @@ with `./research/run-antoine-baseline.sh`,
 `./research/run-antoine-scenario.sh waypoint-injection`,
 `./research/run-antoine-replay.sh`, and
 `./research/run-antoine-observation.sh`. To check two separated X500 models,
-their `drone-1` / `drone-2` NATS state streams, and neutral actuator startup,
-run `./research/run-antoine-two-drone-smoke.sh`. This smoke does not start
-Antoine controllers or test coordinated flight. To fly both vehicles under
+their `drone-1` / `drone-2` NATS state streams against independent Gazebo world
+poses, and neutral actuator startup, run `./research/run-antoine-two-drone-smoke.sh`.
+The smoke retains bounded pose evidence and requires stable pre/post input
+provenance. It does not start Antoine controllers or test coordinated flight.
+To fly both vehicles under
 separate Antoine controllers and capture per-drone flight evaluations, run
 `./research/run-antoine-two-drone-flight.sh`. It defaults to two vehicles; use
 `ANTOINE_SWARM_SIZE=3` or `5` for bounded scaling runs, and
