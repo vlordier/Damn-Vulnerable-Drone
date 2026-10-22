@@ -11,6 +11,40 @@ from dvd_research.evidence_contract import verify_manifest
 
 
 class EvidenceManifestSymlinkTests(unittest.TestCase):
+    def test_builder_exports_and_marks_incomplete_applier_session_audit(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            audit_dir = run_dir / "applier-neutral"
+            audit_dir.mkdir(parents=True)
+            audit = audit_dir / "applier-session.jsonl"
+            audit.write_text(
+                '{"event":"session-start"}\n'
+                '{"event":"publisher-inventory"}\n',
+                encoding="utf-8",
+            )
+
+            manifest = build(run_dir)
+
+        names = {item["name"] for item in manifest["publicEvidence"]}
+        self.assertIn("applier-neutral/applier-session.jsonl", names)
+        self.assertIs(manifest["measurements"]["applierSessionAuditComplete"], False)
+        self.assertEqual(manifest["measurements"]["applierSessionAuditEventCount"], 2)
+
+    def test_builder_marks_clean_applier_session_audit_complete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            audit_dir = run_dir / "applier-neutral"
+            audit_dir.mkdir(parents=True)
+            (audit_dir / "applier-session.jsonl").write_text(
+                '{"event":"session-start"}\n'
+                '{"event":"clean-shutdown"}\n',
+                encoding="utf-8",
+            )
+
+            manifest = build(run_dir)
+
+        self.assertIs(manifest["measurements"]["applierSessionAuditComplete"], True)
+
     def test_builder_includes_two_drone_smoke_and_gazebo_truth_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run-a"

@@ -52,6 +52,7 @@ PUBLIC_EVIDENCE = {
     "physics-engine.txt",
     "applier-neutral/actuator-output.jsonl",
     "applier-neutral/actuator-lifecycle.jsonl",
+    "applier-neutral/applier-session.jsonl",
     "research-provenance-pre.json",
     "research-provenance-comparison.json",
     "research-provenance.json",
@@ -376,6 +377,23 @@ def build(run_dir: Path) -> dict[str, Any]:
         and provenance_comparison.get("profileMatches") is True
         and provenance_comparison.get("stable") is True
     )
+    session_audit = run_dir / "applier-neutral" / "applier-session.jsonl"
+    if session_audit.is_file() and not session_audit.is_symlink():
+        session_events = []
+        try:
+            for line in session_audit.read_text(encoding="utf-8").splitlines():
+                event = json.loads(line)
+                if isinstance(event, dict):
+                    session_events.append(event.get("event"))
+        except (OSError, json.JSONDecodeError):
+            session_events = []
+        measurements["applierSessionAuditComplete"] = (
+            bool(session_events)
+            and session_events[0] == "session-start"
+            and session_events[-1] == "clean-shutdown"
+            and "audit-incomplete-shutdown" not in session_events
+        )
+        measurements["applierSessionAuditEventCount"] = len(session_events)
 
     evidence_paths = set(PUBLIC_EVIDENCE)
     evidence_paths.update(

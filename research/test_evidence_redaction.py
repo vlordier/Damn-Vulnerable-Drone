@@ -27,6 +27,7 @@ class EvidenceRedactionTests(unittest.TestCase):
                 if any(part in path.lower() for part in forbidden_parts)
             ]
         )
+        self.assertIn("applier-neutral/applier-session.jsonl", PUBLIC_EVIDENCE)
 
     def test_csv_schema_is_explicit_and_excludes_host_and_secret_fields(self) -> None:
         forbidden = {"hostPath", "runtimeControlFile", "signingKey", "privateKey", "secret"}
