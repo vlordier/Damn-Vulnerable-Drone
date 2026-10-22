@@ -710,8 +710,8 @@ fn control_command(frame: &FrameInfo, vehicle_system_id: u8) -> Result<Option<se
         let north = number(4)?;
         let east = number(8)?;
         let down = number(12)?;
-        if north.abs() > 3.0 || east.abs() > 3.0 || !(-3.0..=0.0).contains(&down) {
-            bail!("position target must stay within N/E ±3 m and down -3..=0 m");
+        if north.hypot(east) > 3.0 || !(-3.0..=0.0).contains(&down) {
+            bail!("position target must stay within 3 m horizontally and down -3..=0 m");
         }
         return Ok(Some(
             serde_json::json!({"type":"set_position","payload":{"north_m":north,"east_m":east,"down_m":down}}),
@@ -2376,16 +2376,24 @@ mod tests {
             payload,
         };
 
-        for (offset, value) in [(4, 3.01_f32), (8, -3.01), (12, 0.01), (12, -3.01)] {
-            position[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+        for (north, east, down) in [
+            (3.01_f32, 0.0_f32, -1.0_f32),
+            (0.0, -3.01, -1.0),
+            (0.0, 0.0, 0.01),
+            (0.0, 0.0, -3.01),
+            (2.2, 2.2, -1.0),
+        ] {
+            position[4..8].copy_from_slice(&north.to_le_bytes());
+            position[8..12].copy_from_slice(&east.to_le_bytes());
+            position[12..16].copy_from_slice(&down.to_le_bytes());
             assert!(control_command(&frame(position.clone()), 1)
                 .unwrap_err()
                 .to_string()
-                .contains("N/E ±3 m and down -3..=0 m"));
+                .contains("3 m horizontally and down -3..=0 m"));
         }
 
         position[4..8].copy_from_slice(&3.0_f32.to_le_bytes());
-        position[8..12].copy_from_slice(&(-3.0_f32).to_le_bytes());
+        position[8..12].copy_from_slice(&0.0_f32.to_le_bytes());
         position[12..16].copy_from_slice(&(-3.0_f32).to_le_bytes());
         assert!(control_command(&frame(position), 1).is_ok());
     }

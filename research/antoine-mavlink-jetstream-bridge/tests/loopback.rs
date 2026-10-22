@@ -494,27 +494,31 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         anyhow::bail!("Antoine adapter exited before receiving QGC traffic: {status}");
     }
 
-    let mut out_of_range_setpoint_payload = vec![0_u8; 53];
-    out_of_range_setpoint_payload[4..8].copy_from_slice(&3.1_f32.to_le_bytes());
-    out_of_range_setpoint_payload[48..50].copy_from_slice(&0x0df8_u16.to_le_bytes());
-    out_of_range_setpoint_payload[50] = 1;
-    out_of_range_setpoint_payload[51] = 1;
-    out_of_range_setpoint_payload[52] = 1;
-    let out_of_range_setpoint = v2_frame(84, 9, 255, &out_of_range_setpoint_payload, 143);
-    gcs.send_to(&out_of_range_setpoint, qgc_bind).await?;
-    assert!(
-        timeout(Duration::from_millis(150), reply_rx.recv())
-            .await
-            .is_err(),
-        "out-of-range position targets must not reach Antoine"
-    );
-    let setpoint_audit: serde_json::Value = serde_json::from_slice(
-        &timeout(Duration::from_secs(2), audit_rx.recv())
-            .await?
-            .context("missing rejected position-target audit")?,
-    )?;
-    assert_eq!(setpoint_audit["direction"], "gcs_to_antoine");
-    assert_eq!(setpoint_audit["message_id"], 84);
+    for (sequence, north, east) in [(8, 2.2_f32, 2.2_f32), (9, 3.1, 0.0)] {
+        let mut out_of_range_setpoint_payload = vec![0_u8; 53];
+        out_of_range_setpoint_payload[4..8].copy_from_slice(&north.to_le_bytes());
+        out_of_range_setpoint_payload[8..12].copy_from_slice(&east.to_le_bytes());
+        out_of_range_setpoint_payload[48..50].copy_from_slice(&0x0df8_u16.to_le_bytes());
+        out_of_range_setpoint_payload[50] = 1;
+        out_of_range_setpoint_payload[51] = 1;
+        out_of_range_setpoint_payload[52] = 1;
+        let out_of_range_setpoint =
+            v2_frame(84, sequence, 255, &out_of_range_setpoint_payload, 143);
+        gcs.send_to(&out_of_range_setpoint, qgc_bind).await?;
+        assert!(
+            timeout(Duration::from_millis(150), reply_rx.recv())
+                .await
+                .is_err(),
+            "out-of-range position targets must not reach Antoine"
+        );
+        let setpoint_audit: serde_json::Value = serde_json::from_slice(
+            &timeout(Duration::from_secs(2), audit_rx.recv())
+                .await?
+                .context("missing rejected position-target audit")?,
+        )?;
+        assert_eq!(setpoint_audit["direction"], "gcs_to_antoine");
+        assert_eq!(setpoint_audit["message_id"], 84);
+    }
 
     let mut arm_payload = vec![0_u8; 33];
     arm_payload[0..4].copy_from_slice(&1.0_f32.to_le_bytes());

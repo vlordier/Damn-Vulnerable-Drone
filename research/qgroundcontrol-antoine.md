@@ -75,8 +75,9 @@ Supported controls:
 - `MAV_CMD_DO_SET_MODE` and `SET_MODE`: STABILIZE, GUIDED, AUTO, HOLD, RTL,
   LAND. AUTO requires an uploaded mission; modes that move the aircraft
   require it to be armed.
-- `SET_POSITION_TARGET_LOCAL_NED` position-only targets. N/E are limited to
-  ±3 m and down to -3..0 m; velocity, acceleration, yaw, and yaw-rate fields
+- `SET_POSITION_TARGET_LOCAL_NED` position-only targets. Horizontal distance
+  from home is limited to 3 m and down to -3..0 m; velocity, acceleration,
+  yaw, and yaw-rate fields
   must be masked as ignored. GUIDED position targets expire after one second
   without another setpoint.
 - Mission upload and download using `MISSION_COUNT`,
