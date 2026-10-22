@@ -29,6 +29,8 @@ FAULT_PID=""
 FAULT_IDENTITY="${REPORT_ROOT}/.${RUN_ID}-fault.identity"
 SWARM_SIZE="${ANTOINE_SWARM_SIZE:-2}"
 SWARM_SPACING="${ANTOINE_SWARM_SPACING_M:-8}"
+ARRIVAL_HOLD_RADIUS="${ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M:-0.15}"
+TERMINAL_BRAKING_RADIUS="${ANTOINE_GZ_TERMINAL_BRAKING_RADIUS_M:-0.15}"
 POSITIVE_TARGET="${ANTOINE_SWARM_AUTH_POSITIVE_TARGET:-}"
 POSITIVE_DELTA_M="${ANTOINE_SWARM_AUTH_POSITIVE_DELTA_M:-2}"
 SWARM_MODELS=(isr fpv-a fpv-b fpv-c fpv-d)
@@ -47,6 +49,12 @@ if [[ ! "${SWARM_SPACING}" =~ ^[0-9]+([.][0-9]+)?$ ]] || ! awk -v n="${SWARM_SPA
   echo "Swarm path spacing must be 2..20 metres" >&2
   exit 2
 fi
+for radius in "${ARRIVAL_HOLD_RADIUS}" "${TERMINAL_BRAKING_RADIUS}"; do
+  if [[ ! "${radius}" =~ ^[0-9]+([.][0-9]+)?$ ]] || ! awk -v n="${radius}" 'BEGIN { exit !(n >= 0.05 && n <= 2) }'; then
+    echo "Swarm arrival and braking radii must be 0.05..2 metres" >&2
+    exit 2
+  fi
+done
 SWARM_AGENTS="${SWARM_MODELS[*]:0:SWARM_SIZE}"
 SWARM_AGENTS="${SWARM_AGENTS// /,}"
 case "${SWARM_BEHAVIOR}" in
@@ -219,6 +227,8 @@ fi
 # Pin the swarm baseline to the control rate used by its last qualified run.
 # Callers can still override this when measuring another controller rate.
 export ANTOINE_GZ_FLIGHT_CONTROL_HZ="${ANTOINE_GZ_FLIGHT_CONTROL_HZ:-20}"
+export ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M="${ARRIVAL_HOLD_RADIUS}"
+export ANTOINE_GZ_TERMINAL_BRAKING_RADIUS_M="${TERMINAL_BRAKING_RADIUS}"
 export ANTOINE_GZ_TWO_DRONE=1
 export ANTOINE_GZ_FLIGHT_GUI
 export ANTOINE_SWARM_SIZE="${SWARM_SIZE}"
@@ -297,6 +307,8 @@ fi
 
 dvd_run_owned_child "${PROJECT_ROOT}" "${IDENTITY}" env \
   ${FLIGHT_FAULT_ENV[@]+"${FLIGHT_FAULT_ENV[@]}"} \
+  "ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M=${ARRIVAL_HOLD_RADIUS}" \
+  "ANTOINE_GZ_TERMINAL_BRAKING_RADIUS_M=${TERMINAL_BRAKING_RADIUS}" \
   DVD_LAUNCHER_MANAGED=1 DVD_LAUNCHER_IDENTITY="${IDENTITY}" \
   "${PROJECT_ROOT}/scripts/run-antoine.sh" \
   --run-dir "${RUN_DIR}" --flight-seconds "${FLIGHT_SECONDS}" --settle-seconds 10 --keep \
@@ -318,22 +330,24 @@ if [[ "${run_dir_ready}" -eq 1 ]]; then
   uv run --no-project python "${PROJECT_ROOT}/research/swarm_behavior.py" plan \
     --behavior "${SWARM_BEHAVIOR}" --size "${SWARM_SIZE}" --spacing "${SWARM_SPACING}" \
     --models "${SWARM_AGENTS}" --output "${RUN_DIR}/research-swarm-plan.json"
-  uv run --no-project python - "${RUN_DIR}" "${SWARM_BEHAVIOR}" "${SWARM_MAVLINK}" "${FAULT}" "${AUTH_MUTATION}" "${FAULT_CALLSIGN}" <<'PY'
+  uv run --no-project python - "${RUN_DIR}" "${SWARM_BEHAVIOR}" "${SWARM_MAVLINK}" "${FAULT}" "${AUTH_MUTATION}" "${FAULT_CALLSIGN}" "${ARRIVAL_HOLD_RADIUS}" "${TERMINAL_BRAKING_RADIUS}" <<'PY'
 import json
 import sys
 from pathlib import Path
 
-run_dir, behavior, mavlink, fault, authorization_mutation, fault_callsign = sys.argv[1:]
+run_dir, behavior, mavlink, fault, authorization_mutation, fault_callsign, hold_radius, braking_radius = sys.argv[1:]
 plan = json.loads((Path(run_dir) / "research-swarm-plan.json").read_text(encoding="utf-8"))
 config = {
     "contract": "damn-vulnerable-drone.antoine-swarm-config",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "behavior": behavior,
     "spacingM": plan["spacingM"],
     "mavlinkSwarm": mavlink == "1",
     "fault": fault,
     "authorizationMutation": authorization_mutation,
     "faultCallsign": fault_callsign,
+    "arrivalHoldRadiusM": float(hold_radius),
+    "terminalBrakingRadiusM": float(braking_radius),
     "vehicles": [
         {
             "callsign": vehicle["callsign"],
@@ -351,16 +365,16 @@ config = {
 )
 PY
   else
-    uv run --no-project python - "${RUN_DIR}" "${POSITIVE_PLAN_JSON}" "${SWARM_BEHAVIOR}" <<'PY'
+    uv run --no-project python - "${RUN_DIR}" "${POSITIVE_PLAN_JSON}" "${SWARM_BEHAVIOR}" "${ARRIVAL_HOLD_RADIUS}" "${TERMINAL_BRAKING_RADIUS}" <<'PY'
 import json
 import sys
 from pathlib import Path
-run_dir, plan_json, behavior = sys.argv[1:]
+run_dir, plan_json, behavior, hold_radius, braking_radius = sys.argv[1:]
 run_dir = Path(run_dir)
 plan = json.loads(plan_json)
 (run_dir / "research-swarm-plan.json").write_text(json.dumps(plan, indent=2) + "\n")
 evidence = plan["selectedVehicleAuthorization"]
-config = {"contract": "damn-vulnerable-drone.antoine-swarm-config", "version": "1.1.0", "behavior": behavior, "spacingM": plan["spacingM"], "mavlinkSwarm": False, "fault": "none", "authorizationMutation": "none", "selectedVehicleAuthorization": evidence, "vehicles": [{key: vehicle[key] for key in ("callsign", "model", "role", "group", "waypointsEnuM", "finalSlotEnuM") if key in vehicle} for vehicle in plan["vehicles"]]}
+config = {"contract": "damn-vulnerable-drone.antoine-swarm-config", "version": "1.2.0", "behavior": behavior, "spacingM": plan["spacingM"], "mavlinkSwarm": False, "fault": "none", "authorizationMutation": "none", "arrivalHoldRadiusM": float(hold_radius), "terminalBrakingRadiusM": float(braking_radius), "selectedVehicleAuthorization": evidence, "vehicles": [{key: vehicle[key] for key in ("callsign", "model", "role", "group", "waypointsEnuM", "finalSlotEnuM") if key in vehicle} for vehicle in plan["vehicles"]]}
 (run_dir / "research-swarm-config.json").write_text(json.dumps(config, indent=2) + "\n")
 PY
   fi

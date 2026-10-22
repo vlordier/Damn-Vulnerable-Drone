@@ -163,6 +163,7 @@ ANTOINE_SOURCE_SNAPSHOT="$RUNTIME_SIMROOT/antoine-source-snapshot"
 ANTOINE_RESEARCH_SOURCE_PATCH="$RUNTIME_SIMROOT/antoine-research-source.patch"
 cat "$PROJECT_ROOT/research/patches/antoine-flight-lifecycle.patch" \
   "$PROJECT_ROOT/research/patches/antoine-swarm-state-partition.patch" \
+  "$PROJECT_ROOT/research/patches/antoine-swarm-arrival-experiment.patch" \
   >"$ANTOINE_RESEARCH_SOURCE_PATCH"
 uv run --no-project python "$PROJECT_ROOT/research/snapshot_antoine_build_inputs.py" \
   "$BASE_ANTOINE_ROOT" "$EW_WIRE_SOURCE" "$ANTOINE_SOURCE_SNAPSHOT" \
@@ -343,6 +344,8 @@ write_public_profile_env() {
   for key in \
     ANTOINE_GZ_CAMERA_RENDERING \
     ANTOINE_GZ_FLIGHT_CONTROL_HZ \
+    ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M \
+    ANTOINE_GZ_TERMINAL_BRAKING_RADIUS_M \
     ANTOINE_GZ_TORQUE_GAIN \
     ANTOINE_GZ_ATTITUDE_RATE_GAIN \
     ANTOINE_GZ_FLIGHT_GUI \

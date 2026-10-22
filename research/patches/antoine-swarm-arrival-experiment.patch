@@ -1,0 +1,43 @@
+diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
+--- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
++++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
+@@ -1560,6 +1560,18 @@
+ }
+ 
++fn swarm_arrival_radius(name: &str, default: f64) -> Result<f64, Box<dyn std::error::Error>> {
++    let value = match std::env::var(name) {
++        Ok(value) => value.parse::<f64>()?,
++        Err(std::env::VarError::NotPresent) => default,
++        Err(error) => return Err(error.into()),
++    };
++    if !value.is_finite() || !(0.05..=2.0).contains(&value) {
++        return Err(format!("{name} must be finite and between 0.05 and 2.0 metres").into());
++    }
++    Ok(value)
++}
++
+ #[allow(clippy::too_many_arguments)]
+ async fn run_gz_plant(
+     client: async_nats::Client,
+     callsign: String,
+@@ -2924,7 +2939,9 @@
+             // velocity hold radius small: using the braking radius as the hold
+             // radius made the speed cap reach zero at 0.75 m, so the vehicle
+             // could never settle closely enough to its target to disarm.
+-            // Admission, grant, and evaluator criteria remain unchanged.
+-            let uav_arrive = 0.15_f64;
++            // Admission, grant, and evaluator criteria remain unchanged. These
++            // two run-local knobs isolate capture from terminal braking.
++            let uav_arrive = swarm_arrival_radius("ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M", 0.15)?;
++            let braking_radius = swarm_arrival_radius("ANTOINE_GZ_TERMINAL_BRAKING_RADIUS_M", 0.15)?;
+             // Keep the vertical capture band smaller than a normal takeoff
+             // increment. A 0.5 m deadband caused a commanded 1 m takeoff to
+@@ -2933,7 +2949,7 @@
+                 dist_xy,
+                 1.5,
+                 0.6,
+-                uav_arrive,
++                braking_radius,
+                 vmax_xy,
+                 horizontal_amax,
+             );

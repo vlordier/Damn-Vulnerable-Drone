@@ -20,7 +20,9 @@ DEFAULT_VEHICLES = [
     {"callsign": "drone-2", "model": "fpv-a"},
 ]
 DEFAULT_SPACING_M = 8.0
-SWARM_REPORT_VERSION = "1.13.0"
+DEFAULT_ARRIVAL_HOLD_RADIUS_M = 0.15
+DEFAULT_TERMINAL_BRAKING_RADIUS_M = 0.15
+SWARM_REPORT_VERSION = "1.14.0"
 POSE_PAIR_TOLERANCE_SECONDS = 0.05
 MINIMUM_SEPARATION_METERS = 1.0
 MINIMUM_POSE_SAMPLES_PER_VEHICLE = 20
@@ -42,6 +44,8 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
             "spacingM": DEFAULT_SPACING_M,
             "behavior": "lanes",
             "mavlinkSwarm": False,
+            "arrivalHoldRadiusM": DEFAULT_ARRIVAL_HOLD_RADIUS_M,
+            "terminalBrakingRadiusM": DEFAULT_TERMINAL_BRAKING_RADIUS_M,
         }
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -68,12 +72,27 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
     behavior = config.get("behavior", "lanes")
     if not isinstance(behavior, str):
         raise ValueError("swarm behavior must be a string")
+    radii = {}
+    for key, default in (
+        ("arrivalHoldRadiusM", DEFAULT_ARRIVAL_HOLD_RADIUS_M),
+        ("terminalBrakingRadiusM", DEFAULT_TERMINAL_BRAKING_RADIUS_M),
+    ):
+        value = config.get(key, default)
+        if (
+            not isinstance(value, (int, float))
+            or isinstance(value, bool)
+            or not math.isfinite(value)
+            or not 0.05 <= value <= 2.0
+        ):
+            raise ValueError(f"swarm {key} must be finite and between 0.05 and 2 metres")
+        radii[key] = float(value)
     return {
         "vehicles": normalized,
         "spacingM": float(spacing),
         "behavior": behavior,
         "mavlinkSwarm": config.get("mavlinkSwarm") is True,
         "fault": config.get("fault", "none"),
+        **radii,
     }
 
 
@@ -2174,6 +2193,8 @@ def main() -> int:
         "runId": run_dir.name,
         "scenario": "independent-antoine-controllers-gazebo-nats",
         "behavior": plan.get("behavior"),
+        "arrivalHoldRadiusM": config["arrivalHoldRadiusM"],
+        "terminalBrakingRadiusM": config["terminalBrakingRadiusM"],
         "swarmPlanSource": plan.get("planSource", "run-artifact"),
         "scope": f"{len(vehicles)} X500 models with independent controllers and local test authorities on one run-owned loopback NATS broker",
         "status": aggregate_status,
