@@ -229,6 +229,9 @@ class GazeboFailureReportTests(unittest.TestCase):
             outside.write_text(
                 json.dumps(
                     {
+                        "contract": CHECKER.ACTUATOR_OUTPUT_CONTRACT,
+                        "version": CHECKER.ACTUATOR_OUTPUT_VERSION,
+                        "runId": run_directory.name,
                         "vehicleId": "drone-1",
                         "actuatorKind": "motors",
                         "sequence": 99,
@@ -246,6 +249,7 @@ class GazeboFailureReportTests(unittest.TestCase):
             audit_path.write_text(outside.read_text(encoding="utf-8"), encoding="utf-8")
             checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
             checker.run_directory = run_directory
+            checker.run_id = run_directory.name
             checker.callsign = "drone-1"
             self.assertEqual(checker.actuator_audit()[0]["sequence"], 99)
 
@@ -257,6 +261,57 @@ class GazeboFailureReportTests(unittest.TestCase):
             audit_directory.rmdir()
             audit_directory.symlink_to(outside.parent, target_is_directory=True)
             self.assertEqual(checker.actuator_audit(), [])
+
+    def test_authorized_motor_output_requires_run_bound_measured_audit(self) -> None:
+        checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
+        checker.callsign = "drone-1"
+        checker.run_id = "run-1"
+        valid = {
+            "contract": CHECKER.ACTUATOR_OUTPUT_CONTRACT,
+            "version": CHECKER.ACTUATOR_OUTPUT_VERSION,
+            "runId": "run-1",
+            "vehicleId": "drone-1",
+            "actuatorKind": "motors",
+            "sequence": 12,
+            "stage": "authorized-command",
+            "neutral": False,
+            "authority": "verified-core-grant",
+            "worldSha256": "sha256:" + "a" * 64,
+            "frameId": "enu-test",
+            "values": {"velocity": [100.0, 100.0, 100.0, 100.0]},
+            "executionGrant": {
+                "contract": "furia.prime.execution-grant",
+                "vehicleId": "drone-1",
+                "runId": "run-1",
+                "targetEnuMm": [1000, 2000, 3000],
+            },
+        }
+        checker.actuator_audit = mock.Mock(return_value=[valid])
+        matched = asyncio.run(
+            checker.wait_authorized_motor_output(10, (1.0, 2.0, 3.0), timeout_s=0.01)
+        )
+        self.assertIs(matched, valid)
+
+        invalid_rows = (
+            {**valid, "runId": "another-run"},
+            {**valid, "authority": "safe-stop"},
+            {**valid, "values": {"velocity": [0, 0, 0, 0]}},
+            {**valid, "sequence": True},
+            {
+                **valid,
+                "executionGrant": {**valid["executionGrant"], "targetEnuMm": [1000, True, 3000]},
+            },
+            {**valid, "executionGrant": {**valid["executionGrant"], "vehicleId": "drone-2"}},
+        )
+        for invalid in invalid_rows:
+            checker.actuator_audit = mock.Mock(return_value=[invalid])
+            with self.subTest(invalid=invalid):
+                with self.assertRaisesRegex(
+                    AssertionError, "no independent authorized motor output"
+                ):
+                    asyncio.run(
+                        checker.wait_authorized_motor_output(10, (1.0, 2.0, 3.0), timeout_s=0.001)
+                    )
 
     def test_wait_pose_requires_simulation_time_to_advance(self) -> None:
         checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)

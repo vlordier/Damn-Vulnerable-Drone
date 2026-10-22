@@ -20,6 +20,10 @@ POSE_SAMPLE_MAX_AGE_SECONDS = 1.5
 MAVLINK_STATE_MAX_AGE_SECONDS = 1.5
 TELEMETRY_MAX_AGE_MS = 1_000
 TELEMETRY_MAX_FUTURE_MS = 250
+ACTUATOR_AUDIT_MAX_BYTES = 2_000_000
+ACTUATOR_OUTPUT_CONTRACT = "furia.gzsitl.actuator-output-audit"
+ACTUATOR_OUTPUT_VERSION = "1.0.0"
+AUTHORIZED_ACTUATOR_STAGES = {"authorized-command", "startup-neutral"}
 
 
 def gazebo_timestamp_seconds(value: dict) -> float | None:
@@ -94,6 +98,7 @@ class GazeboFlightCheck(FlightCheck):
         super().__init__(url, bind_port, bridge_port, callsign)
         self.pose_file = pose_file
         self.run_directory = run_directory
+        self.run_id = run_directory.name
         expected_pose = run_directory / "flight-proof" / "gazebo-pose.jsonl"
         if pose_file.absolute() != expected_pose.absolute():
             raise ValueError("Gazebo pose file must be the selected run's flight-proof artifact")
@@ -424,7 +429,7 @@ class GazeboFlightCheck(FlightCheck):
             content = read_run_tail_text(
                 self.run_directory,
                 Path("flight-proof/applier-neutral/actuator-output.jsonl"),
-                2_000_000,
+                ACTUATOR_AUDIT_MAX_BYTES,
                 errors="replace",
             )
         except (OSError, ValueError):
@@ -439,6 +444,9 @@ class GazeboFlightCheck(FlightCheck):
                 continue
             if (
                 isinstance(record, dict)
+                and record.get("contract") == ACTUATOR_OUTPUT_CONTRACT
+                and record.get("version") == ACTUATOR_OUTPUT_VERSION
+                and record.get("runId") == self.run_id
                 and record.get("vehicleId") == self.callsign
                 and record.get("actuatorKind") == "motors"
             ):
@@ -457,15 +465,31 @@ class GazeboFlightCheck(FlightCheck):
             for record in self.actuator_audit():
                 grant = record.get("executionGrant")
                 target = grant.get("targetEnuMm") if isinstance(grant, dict) else None
+                values = record.get("values")
+                velocities = values.get("velocity") if isinstance(values, dict) else None
                 if (
-                    record.get("sequence", -1) > after_sequence
+                    record.get("runId") == self.run_id
+                    and type(record.get("sequence")) is int
+                    and record["sequence"] > after_sequence
                     and record.get("neutral") is False
+                    and record.get("authority") == "verified-core-grant"
+                    and record.get("stage") in AUTHORIZED_ACTUATOR_STAGES
                     and isinstance(grant, dict)
                     and grant.get("contract") == "furia.prime.execution-grant"
+                    and grant.get("vehicleId") == self.callsign
+                    and grant.get("runId") == self.run_id
+                    and isinstance(record.get("worldSha256"), str)
+                    and record["worldSha256"].startswith("sha256:")
+                    and isinstance(record.get("frameId"), str)
+                    and bool(record["frameId"])
+                    and isinstance(velocities, list)
+                    and len(velocities) == 4
+                    and all(finite_json_number(value) for value in velocities)
+                    and any(value != 0 for value in velocities)
                     and isinstance(target, list)
                     and len(target) == 3
                     and all(
-                        isinstance(value, (int, float)) and abs(value - expected) <= 250
+                        type(value) is int and abs(value - expected) <= 250
                         for value, expected in zip(target, expected_target_mm, strict=True)
                     )
                 ):
