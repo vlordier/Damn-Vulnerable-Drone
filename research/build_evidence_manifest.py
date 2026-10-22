@@ -6,6 +6,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +84,8 @@ SCENARIO_COVERAGE = scenario_catalog()
 
 
 def read_json(path: Path) -> dict[str, Any] | None:
+    if path.is_symlink():
+        return None
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -98,7 +102,10 @@ def sha256(path: Path) -> str:
 
 
 def build(run_dir: Path) -> dict[str, Any]:
-    run_dir = run_dir.resolve()
+    run_dir = Path(run_dir)
+    if run_dir.is_symlink():
+        raise ValueError("refusing to build an evidence manifest through a symlinked run directory")
+    run_dir = run_dir.resolve(strict=True)
     result = read_json(run_dir / "research-result.json")
     baseline = read_json(run_dir / "research-baseline-summary.json")
     sensor_tamper = read_json(run_dir / "research-gps-tampering-summary.json")
@@ -439,6 +446,7 @@ def build(run_dir: Path) -> dict[str, Any]:
         ),
         "physicsEngine": (run_dir / "physics-engine.txt").read_text(encoding="utf-8").strip()
         if (run_dir / "physics-engine.txt").is_file()
+        and not (run_dir / "physics-engine.txt").is_symlink()
         else None,
         "qualification": qualification,
         "measurementClassification": measurement_classification,
@@ -480,8 +488,35 @@ def main() -> int:
 
 
 def write_manifest(run_dir: Path, manifest: dict[str, Any]) -> Path:
-    output = Path(run_dir) / "research-evidence-manifest.json"
-    output.write_text(json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    run_dir = Path(run_dir)
+    if run_dir.is_symlink():
+        raise ValueError("refusing to write an evidence manifest through a symlinked run directory")
+    run_dir = run_dir.resolve(strict=True)
+    if not run_dir.is_dir():
+        raise ValueError("evidence manifest destination must be a run directory")
+    output = run_dir / "research-evidence-manifest.json"
+    if output.is_symlink():
+        raise ValueError("refusing to replace a symlinked evidence manifest")
+    temporary_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=run_dir,
+            prefix=".research-manifest-",
+            suffix=".tmp",
+            delete=False,
+        ) as stream:
+            temporary_path = Path(stream.name)
+            stream.write(json.dumps(manifest, indent=2, sort_keys=True) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary_path, output)
+        temporary_path = None
+        output.chmod(0o644)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
     sign_manifest_if_configured(output)
     return output
 

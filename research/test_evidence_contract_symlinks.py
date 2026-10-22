@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from build_evidence_manifest import build
+from build_evidence_manifest import build, write_manifest
 from dvd_research.evidence_contract import verify_manifest
 
 
@@ -24,6 +24,94 @@ class EvidenceManifestSymlinkTests(unittest.TestCase):
 
         names = {item["name"] for item in manifest["publicEvidence"]}
         self.assertNotIn("applier-neutral/actuator-output.jsonl", names)
+
+    def test_symlinked_swarm_report_cannot_drive_qualification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            run_dir.mkdir()
+            private_dir = run_dir / "private"
+            private_dir.mkdir()
+            report = {
+                "runId": run_dir.name,
+                "scenario": "independent-antoine-controllers-gazebo-nats",
+                "status": "passed",
+                "allVehicleRunIdentityMatches": True,
+                "allFlightsPassed": True,
+                "baselineStatus": "qualified_baseline",
+                "baselineGates": {"gazeboAttitudeWithinEnvelope": True},
+                "poseStreamQualityPassed": True,
+                "allPairwiseSeparationsMeasured": True,
+                "allPairwiseSeparationsAtLeast1m": True,
+                "behaviorPassed": True,
+            }
+            (private_dir / "swarm-flight.json").write_text(json.dumps(report))
+            (run_dir / "research-swarm-flight.json").symlink_to(private_dir / "swarm-flight.json")
+            (run_dir / "research-provenance-comparison.json").write_text(
+                json.dumps(
+                    {
+                        "runId": run_dir.name,
+                        "prePhaseValid": True,
+                        "postPhaseValid": True,
+                        "profileMatches": True,
+                        "stable": True,
+                    }
+                )
+            )
+
+            manifest = build(run_dir)
+
+        self.assertEqual(manifest["measurementClassification"], "inconclusive")
+        self.assertIsNot(manifest["measurements"].get("swarmFlightPassed"), True)
+        self.assertNotIn(
+            "research-swarm-flight.json", {item["name"] for item in manifest["publicEvidence"]}
+        )
+
+    def test_builder_rejects_symlinked_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            run_dir.mkdir()
+            alias = Path(directory) / "run-alias"
+            alias.symlink_to(run_dir, target_is_directory=True)
+
+            with self.assertRaisesRegex(ValueError, "symlinked run directory"):
+                build(alias)
+
+    def test_writer_refuses_manifest_symlink_without_changing_its_target(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            run_dir.mkdir()
+            outside = Path(directory) / "outside.json"
+            outside.write_text("preserve this file\n")
+            (run_dir / "research-evidence-manifest.json").symlink_to(outside)
+
+            with self.assertRaisesRegex(ValueError, "symlinked evidence manifest"):
+                write_manifest(run_dir, {"contract": "test"})
+
+            self.assertEqual(outside.read_text(), "preserve this file\n")
+
+    def test_writer_atomically_writes_a_verifiable_manifest(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            run_dir.mkdir()
+            evidence = run_dir / "research-result.json"
+            content = b"{}\n"
+            evidence.write_bytes(content)
+            manifest = {
+                "contract": "damn-vulnerable-drone.antoine-evidence-manifest",
+                "runId": run_dir.name,
+                "publicEvidence": [
+                    {
+                        "name": evidence.name,
+                        "sizeBytes": len(content),
+                        "sha256": hashlib.sha256(content).hexdigest(),
+                    }
+                ],
+            }
+
+            output = write_manifest(run_dir, manifest)
+
+            self.assertEqual(output, run_dir.resolve() / "research-evidence-manifest.json")
+            self.assertEqual(verify_manifest(output), (True, []))
 
     def test_verifier_rejects_allowlisted_file_under_symlinked_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
