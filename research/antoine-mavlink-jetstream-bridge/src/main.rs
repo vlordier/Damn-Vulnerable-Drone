@@ -473,6 +473,14 @@ fn native_telemetry_time_s(
     }
 }
 
+fn gazebo_telemetry_time_ms(value: &serde_json::Value, previous: Option<u64>) -> Result<u64> {
+    let observed_at_ms = unix_millis(value, "observedAtUnixMs")?;
+    if previous.is_some_and(|last| observed_at_ms <= last) {
+        bail!("Gazebo telemetry observedAtUnixMs did not advance");
+    }
+    Ok(observed_at_ms)
+}
+
 fn telemetry_run_id_matches(
     mode: &str,
     configured_run_id: Option<&str>,
@@ -1186,6 +1194,7 @@ async fn antoine_nats_telemetry_to_gcs(
     let mut subscription = client.subscribe(subject).await?;
     let mut sequence = 0_u8;
     let mut last_native_time_s = None;
+    let mut last_gazebo_observed_at_ms = None;
     let mut last_telemetry = tokio::time::Instant::now() - std::time::Duration::from_secs(1);
     while let Some(message) = subscription.next().await {
         let value: serde_json::Value = match serde_json::from_slice(&message.payload) {
@@ -1211,6 +1220,17 @@ async fn antoine_nats_telemetry_to_gcs(
                 tracing::warn!(%error, "stale or mismatched Antoine telemetry");
                 continue;
             }
+        };
+        let gazebo_observed_at_ms = if config.mode == "gazebo-nats" {
+            match gazebo_telemetry_time_ms(&value, last_gazebo_observed_at_ms) {
+                Ok(observed_at_ms) => Some(observed_at_ms),
+                Err(error) => {
+                    tracing::warn!(%error, "stale or mismatched Gazebo telemetry");
+                    continue;
+                }
+            }
+        } else {
+            None
         };
         let now = tokio::time::Instant::now();
         if now.duration_since(last_telemetry) < std::time::Duration::from_millis(100) {
@@ -1263,6 +1283,9 @@ async fn antoine_nats_telemetry_to_gcs(
         }
         if native_time_s.is_some() {
             last_native_time_s = native_time_s;
+        }
+        if gazebo_observed_at_ms.is_some() {
+            last_gazebo_observed_at_ms = gazebo_observed_at_ms;
         }
     }
     Ok(())
@@ -2571,6 +2594,22 @@ mod tests {
         );
         assert!(native_telemetry_time_s("antoine-nats", &gazebo, None).is_err());
         assert!(native_telemetry_time_s("gazebo-nats", &sample, None).is_err());
+    }
+
+    #[test]
+    fn gazebo_telemetry_observation_clock_must_advance() {
+        let make = |observed_at_ms| serde_json::json!({"observedAtUnixMs":observed_at_ms});
+        assert_eq!(
+            gazebo_telemetry_time_ms(&make(101), Some(100)).unwrap(),
+            101
+        );
+        for observed_at_ms in [100, 99] {
+            assert!(gazebo_telemetry_time_ms(&make(observed_at_ms), Some(100))
+                .unwrap_err()
+                .to_string()
+                .contains("did not advance"));
+        }
+        assert!(gazebo_telemetry_time_ms(&serde_json::json!({}), None).is_err());
     }
 
     #[test]

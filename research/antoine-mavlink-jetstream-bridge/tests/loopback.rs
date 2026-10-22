@@ -1955,12 +1955,11 @@ async fn gazebo_nats_mode_routes_gcs_arm_through_local_authority() -> Result<()>
         "telemetry from a different profile run must not cross into MAVLink"
     );
 
+    let matching_telemetry = gazebo_telemetry("gazebo-authority-test-run");
     client
         .publish(
             format!("furia.telemetry.{callsign}"),
-            gazebo_telemetry("gazebo-authority-test-run")
-                .to_string()
-                .into(),
+            matching_telemetry.to_string().into(),
         )
         .await?;
     client.flush().await?;
@@ -1972,6 +1971,25 @@ async fn gazebo_nats_mode_routes_gcs_arm_through_local_authority() -> Result<()>
         "run-matched telemetry should produce HEARTBEAT"
     );
     assert!(length >= 21);
+    for _ in 1..5 {
+        timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+            .await
+            .context("bridge telemetry projection was incomplete")??;
+    }
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    client
+        .publish(
+            format!("furia.telemetry.{callsign}"),
+            matching_telemetry.to_string().into(),
+        )
+        .await?;
+    client.flush().await?;
+    assert!(
+        timeout(Duration::from_millis(200), gcs.recv_from(&mut buffer))
+            .await
+            .is_err(),
+        "duplicate Gazebo observation timestamps must not be projected twice"
+    );
 
     let stream = js.get_stream(STREAM).await?;
     let audit = wait_for_raw_subject(&stream, &format!("furia.mavlink.command.{callsign}")).await?;

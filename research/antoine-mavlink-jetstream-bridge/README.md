@@ -29,6 +29,8 @@ authority envelopes or publish actuator commands. This is a loopback research
 authority, not Core/Prime/Vigie authority. This mode requires `--run-id` and
 copies it into every JetStream MAVLink frame envelope so status and acceptance
 can reject cross-run audit records.
+Gazebo telemetry must also carry a fresh, strictly advancing
+`observedAtUnixMs`; duplicate and out-of-order observations are discarded.
 In `udp` mode, JetStream read-only vehicle requests also require an exact
 `runId` match whenever `--run-id` is configured; requests without one remain
 compatible only when the bridge itself has no selected run ID.
