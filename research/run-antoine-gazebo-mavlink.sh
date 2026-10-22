@@ -29,6 +29,8 @@ NATS_PORT="${ANTOINE_GZ_MAVLINK_NATS_PORT:-${NATS_DEFAULT}}"
 NATS_URL="nats://127.0.0.1:${NATS_PORT}"
 BRIDGE_TARGET="${ANTOINE_BRIDGE_TARGET_DIR:-/tmp/dvd-antoine-bridge-target}"
 BRIDGE_BIN="${BRIDGE_TARGET}/debug/antoine-mavlink-jetstream-bridge"
+MAVLINK_PYTHON="${ANTOINE_MAVLINK_PYTHON:-python3.11}"
+MAVLINK_PYTHON_ENV="${ANTOINE_MAVLINK_PYTHON_ENV:-${TMPDIR:-/tmp}/dvd-antoine-mavlink-python311}"
 ANTOINE_TARGET="${ANTOINE_GZ_CARGO_TARGET_DIR:-/tmp/antoine-gz-target}"
 ANTOINE_RUN_ROOT="${ANTOINE_SEALED_BUILD_ROOT:-}"
 ANTOINE_RUN_BUILD_RECEIPT="${ANTOINE_SOURCE_BUILD_RECEIPT:-}"
@@ -65,7 +67,9 @@ if [[ "${HEADLESS_ACCEPTANCE}" == "1" && "${OPEN_QGC}" != "0" ]]; then
   exit 2
 fi
 if [[ "${HEADLESS_ACCEPTANCE}" == "1" ]]; then
-  uv run --project "${PROJECT_ROOT}/research" python \
+  UV_PROJECT_ENVIRONMENT="${MAVLINK_PYTHON_ENV}" \
+    uv run --locked --project "${PROJECT_ROOT}/research" \
+    --python "${MAVLINK_PYTHON}" --group mavlink-check python \
     "${PROJECT_ROOT}/research/check_udp_loopback.py"
 fi
 
@@ -268,6 +272,8 @@ export ANTOINE_GZ_FLIGHT_STATE_HZ="${ANTOINE_GZ_FLIGHT_STATE_HZ:-50}"
   printf 'ANTOINE_GZ_FLIGHT_GUI=%s\n' "${ANTOINE_GZ_FLIGHT_GUI}"
   printf 'ANTOINE_GZ_FLIGHT_NATS_PORT=%s\n' "${ANTOINE_GZ_FLIGHT_NATS_PORT}"
   printf 'ANTOINE_GZ_MAVLINK_CALLSIGN=%s\n' "${ANTOINE_GZ_MAVLINK_CALLSIGN}"
+  printf 'ANTOINE_MAVLINK_PYTHON=%s\n' "${MAVLINK_PYTHON}"
+  printf 'ANTOINE_MAVLINK_PYTHON_ENV=%s\n' "${MAVLINK_PYTHON_ENV}"
   printf 'ANTOINE_GZ_OPEN_QGC=%s\n' "${OPEN_QGC}"
   for key in ANTOINE_GZ_SENSOR_FORWARDING ANTOINE_GZ_CAMERA_RENDERING \
     ANTOINE_GZ_FLIGHT_GROUND_START ANTOINE_GZ_FLIGHT_CONTROL_HZ \
@@ -426,7 +432,9 @@ if [[ "${HEADLESS_ACCEPTANCE}" == "1" ]]; then
     MAVLINK_NATS_URL="${NATS_URL}" MAVLINK_CALLSIGN="${CALLSIGN}" \
     QGC_BRIDGE_PORT="${QGC_BIND_PORT}" MAVLINK_GAZEBO_CHECK_PORT="${GAZEBO_CHECK_PORT}" \
     MAVLINK_GAZEBO_REPORT="${RUN_DIR}/gazebo-mavlink-acceptance.json" \
-    uv run --project research --group mavlink-check \
+    UV_PROJECT_ENVIRONMENT="${MAVLINK_PYTHON_ENV}" \
+      uv run --locked --project research --python "${MAVLINK_PYTHON}" \
+      --group mavlink-check \
       research/mavlink-nats-console/gazebo_flight_check.py
   echo "Headless acceptance passed; stopping this run-owned profile."
   exit 0

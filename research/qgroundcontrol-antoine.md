@@ -251,6 +251,15 @@ it does not issue a flight command. The isolated `make mavlink-flight-check`
 scenario separately verifies mode changes, position targets, missions,
 takeoff, land, and disarm.
 
+The swarm MAVLink telemetry probe and headless Gazebo acceptance need an
+interpreter that can receive loopback UDP. They default to `python3.11`, which
+is supported by the research project; override it with `ANTOINE_MAVLINK_PYTHON`
+if needed. The headless check keeps its locked `mavlink-check` dependencies in
+an isolated uv environment at `${TMPDIR:-/tmp}/dvd-antoine-mavlink-python311`,
+overridable with `ANTOINE_MAVLINK_PYTHON_ENV`. Before building or starting the
+profile, the runner checks the resolved interpreter's macOS firewall rule and
+UDP loopback receive path.
+
 ## Loopback connection
 
 For the native Antoine plant, keep the NATS server, SITL, and bridge on the

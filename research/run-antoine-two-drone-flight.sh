@@ -13,6 +13,7 @@ IDENTITY="${REPORT_ROOT}/.${RUN_ID}.identity"
 FLIGHT_SECONDS="${ANTOINE_RESEARCH_FLIGHT_SECONDS:-}"
 SWARM_BEHAVIOR="${ANTOINE_SWARM_BEHAVIOR:-lanes}"
 SWARM_MAVLINK="${ANTOINE_SWARM_MAVLINK:-0}"
+MAVLINK_PROBE_PYTHON="${ANTOINE_MAVLINK_PYTHON:-python3.11}"
 FLIGHT_PID=""
 AUTH_PROBE_PID=""
 AUTH_PROBE_STATUS=0
@@ -83,7 +84,7 @@ case "${SWARM_MAVLINK}" in
     ;;
 esac
 if [[ "${SWARM_MAVLINK}" == "1" ]]; then
-  uv run --project "${PROJECT_ROOT}/research" python \
+  uv run --no-project --python "${MAVLINK_PROBE_PYTHON}" python \
     "${PROJECT_ROOT}/research/check_udp_loopback.py"
 fi
 if [[ -z "${FLIGHT_SECONDS}" ]]; then
@@ -538,7 +539,7 @@ PY
     done
   fi
   dvd_run_owned_child "${PROJECT_ROOT}" "${MAVLINK_PROBE_IDENTITY}" \
-    uv run --project "${PROJECT_ROOT}/research" python \
+    uv run --no-project --python "${MAVLINK_PROBE_PYTHON}" python \
     "${PROJECT_ROOT}/research/mavlink_swarm_probe.py" \
     --server "nats://127.0.0.1:${ANTOINE_GZ_FLIGHT_NATS_PORT}" \
     --run-dir "${RUN_DIR}" --callsigns "${MAVLINK_CALLSIGNS}" \
