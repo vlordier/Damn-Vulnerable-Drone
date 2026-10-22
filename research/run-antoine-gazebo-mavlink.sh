@@ -181,6 +181,12 @@ if [[ "${OPEN_QGC}" == "1" && ! -x "${QGC_BINARY}" ]]; then
   echo "Missing QGroundControl executable for provenance and launch: ${QGC_BINARY}" >&2
   exit 1
 fi
+if [[ "${OPEN_QGC}" == "1" ]]; then
+  uv run --project "${PROJECT_ROOT}/research" python \
+    "${PROJECT_ROOT}/research/check_qgroundcontrol_patch.py" \
+    --root "${ANTOINE_QGC_DIR}" \
+    --patch "${PROJECT_ROOT}/research/patches/qgroundcontrol-antoine.patch"
+fi
 [[ -x "${HOME}/Work/gz-macOS/ws/install/bin/gz" ]] || {
   echo "Missing source-built Gazebo at ~/Work/gz-macOS/ws/install/bin/gz" >&2
   exit 1
