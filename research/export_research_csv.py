@@ -146,7 +146,12 @@ def rows(root: Path):
             listed = measurements.get("cameraTopicListed")
             publisher = measurements.get("cameraPublisherPresent")
             frames = measurements.get("cameraFramesCaptured")
-            if frames:
+            scope_matches = measurements.get("cameraRunScopeMatches")
+            if type(frames) is int and frames > 0 and scope_matches is False:
+                row["cameraObservationStatus"] = "frames_captured_scope_mismatch"
+            elif type(frames) is int and frames > 0 and scope_matches is not True:
+                row["cameraObservationStatus"] = "frames_captured_scope_unverified"
+            elif type(frames) is int and frames > 0:
                 row["cameraObservationStatus"] = "frames_captured"
             elif listed is False:
                 row["cameraObservationStatus"] = "topic_not_listed_in_probe_partition"

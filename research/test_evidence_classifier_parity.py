@@ -367,6 +367,12 @@ class EvidenceClassifierParityTests(unittest.TestCase):
                 csv_row = next(export_research_rows(run_dir.parent))
                 self.assertEqual(csv_row["cameraRunScopeMatches"], report_partition == "camera-run")
                 self.assertEqual(csv_row["runStatus"], expected_classification)
+                self.assertEqual(
+                    csv_row["cameraObservationStatus"],
+                    "frames_captured"
+                    if report_partition == "camera-run"
+                    else "frames_captured_scope_mismatch",
+                )
 
     def test_manifest_does_not_qualify_pass_status_with_failed_attitude_gate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
