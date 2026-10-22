@@ -221,6 +221,7 @@ test-swarm: ## Run planner, summarizer, and MAVLink probe unit tests
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_record_antoine_run_build.py' -v
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_capture_antoine_provenance.py' -v
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_mavlink_swarm_probe.py' -v
+	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_check_udp_loopback.py' -v
 
 test-research: ## Run every research Python unit test
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_*.py' -v
