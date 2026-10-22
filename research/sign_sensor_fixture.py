@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from dvd_research.run_nats import read_run_nats_log
 from dvd_research.sensor_fixture import build_case
 
 
@@ -27,10 +28,10 @@ def verify_scope(server: str, run_dir: Path) -> None:
         raise ValueError("fixture signer accepts only an explicit IPv4 loopback NATS URL")
     if run_dir.is_symlink() or not run_dir.is_dir() or not run_dir.name.startswith("antoine-gps-"):
         raise ValueError("fixture signer requires an existing run-local GPS evidence directory")
-    log = run_dir / "logs" / "nats.log"
-    content = log.read_text(encoding="utf-8", errors="replace")
+    content = read_run_nats_log(run_dir)
     if (
-        f"Listening for client connections on 127.0.0.1:{parsed.port}" not in content
+        content is None
+        or f"Listening for client connections on 127.0.0.1:{parsed.port}" not in content
         or "Server is ready" not in content
     ):
         raise ValueError("requested broker is not confirmed by this run's NATS log")
