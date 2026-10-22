@@ -20,13 +20,13 @@ class InteractiveProfilePinCandidateTests(unittest.TestCase):
                 "antoine": {
                     "revision": "a1",
                     "classification": "clean",
-                    "worktreeStatusSha256": "status-a",
-                    "trackedDiffSha256": "diff-a",
-                    "dirtyFilesSha256": "dirty-a",
+                    "worktreeStatusSha256": "a" * 64,
+                    "trackedDiffSha256": "b" * 64,
+                    "dirtyFilesSha256": "c" * 64,
                     "dirtyFileCount": 0,
                 }
             },
-            "artifacts": {"qgroundcontrolBinarySha256": "qgc-a"},
+            "artifacts": {"qgroundcontrolBinarySha256": "d" * 64},
             "toolchain": {"rustc": "rustc 1.99.1"},
         }
         self.comparison = {
@@ -143,10 +143,10 @@ class InteractiveProfilePinCandidateTests(unittest.TestCase):
         self.receipt["artifacts"] = {
             "qgroundcontrolBinarySha256": None,
             "qgcSettingsSha256": None,
-            "bridgeBinarySha256": "bridge-a",
+            "bridgeBinarySha256": "e" * 64,
         }
         candidate = create_candidate(self.receipt, self.comparison)
-        self.assertEqual(candidate["artifacts"], {"bridgeBinarySha256": "bridge-a"})
+        self.assertEqual(candidate["artifacts"], {"bridgeBinarySha256": "e" * 64})
         candidate["review"] = {
             "status": "reviewed",
             "reviewer": "operator",

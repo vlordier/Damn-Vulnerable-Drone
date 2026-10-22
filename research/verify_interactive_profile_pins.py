@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,11 @@ DIRTY_SOURCE_FIELDS = (
 SOURCE_SNAPSHOT_FOR = {"antoine": "antoine", "gazeboAssets": "gazebo"}
 HEADLESS_PROFILE = "headless-antoine-gazebo-mavlink"
 HEADLESS_OPTIONAL_ARTIFACTS = {"qgroundcontrolBinarySha256", "qgcSettingsSha256"}
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and SHA256_PATTERN.fullmatch(value) is not None
 
 
 def verify(receipt: Any, pins: Any) -> dict[str, Any]:
@@ -172,6 +178,11 @@ def _compare_mapping(
     if label != "source":
         for name, actual_value in actual_values.items():
             expected_value = expected_values.get(name)
+            if label == "artifacts" and (
+                not is_sha256(actual_value) or not is_sha256(expected_value)
+            ):
+                missing.append(f"artifacts.{name} must be a lowercase SHA-256 digest")
+                continue
             if actual_value is None or expected_value is None:
                 missing.append(f"{label}.{name} is missing")
             elif not isinstance(actual_value, str) or not isinstance(expected_value, str):
@@ -214,6 +225,16 @@ def _compare_mapping(
             "dirty-unreviewed",
         }:
             missing.append(f"source.{name} classification is missing or unavailable")
+        if check_dirty:
+            revision = actual_record.get("revision")
+            if not isinstance(revision, str) or not revision:
+                missing.append(f"source.{name}.revision is missing")
+            dirty_file_count = actual_record.get("dirtyFileCount")
+            if type(dirty_file_count) is not int or dirty_file_count < 0:
+                missing.append(f"source.{name}.dirtyFileCount must be a non-negative integer")
+            for field in DIRTY_SOURCE_FIELDS:
+                if not is_sha256(actual_record.get(field)):
+                    missing.append(f"source.{name}.{field} must be a lowercase SHA-256 digest")
         fields = (
             set(actual_record)
             if label != "source"

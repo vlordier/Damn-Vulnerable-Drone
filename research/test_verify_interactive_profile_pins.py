@@ -16,13 +16,13 @@ class InteractiveProfilePinTests(unittest.TestCase):
                 "antoine": {
                     "revision": "a1",
                     "classification": "clean",
-                    "worktreeStatusSha256": "status-a",
-                    "trackedDiffSha256": "diff-a",
-                    "dirtyFilesSha256": "dirty-a",
+                    "worktreeStatusSha256": "a" * 64,
+                    "trackedDiffSha256": "b" * 64,
+                    "dirtyFilesSha256": "c" * 64,
                     "dirtyFileCount": 0,
                 }
             },
-            "artifacts": {"qgroundcontrolBinarySha256": "qgc-a"},
+            "artifacts": {"qgroundcontrolBinarySha256": "d" * 64},
             "toolchain": {"rustc": "rustc 1.99.1"},
         }
         self.pins = {
@@ -51,7 +51,7 @@ class InteractiveProfilePinTests(unittest.TestCase):
         self.assertIn("source.antoine.revision differs from reviewed pin", result["incompatible"])
 
     def test_changed_artifact_digest_is_incompatible(self) -> None:
-        self.receipt["artifacts"]["qgroundcontrolBinarySha256"] = "qgc-b"
+        self.receipt["artifacts"]["qgroundcontrolBinarySha256"] = "e" * 64
         result = verify(self.receipt, self.pins)
         self.assertEqual(result["status"], "incompatible")
 
@@ -59,6 +59,36 @@ class InteractiveProfilePinTests(unittest.TestCase):
         self.receipt["artifacts"]["qgroundcontrolBinarySha256"] = None
         result = verify(self.receipt, self.pins)
         self.assertEqual(result["status"], "missing")
+
+    def test_malformed_matching_artifact_digest_is_missing(self) -> None:
+        self.receipt["artifacts"]["qgroundcontrolBinarySha256"] = "not-a-digest"
+        self.pins["artifacts"]["qgroundcontrolBinarySha256"] = "not-a-digest"
+        result = verify(self.receipt, self.pins)
+        self.assertEqual(result["status"], "missing")
+        self.assertIn(
+            "artifacts.qgroundcontrolBinarySha256 must be a lowercase SHA-256 digest",
+            result["missing"],
+        )
+
+    def test_malformed_matching_source_digests_are_missing(self) -> None:
+        self.receipt["source"]["antoine"]["dirtyFilesSha256"] = "not-a-digest"
+        self.pins["source"]["antoine"]["dirtyFilesSha256"] = "not-a-digest"
+        result = verify(self.receipt, self.pins)
+        self.assertEqual(result["status"], "missing")
+        self.assertIn(
+            "source.antoine.dirtyFilesSha256 must be a lowercase SHA-256 digest",
+            result["missing"],
+        )
+
+    def test_boolean_dirty_file_count_is_missing(self) -> None:
+        self.receipt["source"]["antoine"]["dirtyFileCount"] = True
+        self.pins["source"]["antoine"]["dirtyFileCount"] = True
+        result = verify(self.receipt, self.pins)
+        self.assertEqual(result["status"], "missing")
+        self.assertIn(
+            "source.antoine.dirtyFileCount must be a non-negative integer",
+            result["missing"],
+        )
 
     def test_dirty_source_without_all_reviewed_digests_is_unreviewed(self) -> None:
         source = self.receipt["source"]["antoine"]
