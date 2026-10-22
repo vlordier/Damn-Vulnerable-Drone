@@ -136,28 +136,56 @@ def main() -> int:
         raise SystemExit(str(error)) from error
 
     ready_deadline = time.monotonic() + 10
+    broker_ready = False
+    readiness_error = None
     while time.monotonic() < ready_deadline:
-        ready = subprocess.run(
-            ["nats", "--no-context", "--server", args.server, "rtt"],
-            text=True,
-            capture_output=True,
-            timeout=3,
-            check=False,
-        )
+        try:
+            ready = subprocess.run(
+                ["nats", "--no-context", "--server", args.server, "rtt"],
+                text=True,
+                capture_output=True,
+                timeout=3,
+                check=False,
+            )
+        except OSError as error:
+            readiness_error = f"NATS readiness command could not start ({type(error).__name__})"
+            break
         if ready.returncode == 0:
+            broker_ready = True
             break
         time.sleep(0.25)
-    else:
-        raise SystemExit("the run-owned loopback NATS broker did not become ready")
 
-    results = []
-    with ThreadPoolExecutor(max_workers=len(SUBJECTS)) as pool:
-        futures = {
-            pool.submit(capture, args.server, name, subject): name
+    if not broker_ready and readiness_error is None:
+        readiness_error = "the run-owned loopback NATS broker did not become ready"
+    if readiness_error is None:
+        results = []
+        with ThreadPoolExecutor(max_workers=len(SUBJECTS)) as pool:
+            futures = {
+                pool.submit(capture, args.server, name, subject): name
+                for name, subject in SUBJECTS.items()
+            }
+            for future in as_completed(futures):
+                results.append(future.result())
+    else:
+        results = [
+            {
+                "name": name,
+                "subject": subject,
+                "clientAuthentication": "none",
+                "requestedMaxMessages": 1,
+                "capturedMessages": 0,
+                "subscriberAttempts": 0,
+                "messages": [],
+                "malformedOutputLines": 0,
+                "subscriberExitCode": None,
+                "subscriberTimedOut": False,
+                "subscriberStartError": None,
+                "stderr": "",
+                "skippedReason": readiness_error,
+                "captureStartedAtUnixMs": int(time.time() * 1000),
+            }
             for name, subject in SUBJECTS.items()
-        }
-        for future in as_completed(futures):
-            results.append(future.result())
+        ]
     results.sort(key=lambda item: item["name"])
     report = {
         "contract": "damn-vulnerable-drone.antoine-nats-observation",
@@ -175,6 +203,7 @@ def main() -> int:
             "remoteReachability": "not tested",
         },
         "redaction": "signature, seed, secret, credential, and private-key fields",
+        "readinessError": readiness_error,
         "subjects": results,
         "interpretation": (
             "A local process able to reach this loopback broker read the selected public run, mission, "
