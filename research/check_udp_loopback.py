@@ -4,10 +4,31 @@
 from __future__ import annotations
 
 import socket
+import subprocess
 import sys
+from pathlib import Path
+
+
+def _application_firewall_blocks_python() -> bool:
+    firewall_tool = Path("/usr/libexec/ApplicationFirewall/socketfilterfw")
+    if sys.platform != "darwin" or not firewall_tool.exists():
+        return False
+    try:
+        result = subprocess.run(
+            [str(firewall_tool), "--getappblocked", str(Path(sys.executable).resolve())],
+            capture_output=True,
+            check=False,
+            text=True,
+            timeout=2,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return "blocked" in result.stdout.lower()
 
 
 def local_udp_loopback_available(timeout_seconds: float = 0.5) -> bool:
+    if _application_firewall_blocks_python():
+        return False
     receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
