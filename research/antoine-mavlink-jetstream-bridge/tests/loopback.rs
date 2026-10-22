@@ -600,7 +600,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     // RTL has a vehicle-bound, targetless native representation. It cannot
     // carry caller-supplied parameters that could be mistaken for a return
     // target override.
-    let mut rtl_payload = vec![0_u8; 33];
+    let mut rtl_payload = [0_u8; 33];
     rtl_payload[28..30].copy_from_slice(&20_u16.to_le_bytes());
     rtl_payload[30] = 1;
     rtl_payload[31] = 1;
@@ -1794,7 +1794,7 @@ async fn gazebo_nats_mode_routes_gcs_arm_through_local_authority() -> Result<()>
     let _bridge_guard = ChildGuard(bridge);
     wait_for_udp_bind(qgc_bind).await?;
 
-    let mut arm_payload = vec![0_u8; 33];
+    let mut arm_payload = [0_u8; 33];
     arm_payload[0..4].copy_from_slice(&1.0_f32.to_le_bytes());
     arm_payload[28..30].copy_from_slice(&400_u16.to_le_bytes());
     arm_payload[30] = 1;

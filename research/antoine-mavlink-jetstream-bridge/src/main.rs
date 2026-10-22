@@ -64,6 +64,16 @@ struct FrameInfo {
     payload: Vec<u8>,
 }
 
+struct TelemetryFrameContext {
+    system_id: u8,
+    home_alt_msl: f64,
+    home_lat_deg: f64,
+    home_lon_deg: f64,
+    sequence: u8,
+    armed: bool,
+    mode: u8,
+}
+
 struct PendingMissionUpload {
     source: SocketAddr,
     system_id: u8,
@@ -463,14 +473,17 @@ fn telemetry_mode_id(value: &serde_json::Value, fallback: u8) -> Result<u8> {
 
 fn telemetry_frames(
     value: &serde_json::Value,
-    system_id: u8,
-    home_alt_msl: f64,
-    home_lat_deg: f64,
-    home_lon_deg: f64,
-    sequence: u8,
-    armed: bool,
-    mode: u8,
+    context: TelemetryFrameContext,
 ) -> Result<Vec<Vec<u8>>> {
+    let TelemetryFrameContext {
+        system_id,
+        home_alt_msl,
+        home_lat_deg,
+        home_lon_deg,
+        sequence,
+        armed,
+        mode,
+    } = context;
     if mode > 5 {
         bail!("telemetry mode is outside the supported mode set");
     }
@@ -1145,13 +1158,15 @@ async fn antoine_nats_telemetry_to_gcs(
         };
         let frames = match telemetry_frames(
             &value,
-            config.system_id,
-            config.home_alt_msl,
-            config.home_lat_deg,
-            config.home_lon_deg,
-            sequence,
-            telemetry_armed,
-            telemetry_mode,
+            TelemetryFrameContext {
+                system_id: config.system_id,
+                home_alt_msl: config.home_alt_msl,
+                home_lat_deg: config.home_lat_deg,
+                home_lon_deg: config.home_lon_deg,
+                sequence,
+                armed: telemetry_armed,
+                mode: telemetry_mode,
+            },
         ) {
             Ok(frames) => frames,
             Err(error) => {
@@ -2206,6 +2221,26 @@ async fn main() -> Result<()> {
 mod tests {
     use super::*;
 
+    fn test_telemetry_frames(
+        value: &serde_json::Value,
+        sequence: u8,
+        armed: bool,
+        mode: u8,
+    ) -> Result<Vec<Vec<u8>>> {
+        telemetry_frames(
+            value,
+            TelemetryFrameContext {
+                system_id: 1,
+                home_alt_msl: 82.0,
+                home_lat_deg: 48.0002,
+                home_lon_deg: 0.3564,
+                sequence,
+                armed,
+                mode,
+            },
+        )
+    }
+
     fn test_config(mode: &str) -> Config {
         Config {
             callsign: "drone-1".to_owned(),
@@ -2497,7 +2532,7 @@ mod tests {
             "vn_mps":0.0,"ve_mps":0.0,"vd_mps":0.0,"actuator_thrust":0.0,
             "ground_contact":true,"gnss_degraded":false,"battery_pct":100,"battery_mv":12000
         });
-        let frames = telemetry_frames(&value, 1, 82.0, 48.0002, 0.3564, 0, false, 0).unwrap();
+        let frames = test_telemetry_frames(&value, 0, false, 0).unwrap();
         let position = validate_frame(&frames[1]).unwrap();
         assert_eq!(position.message_id, 33);
         assert_eq!(
@@ -2545,8 +2580,7 @@ mod tests {
             "vn_mps":0.0,"ve_mps":0.0,"vd_mps":0.0,"actuator_thrust":0.2,
             "ground_contact":false,"gnss_degraded":false,"battery_pct":100,"battery_mv":12000
         });
-        let airborne_status =
-            telemetry_frames(&airborne, 1, 82.0, 48.0002, 0.3564, 4, true, 1).unwrap();
+        let airborne_status = test_telemetry_frames(&airborne, 4, true, 1).unwrap();
         let airborne_status = validate_frame(&airborne_status[4]).unwrap();
         assert_eq!(
             u32::from_le_bytes(airborne_status.payload[8..12].try_into().unwrap()),
@@ -2565,7 +2599,7 @@ mod tests {
             "vn_mps":0.0,"ve_mps":0.0,"vd_mps":0.0,
             "battery_pct":87,"control_authority":"safe-hold"
         });
-        let frames = telemetry_frames(&ground, 1, 82.0, 48.0002, 0.3564, 0, false, 0).unwrap();
+        let frames = test_telemetry_frames(&ground, 0, false, 0).unwrap();
         assert_eq!(frames.len(), 5);
         let position = validate_frame(&frames[1]).unwrap();
         assert_eq!(position.message_id, 33);
@@ -2597,7 +2631,7 @@ mod tests {
             "vn_mps":0.0,"ve_mps":0.0,"vd_mps":0.0,
             "battery_pct":87,"control_authority":"authorized"
         });
-        let frames = telemetry_frames(&airborne, 1, 82.0, 48.0002, 0.3564, 5, true, 1).unwrap();
+        let frames = test_telemetry_frames(&airborne, 5, true, 1).unwrap();
         let status = validate_frame(&frames[4]).unwrap();
         assert_eq!(
             u32::from_le_bytes(status.payload[8..12].try_into().unwrap()),
@@ -2617,7 +2651,7 @@ mod tests {
             "battery_pct":20.0,"control_authority":"safe-hold"
         });
         let has_prearm_health = |value: &serde_json::Value| {
-            let frames = telemetry_frames(value, 1, 82.0, 48.0002, 0.3564, 0, false, 0).unwrap();
+            let frames = test_telemetry_frames(value, 0, false, 0).unwrap();
             let status = validate_frame(&frames[4]).unwrap();
             u32::from_le_bytes(status.payload[8..12].try_into().unwrap())
                 & MavSysStatusSensor::MAV_SYS_STATUS_PREARM_CHECK.bits()
@@ -2667,18 +2701,12 @@ mod tests {
                 "control_authority":"safe-hold"
             })
         };
-        assert!(
-            telemetry_frames(&make(now_ms - 2_000), 1, 82.0, 48.0002, 0.3564, 0, false, 0)
-                .unwrap_err()
-                .to_string()
-                .contains("stale")
-        );
-        assert!(telemetry_frames(
+        assert!(test_telemetry_frames(&make(now_ms - 2_000), 0, false, 0)
+            .unwrap_err()
+            .to_string()
+            .contains("stale"));
+        assert!(test_telemetry_frames(
             &make(now_ms + MAX_GAZEBO_TELEMETRY_FUTURE_MS + 1_000),
-            1,
-            82.0,
-            48.0002,
-            0.3564,
             0,
             false,
             0
@@ -2705,7 +2733,7 @@ mod tests {
             serde_json::json!(-1),
             serde_json::json!(u64::MAX),
         ] {
-            let error = telemetry_frames(&make(malformed), 1, 82.0, 48.0002, 0.3564, 0, false, 0)
+            let error = test_telemetry_frames(&make(malformed), 0, false, 0)
                 .unwrap_err()
                 .to_string();
             assert!(
