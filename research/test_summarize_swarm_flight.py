@@ -17,8 +17,10 @@ from lifecycle_test_fixtures import build_lifecycle
 from summarize_antoine_two_drone_flight import (
     cross_vehicle_effect_windows_valid,
     hash_run_evidence,
+    load_flight_report,
     load_host_context,
     load_host_context_samples,
+    load_pose_samples,
     load_swarm_config,
     load_swarm_plan,
     main,
@@ -78,6 +80,32 @@ class EvidenceHashSymlinkTests(unittest.TestCase):
             self.assertEqual(load_host_context(run_dir, "pre")["status"], "unavailable")
             self.assertEqual(load_host_context_samples(run_dir)["status"], "unavailable")
             self.assertEqual(load_host_context(run_dir, "post")["status"], "unavailable")
+
+    def test_primary_qualification_inputs_reject_symlinked_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run"
+            run_dir.mkdir()
+            external = root / "outside"
+            external.mkdir()
+            for name, content in (
+                ("config.json", '{"vehicles":[]}'),
+                ("plan.json", '{"vehicles":[]}'),
+                ("poses.jsonl", "{}\n"),
+                ("flight.json", '{"status":"passed"}'),
+            ):
+                (external / name).write_text(content, encoding="utf-8")
+            (run_dir / "research-swarm-config.json").symlink_to(external / "config.json")
+            (run_dir / "research-swarm-plan.json").symlink_to(external / "plan.json")
+            (run_dir / "gazebo-pose.jsonl").symlink_to(external / "poses.jsonl")
+            (run_dir / "gz-flight-proof-report-drone-1.json").symlink_to(external / "flight.json")
+
+            with self.assertRaisesRegex(ValueError, "configuration is outside"):
+                load_swarm_config(run_dir)
+            with self.assertRaisesRegex(ValueError, "plan is outside"):
+                load_swarm_plan(run_dir, {"behavior": "lanes", "spacingM": 8}, [])
+            self.assertEqual(load_pose_samples(run_dir, {"isr"})["isr"], [])
+            self.assertEqual(load_flight_report(run_dir, "drone-1"), {})
 
 
 def write_json(path: Path, value: dict) -> None:

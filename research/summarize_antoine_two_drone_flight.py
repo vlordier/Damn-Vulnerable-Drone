@@ -47,9 +47,33 @@ SUPPORTED_SWARM_FAULTS = {
 TRAJECTORY_COLORS = ["#1677ff", "#e4572e", "#2a9d55", "#8e5bd9", "#d49a00"]
 
 
+def run_evidence_file(run_dir: Path, relative: str | Path) -> Path | None:
+    """Return a regular file contained in the run without symlinked components."""
+    relative_path = Path(relative)
+    path = run_dir / relative_path
+    if (
+        run_dir.is_symlink()
+        or relative_path.is_absolute()
+        or ".." in relative_path.parts
+        or contains_symlink_component(run_dir, relative_path)
+        or not path.is_file()
+    ):
+        return None
+    try:
+        path.resolve(strict=True).relative_to(run_dir.resolve(strict=True))
+    except (OSError, ValueError):
+        return None
+    return path
+
+
 def load_swarm_config(run_dir: Path) -> dict[str, Any]:
-    config_path = run_dir / "research-swarm-config.json"
-    if not config_path.is_file():
+    config_path = run_evidence_file(run_dir, "research-swarm-config.json")
+    if config_path is None and (
+        (run_dir / "research-swarm-config.json").exists()
+        or (run_dir / "research-swarm-config.json").is_symlink()
+    ):
+        raise ValueError("swarm run configuration is outside the run evidence tree")
+    if config_path is None:
         return {
             "vehicles": DEFAULT_VEHICLES,
             "spacingM": DEFAULT_SPACING_M,
@@ -121,8 +145,13 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
 def load_swarm_plan(
     run_dir: Path, config: dict[str, Any], vehicles: list[dict[str, str]]
 ) -> dict[str, Any]:
-    plan_path = run_dir / "research-swarm-plan.json"
-    if plan_path.is_file():
+    plan_path = run_evidence_file(run_dir, "research-swarm-plan.json")
+    if plan_path is None and (
+        (run_dir / "research-swarm-plan.json").exists()
+        or (run_dir / "research-swarm-plan.json").is_symlink()
+    ):
+        raise ValueError("swarm plan is outside the run evidence tree")
+    if plan_path is not None:
         try:
             plan = json.loads(plan_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
@@ -160,8 +189,8 @@ def load_pose_samples(
 ) -> dict[str, list[tuple[float, float, float, float, float | None]]]:
     samples: dict[str, list[tuple[float, float, float, float]]] = {model: [] for model in models}
     attitude_samples: dict[str, list[float | None]] = {model: [] for model in models}
-    pose_path = run_dir / "gazebo-pose.jsonl"
-    if not pose_path.is_file():
+    pose_path = run_evidence_file(run_dir, "gazebo-pose.jsonl")
+    if pose_path is None:
         return samples
     with pose_path.open(encoding="utf-8", errors="replace") as stream:
         for line in stream:
@@ -394,19 +423,23 @@ def measure_pair(
 
 
 def load_flight_report(run_dir: Path, callsign: str) -> dict[str, Any]:
-    path = run_dir / f"gz-flight-proof-report-{callsign}.json"
+    path = run_evidence_file(run_dir, f"gz-flight-proof-report-{callsign}.json")
+    if path is None:
+        return {}
     try:
         report = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     if not isinstance(report, dict):
         return {}
-    evidence_path = run_dir / f"flight-evidence-{callsign}.json"
+    evidence_path = run_evidence_file(run_dir, f"flight-evidence-{callsign}.json")
     try:
+        if evidence_path is None:
+            raise OSError("flight evidence is unavailable or unsafe")
         authority_evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         authority_evidence = None
-    if (
+    if evidence_path is not None and (
         isinstance(authority_evidence, dict)
         and authority_evidence.get("callsign") == callsign
         and isinstance(authority_evidence.get("telemetry"), list)
@@ -1045,8 +1078,10 @@ def selected_vehicle_authorization_evidence(
     vehicle = next((item for item in vehicles if item.get("callsign") == callsign), None)
     if vehicle is None or not valid_vec3(previous) or not valid_vec3(command):
         return {"status": "inconclusive", "reason": "selected-command-plan-invalid"}
-    evidence_path = run_dir / f"flight-evidence-{callsign}.json"
+    evidence_path = run_evidence_file(run_dir, f"flight-evidence-{callsign}.json")
     try:
+        if evidence_path is None:
+            raise OSError("flight evidence is unavailable or unsafe")
         evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
         progress = evidence.get("missionProgress", [])
     except (OSError, json.JSONDecodeError):
@@ -1086,9 +1121,10 @@ def selected_vehicle_authorization_evidence(
     arrival_time = target_arrivals[0]["simulationTimeNs"] / 1e9
     actuator_rows = []
     try:
-        with (run_dir / "applier-neutral" / "actuator-output.jsonl").open(
-            encoding="utf-8"
-        ) as stream:
+        actuator_path = run_evidence_file(run_dir, "applier-neutral/actuator-output.jsonl")
+        if actuator_path is None:
+            raise OSError("actuator evidence is unavailable or unsafe")
+        with actuator_path.open(encoding="utf-8") as stream:
             for line in stream:
                 try:
                     row = json.loads(line)
@@ -1131,8 +1167,10 @@ def selected_vehicle_authorization_evidence(
         or len(peer_rows) < MINIMUM_POSE_SAMPLES_PER_VEHICLE
     ):
         return {"status": "inconclusive", "reason": "selected-command-pose-window-incomplete"}
-    proof_path = run_dir / f"gz-flight-proof-report-{callsign}.json"
+    proof_path = run_evidence_file(run_dir, f"gz-flight-proof-report-{callsign}.json")
     try:
+        if proof_path is None:
+            raise OSError("flight proof is unavailable or unsafe")
         proof = json.loads(proof_path.read_text(encoding="utf-8"))
         final_leg = proof.get("measured", {}).get("legs", [])[-1]
         origin = proof.get("timingReference", {}).get("simulationTimeOriginSeconds")
@@ -1272,7 +1310,9 @@ def selected_vehicle_authorization_evidence(
 
 def load_actuator_records(run_dir: Path) -> dict[str, list[dict[str, Any]]]:
     records: dict[str, list[dict[str, Any]]] = {}
-    path = run_dir / "applier-neutral" / "actuator-output.jsonl"
+    path = run_evidence_file(run_dir, "applier-neutral/actuator-output.jsonl")
+    if path is None:
+        return records
     try:
         with path.open(encoding="utf-8") as stream:
             for line in stream:
@@ -1291,8 +1331,10 @@ def load_actuator_records(run_dir: Path) -> dict[str, list[dict[str, Any]]]:
 
 
 def load_controller_outcomes(run_dir: Path, callsign: str) -> list[dict[str, Any]]:
-    path = run_dir / "logs" / f"antoine-controller-{callsign}.log"
+    path = run_evidence_file(run_dir, f"logs/antoine-controller-{callsign}.log")
     outcomes = []
+    if path is None:
+        return outcomes
     try:
         with path.open(encoding="utf-8") as stream:
             for line_number, line in enumerate(stream, start=1):
@@ -1438,8 +1480,10 @@ def controller_state_cadence_status(
 
 
 def controller_state_coalescing_status(run_dir: Path, callsign: str) -> dict[str, Any]:
-    path = run_dir / "logs" / f"antoine-controller-{callsign}.log"
+    path = run_evidence_file(run_dir, f"logs/antoine-controller-{callsign}.log")
     try:
+        if path is None:
+            raise OSError("controller log is unavailable or unsafe")
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         lines = None
@@ -1448,10 +1492,12 @@ def controller_state_coalescing_status(run_dir: Path, callsign: str) -> dict[str
 
 def load_provenance(run_dir: Path) -> tuple[bool | None, dict[str, Any]]:
     try:
-        comparison = json.loads(
-            (run_dir / "research-provenance-comparison.json").read_text(encoding="utf-8")
-        )
-        provenance = json.loads((run_dir / "research-provenance.json").read_text(encoding="utf-8"))
+        comparison_path = run_evidence_file(run_dir, "research-provenance-comparison.json")
+        provenance_path = run_evidence_file(run_dir, "research-provenance.json")
+        if comparison_path is None or provenance_path is None:
+            raise OSError("provenance evidence is unavailable or unsafe")
+        comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
+        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None, {"status": "unavailable"}
     if not isinstance(comparison, dict) or not isinstance(provenance, dict):
@@ -1506,12 +1552,8 @@ def load_provenance(run_dir: Path) -> tuple[bool | None, dict[str, Any]]:
 
 def load_host_context(run_dir: Path, phase: str) -> dict[str, Any]:
     relative = Path(f"research-host-context-{phase}.json")
-    path = run_dir / relative
-    if run_dir.is_symlink() or contains_symlink_component(run_dir, relative) or not path.is_file():
-        return {"status": "unavailable", "reason": "host-context-file-missing-or-unsafe"}
-    try:
-        path.resolve(strict=True).relative_to(run_dir.resolve(strict=True))
-    except (OSError, ValueError):
+    path = run_evidence_file(run_dir, relative)
+    if path is None:
         return {"status": "unavailable", "reason": "host-context-file-missing-or-unsafe"}
     try:
         context = json.loads(path.read_text(encoding="utf-8"))
@@ -1567,14 +1609,13 @@ def load_host_context(run_dir: Path, phase: str) -> dict[str, Any]:
 
 def load_host_context_samples(run_dir: Path) -> dict[str, Any]:
     relative = Path("research-host-context-during.jsonl")
-    path = run_dir / relative
+    path = run_evidence_file(run_dir, relative)
     sample_count = 0
     first_captured_at: str | None = None
     last_captured_at: str | None = None
-    if run_dir.is_symlink() or contains_symlink_component(run_dir, relative) or not path.is_file():
+    if path is None:
         return {"status": "unavailable", "reason": "host-context-samples-missing-or-unsafe"}
     try:
-        path.resolve(strict=True).relative_to(run_dir.resolve(strict=True))
         stream = path.open(encoding="utf-8")
     except (OSError, ValueError):
         return {"status": "unavailable", "reason": "host-context-samples-missing-or-unsafe"}
@@ -2007,8 +2048,10 @@ def main() -> int:
     for vehicle in vehicles:
         callsign, model = vehicle["callsign"], vehicle["model"]
         report = flight_reports[callsign]
-        raw_evidence_path = run_dir / f"flight-evidence-{callsign}.json"
+        raw_evidence_path = run_evidence_file(run_dir, f"flight-evidence-{callsign}.json")
         try:
+            if raw_evidence_path is None:
+                raise OSError("flight evidence is unavailable or unsafe")
             raw_evidence = json.loads(raw_evidence_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             raw_evidence = None
@@ -2215,14 +2258,18 @@ def main() -> int:
         item["minimumSeparationM"] >= MINIMUM_SEPARATION_METERS for item in pair_results.values()
     )
     pair_count = len(pair_results)
-    fault_path = run_dir / "research-swarm-fault.json"
+    fault_path = run_evidence_file(run_dir, "research-swarm-fault.json")
     try:
+        if fault_path is None:
+            raise OSError("fault evidence is unavailable or unsafe")
         fault_observation = json.loads(fault_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         fault_observation = None
     rate_probe_requested = config.get("fault") == "command-rate"
-    rate_probe_path = run_dir / "research-swarm-rate-disruption.json"
+    rate_probe_path = run_evidence_file(run_dir, "research-swarm-rate-disruption.json")
     try:
+        if rate_probe_path is None:
+            raise OSError("rate-probe evidence is unavailable or unsafe")
         rate_probe_observation = json.loads(rate_probe_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         rate_probe_observation = None
@@ -2234,8 +2281,10 @@ def main() -> int:
         or rate_probe_observation.get("status") not in {"passed", "failed", "inconclusive"}
     ):
         rate_probe_observation = None
-    mavlink_path = run_dir / "research-mavlink-swarm.json"
+    mavlink_path = run_evidence_file(run_dir, "research-mavlink-swarm.json")
     try:
+        if mavlink_path is None:
+            raise OSError("MAVLink evidence is unavailable or unsafe")
         mavlink_observation = json.loads(mavlink_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         mavlink_observation = None
@@ -2246,8 +2295,10 @@ def main() -> int:
         else None
     )
     authorization_requested = config.get("fault") == "cross-vehicle-authorization"
-    authorization_path = run_dir / "research-cross-vehicle-authorization.json"
+    authorization_path = run_evidence_file(run_dir, "research-cross-vehicle-authorization.json")
     try:
+        if authorization_path is None:
+            raise OSError("authorization evidence is unavailable or unsafe")
         authorization_observation = json.loads(authorization_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         authorization_observation = None
