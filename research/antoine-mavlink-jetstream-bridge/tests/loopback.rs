@@ -465,25 +465,43 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     let upload_count = mission_upload_count.clone();
     tokio::spawn(async move {
         let mut controls = controls;
+        let mut uploaded_waypoints: Option<serde_json::Value> = None;
         while let Some(message) = controls.next().await {
             if let Some(reply) = message.reply {
                 let value: serde_json::Value = serde_json::from_slice(&message.payload).unwrap();
                 let _ = reply_tx.send(value.clone());
                 let request_id = value["request_id"].clone();
+                let command_type = value["command"]["type"].as_str().unwrap_or_default();
+                let mission_query =
+                    command_type == "mission_query" || value["type"] == "mission_query";
                 let reject_mission_query = request_id
                     .as_str()
                     .is_some_and(|id| id.contains("-mission-query-14-"));
                 let omit_mission_state = request_id
                     .as_str()
                     .is_some_and(|id| id.contains("-mission-query-15-"));
-                let reject_mission_upload = value["command"]["type"] == "mission_upload"
+                let reject_mission_upload = command_type == "mission_upload"
                     && upload_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0;
+                if command_type == "mission_clear" {
+                    uploaded_waypoints = None;
+                } else if command_type == "mission_upload" && !reject_mission_upload {
+                    uploaded_waypoints = Some(value["command"]["payload"]["waypoints"].clone());
+                }
                 let response = if reject_mission_query {
                     serde_json::json!({"requestId":request_id,"accepted":false,"armed":true,"mode":"GUIDED"})
                 } else if omit_mission_state {
                     serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED"})
                 } else if reject_mission_upload {
                     serde_json::json!({"requestId":request_id,"accepted":false,"armed":true,"mode":"GUIDED"})
+                } else if mission_query {
+                    match &uploaded_waypoints {
+                        Some(waypoints) => {
+                            serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED","missionUploaded":true,"waypoints":waypoints})
+                        }
+                        None => {
+                            serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED","missionUploaded":false,"waypoints":[]})
+                        }
+                    }
                 } else {
                     serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED","missionUploaded":false,"waypoints":[]})
                 };
@@ -1289,7 +1307,54 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     assert_eq!(uploaded["command"]["payload"]["waypoints"][0][1], 0.0);
     assert_eq!(uploaded["command"]["payload"]["waypoints"][0][2], -1.0);
 
-    let unsupported_mission_count = v2_frame(44, 40, 255, &mission_count_payload, 221);
+    let mission_readback = v2_frame(43, 39, 255, &[1, 1, 0], 132);
+    gcs.send_to(&mission_readback, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("uploaded mission readback count timeout")??;
+    let (_, mission_count_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_COUNT(readback_count) =
+        mission_count_response
+    else {
+        anyhow::bail!("expected MISSION_COUNT for uploaded mission readback");
+    };
+    assert_eq!(readback_count.count, 1);
+    let mission_query_command = timeout(Duration::from_secs(2), reply_rx.recv())
+        .await
+        .context("uploaded mission query was not sent to Antoine")?
+        .context("Antoine mission-query subscription ended")?;
+    assert!(
+        mission_query_command["type"] == "mission_query"
+            || mission_query_command["command"]["type"] == "mission_query"
+    );
+
+    let readback_item_request = v2_frame(51, 40, 255, &[0, 0, 1, 1, 0], 196);
+    gcs.send_to(&readback_item_request, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("uploaded mission item readback timeout")??;
+    let (_, mission_item_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ITEM_INT(readback_item) =
+        mission_item_response
+    else {
+        anyhow::bail!("expected MISSION_ITEM_INT for uploaded mission readback");
+    };
+    assert_eq!(readback_item.seq, 0);
+    assert_eq!(
+        readback_item.frame,
+        mavlink::dialects::common::MavFrame::MAV_FRAME_GLOBAL_RELATIVE_ALT
+    );
+    assert_eq!(readback_item.x, 480_002_000);
+    assert_eq!(readback_item.y, 3_564_000);
+    assert_eq!(readback_item.z, 1.0);
+
+    let unsupported_mission_count = v2_frame(44, 42, 255, &mission_count_payload, 221);
     gcs.send_to(&unsupported_mission_count, qgc_bind).await?;
     let (_length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
@@ -1297,7 +1362,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     assert_eq!(buffer[7], 51, "bridge should request the mission item");
     let mut unsupported_waypoint_payload = mission_item[10..mission_item.len() - 2].to_vec();
     unsupported_waypoint_payload[0..4].copy_from_slice(&1.0_f32.to_le_bytes());
-    let unsupported_waypoint = v2_frame(73, 41, 255, &unsupported_waypoint_payload, 38);
+    let unsupported_waypoint = v2_frame(73, 43, 255, &unsupported_waypoint_payload, 38);
     gcs.send_to(&unsupported_waypoint, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
