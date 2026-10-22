@@ -41,14 +41,20 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True, help="QGroundControl Git checkout")
     parser.add_argument("--patch", type=Path, required=True, help="canonical Antoine patch")
-    parser.add_argument("--binary", type=Path, required=True, help="executable to launch")
+    parser.add_argument("--binary", type=Path, help="executable to launch, when available")
     args = parser.parse_args()
     try:
-        verify_binary_in_checkout(args.root, args.binary)
+        if args.binary is not None:
+            verify_binary_in_checkout(args.root, args.binary)
         verify_applied_patch(args.root, args.patch)
     except (OSError, RuntimeError) as error:
         parser.error(str(error))
-    print(f"Verified QGroundControl executable and canonical Antoine patch in {args.root}")
+    verified = (
+        "QGroundControl executable and canonical Antoine patch"
+        if args.binary
+        else "canonical Antoine patch"
+    )
+    print(f"Verified {verified} in {args.root}")
     return 0
 
 

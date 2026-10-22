@@ -340,6 +340,7 @@ qgc-gazebo-preflight: ## Check large interactive-profile prerequisites before st
 	@set -eu; \
 	qgc_binary="$${ANTOINE_QGC_BINARY:-$(ANTOINE_QGC_DIR)/build/$(QGC_CONFIG)/QGroundControl.app/Contents/MacOS/QGroundControl}"; \
 	gz_binary="$${GZ_BIN:-$(HOME)/Work/gz-macOS/ws/install/bin/gz}"; \
+	preflight_failed=0; \
 	if [[ ! -x "$$qgc_binary" ]]; then \
 	  echo "Missing configured Antoine-patched QGroundControl executable: $$qgc_binary" >&2; \
 	  qgc_pids="$$(pgrep -x QGroundControl || true)"; \
@@ -348,12 +349,25 @@ qgc-gazebo-preflight: ## Check large interactive-profile prerequisites before st
 	    printf '%s\n' "$$qgc_pids" >&2; \
 	  fi; \
 	  echo "The profile requires the patched source-checkout build; a separately installed QGroundControl app is not used." >&2; \
-	  echo "Build the configured checkout with 'make qgc-antoine-build' before starting the Gazebo profile." >&2; \
-	  exit 1; \
+	  echo "This preflight will not build QGroundControl; restore a verified executable in the configured checkout." >&2; \
+	  preflight_failed=1; \
 	fi; \
-	[[ -x "$$gz_binary" ]] || { echo "Missing source-built Gazebo executable: $$gz_binary" >&2; exit 1; }; \
-	$(UV) run --project research python research/check_qgroundcontrol_patch.py \
-	  --root "$(ANTOINE_QGC_DIR)" --patch "$(CURDIR)/$(QGC_ANTOINE_PATCH)" --binary "$$qgc_binary"; \
+	if [[ ! -x "$$gz_binary" ]]; then \
+	  echo "Missing source-built Gazebo executable: $$gz_binary" >&2; \
+	  preflight_failed=1; \
+	fi; \
+	if [[ -x "$$qgc_binary" ]]; then \
+	  if ! $(UV) run --project research python research/check_qgroundcontrol_patch.py \
+	    --root "$(ANTOINE_QGC_DIR)" --patch "$(CURDIR)/$(QGC_ANTOINE_PATCH)" --binary "$$qgc_binary"; then \
+	    preflight_failed=1; \
+	  fi; \
+	else \
+	  if ! $(UV) run --project research python research/check_qgroundcontrol_patch.py \
+	    --root "$(ANTOINE_QGC_DIR)" --patch "$(CURDIR)/$(QGC_ANTOINE_PATCH)"; then \
+	    preflight_failed=1; \
+	  fi; \
+	fi; \
+	if [[ "$$preflight_failed" -ne 0 ]]; then exit 1; fi; \
 	echo 'Interactive QGC and Gazebo executables are present.'; \
 	QGC_GAZEBO_MIN_FREE_MIB="$(QGC_GAZEBO_MIN_FREE_MIB)" ./research/check-free-space.sh \
 	  "$(ANTOINE_GZ_CARGO_TARGET_DIR)" "$(ANTOINE_BRIDGE_TARGET_DIR)" \
