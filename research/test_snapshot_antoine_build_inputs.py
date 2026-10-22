@@ -354,6 +354,48 @@ class AntoineSourceSnapshotTests(unittest.TestCase):
             target.write_text(target.read_text().replace("fn authorized_for() {}\n", ""))
             self.assertFalse(snapshot.patch_hunk_superseded_by_upstream(receiver_hunk, root))
 
+    def test_upstream_vehicle_authority_args_preserve_lifecycle_patch_semantics(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "scripts/gz_flight_proof.sh"
+            target.parent.mkdir(parents=True)
+            target.write_text(
+                "lifecycle_args=()\n"
+                'if [ "$APPLIER_LIFECYCLE_REQUIRED" = "1" ]; then\n'
+                '  lifecycle_args=(--actuator-state-dir "$RUN_DIR/applier-neutral")\n'
+                "fi\n"
+                'start_owned "$BIN_DIR/antoine_gz_local_authority" \\\n'
+                '  "${lifecycle_args[@]}" "${vehicle_authority_args[@]}" \\\n'
+            )
+            setup_hunk = (
+                b"--- a/scripts/gz_flight_proof.sh\n"
+                b"+++ b/scripts/gz_flight_proof.sh\n"
+                b"@@ -1,2 +1,5 @@\n"
+                b"+  lifecycle_args=()\n"
+                b'+  if [ "$APPLIER_LIFECYCLE_REQUIRED" = "1" ]; then\n'
+                b'+    lifecycle_args=(--actuator-state-dir "$RUN_DIR/applier-neutral")\n'
+                b"+  fi\n"
+            )
+            invocation_hunk = (
+                b"--- a/scripts/gz_flight_proof.sh\n"
+                b"+++ b/scripts/gz_flight_proof.sh\n"
+                b"@@ -1,2 +1,3 @@\n"
+                b'+    "${lifecycle_args[@]}" \\\n'
+            )
+
+            self.assertTrue(snapshot.patch_hunk_superseded_by_upstream(setup_hunk, root))
+            self.assertTrue(snapshot.patch_hunk_superseded_by_upstream(invocation_hunk, root))
+            target.write_text(target.read_text().replace('"${lifecycle_args[@]}" ', ""))
+            self.assertFalse(snapshot.patch_hunk_superseded_by_upstream(invocation_hunk, root))
+            target.write_text(
+                "lifecycle_args=()\n"
+                'if [ "$APPLIER_LIFECYCLE_REQUIRED" = "1" ]; then\n'
+                '  lifecycle_args=(--actuator-state-dir "$RUN_DIR/applier-neutral")\n'
+                "fi\n"
+            )
+            target.write_text(target.read_text().replace("actuator-state-dir", "missing-state-dir"))
+            self.assertFalse(snapshot.patch_hunk_superseded_by_upstream(setup_hunk, root))
+
     def test_shifted_already_present_hunk_and_new_hunk_are_reconciled(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

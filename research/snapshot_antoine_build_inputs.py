@@ -220,6 +220,27 @@ def patch_hunk_superseded_by_upstream(hunk: bytes, source_root: Path) -> bool:
     """Accept narrowly recognized upstream implementations replacing old hunks."""
     lines = hunk.decode("utf-8", errors="replace").splitlines()
     target_line = next((line for line in lines if line.startswith("+++ b/")), None)
+    if target_line == "+++ b/scripts/gz_flight_proof.sh":
+        additions = [
+            line[1:] for line in lines if line.startswith("+") and not line.startswith("+++")
+        ]
+        source = source_root / target_line[6:]
+        try:
+            current = source.read_text(encoding="utf-8")
+        except OSError:
+            return False
+        if any(line.strip() == "lifecycle_args=()" for line in additions):
+            return all(
+                marker in current
+                for marker in (
+                    "lifecycle_args=()",
+                    'if [ "$APPLIER_LIFECYCLE_REQUIRED" = "1" ]; then',
+                    'lifecycle_args=(--actuator-state-dir "$RUN_DIR/applier-neutral")',
+                )
+            )
+        if any('"${lifecycle_args[@]}"' in line for line in additions):
+            return '"${lifecycle_args[@]}" "${vehicle_authority_args[@]}" \\' in current
+        return False
     if target_line != "+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs":
         return False
     additions = [line[1:] for line in lines if line.startswith("+") and not line.startswith("+++")]
