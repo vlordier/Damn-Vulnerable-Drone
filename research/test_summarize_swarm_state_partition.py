@@ -5,10 +5,19 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from summarize_swarm_state_partition import actuator_vector, summarize
+from summarize_swarm_state_partition import actuator_vector, read_poses, summarize
 
 
 class StatePartitionSummaryTests(unittest.TestCase):
+    def test_pose_reader_discards_duplicate_header_evidence(self) -> None:
+        frame = (
+            '{"header":{"stamp":{"sec":1,"nsec":0}},'
+            '"header":{"stamp":{"sec":2,"nsec":0}},'
+            '"pose":[{"name":"model-a","position":{"x":1,"y":2,"z":3}}]}\n'
+        )
+        (self.run_dir / "gazebo-pose.jsonl").write_text(frame, encoding="utf-8")
+        self.assertEqual(read_poses(self.run_dir, {"model-a"}), {"model-a": []})
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.run_id = "antoine-swarm-flight-test"

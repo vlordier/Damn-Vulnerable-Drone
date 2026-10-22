@@ -528,6 +528,21 @@ def qualify_fixture_baseline(run_dir: Path) -> None:
 
 
 class ConfigLoadingTests(unittest.TestCase):
+    def test_duplicate_fault_field_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            build_run(run_dir, "lanes")
+            config_path = run_dir / "research-swarm-config.json"
+            config_text = json.dumps(
+                json.loads(config_path.read_text(encoding="utf-8")), separators=(",", ":")
+            )
+            config_path.write_text(
+                config_text.replace('"spacingM":8.0', '"spacingM":9.0,"spacingM":8.0'),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(ValueError, "invalid swarm run configuration"):
+                load_swarm_config(run_dir)
+
     def test_unknown_swarm_fault_is_rejected_instead_of_skipping_its_evidence_gate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run"

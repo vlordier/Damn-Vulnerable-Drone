@@ -14,6 +14,7 @@ from typing import Any
 
 from actuator_lifecycle import disarmed_status
 from dvd_research.evidence_contract import contains_symlink_component
+from dvd_research.strict_json import loads as strict_json_loads
 from swarm_behavior import build_plan, evaluate_plan
 from swarm_controller_diagnostics import state_coalescing_diagnostic
 
@@ -94,7 +95,7 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
             "retainPredecessorGrant": True,
         }
     try:
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        config = strict_json_loads(config_path.read_text(encoding="utf-8"))
         vehicles = config["vehicles"]
     except (OSError, json.JSONDecodeError, KeyError, TypeError) as error:
         raise ValueError("invalid swarm run configuration") from error
@@ -163,7 +164,7 @@ def load_swarm_plan(
         raise ValueError("swarm plan is outside the run evidence tree")
     if plan_path is not None:
         try:
-            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            plan = strict_json_loads(plan_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise ValueError("invalid swarm plan") from error
         if not isinstance(plan, dict):
@@ -205,7 +206,7 @@ def load_pose_samples(
     with pose_path.open(encoding="utf-8", errors="replace") as stream:
         for line in stream:
             try:
-                frame = json.loads(line)
+                frame = strict_json_loads(line)
             except json.JSONDecodeError:
                 continue
             if not isinstance(frame, dict):
@@ -456,7 +457,7 @@ def load_flight_report(run_dir: Path, callsign: str) -> dict[str, Any]:
     if path is None:
         return {}
     try:
-        report = json.loads(path.read_text(encoding="utf-8"))
+        report = strict_json_loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {}
     if not isinstance(report, dict):
@@ -465,7 +466,7 @@ def load_flight_report(run_dir: Path, callsign: str) -> dict[str, Any]:
     try:
         if evidence_path is None:
             raise OSError("flight evidence is unavailable or unsafe")
-        authority_evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        authority_evidence = strict_json_loads(evidence_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         authority_evidence = None
     if evidence_path is not None and (
@@ -1159,7 +1160,7 @@ def selected_vehicle_authorization_evidence(
     try:
         if evidence_path is None:
             raise OSError("flight evidence is unavailable or unsafe")
-        evidence = json.loads(evidence_path.read_text(encoding="utf-8"))
+        evidence = strict_json_loads(evidence_path.read_text(encoding="utf-8"))
         progress = evidence.get("missionProgress", [])
     except (OSError, json.JSONDecodeError):
         return {"status": "inconclusive", "reason": "selected-command-progress-unavailable"}
@@ -1204,7 +1205,7 @@ def selected_vehicle_authorization_evidence(
         with actuator_path.open(encoding="utf-8") as stream:
             for line in stream:
                 try:
-                    row = json.loads(line)
+                    row = strict_json_loads(line)
                 except json.JSONDecodeError:
                     continue
                 signed = row.get("executionGrant") or {}
@@ -1248,7 +1249,7 @@ def selected_vehicle_authorization_evidence(
     try:
         if proof_path is None:
             raise OSError("flight proof is unavailable or unsafe")
-        proof = json.loads(proof_path.read_text(encoding="utf-8"))
+        proof = strict_json_loads(proof_path.read_text(encoding="utf-8"))
         final_leg = proof.get("measured", {}).get("legs", [])[-1]
         origin = proof.get("timingReference", {}).get("simulationTimeOriginSeconds")
         evaluator_arrival_time = origin + final_leg.get("simSeconds")
@@ -1394,7 +1395,7 @@ def load_actuator_records(run_dir: Path) -> dict[str, list[dict[str, Any]]]:
         with path.open(encoding="utf-8") as stream:
             for line in stream:
                 try:
-                    record = json.loads(line)
+                    record = strict_json_loads(line)
                 except json.JSONDecodeError:
                     continue
                 if not isinstance(record, dict):
@@ -1573,8 +1574,8 @@ def load_provenance(run_dir: Path) -> tuple[bool | None, dict[str, Any]]:
         provenance_path = run_evidence_file(run_dir, "research-provenance.json")
         if comparison_path is None or provenance_path is None:
             raise OSError("provenance evidence is unavailable or unsafe")
-        comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
-        provenance = json.loads(provenance_path.read_text(encoding="utf-8"))
+        comparison = strict_json_loads(comparison_path.read_text(encoding="utf-8"))
+        provenance = strict_json_loads(provenance_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None, {"status": "unavailable"}
     if not isinstance(comparison, dict) or not isinstance(provenance, dict):
@@ -1633,7 +1634,7 @@ def load_host_context(run_dir: Path, phase: str) -> dict[str, Any]:
     if path is None:
         return {"status": "unavailable", "reason": "host-context-file-missing-or-unsafe"}
     try:
-        context = json.loads(path.read_text(encoding="utf-8"))
+        context = strict_json_loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {"status": "unavailable", "reason": "host-context-file-missing-or-invalid"}
     if not isinstance(context, dict):
@@ -1706,7 +1707,7 @@ def load_host_context_samples(run_dir: Path) -> dict[str, Any]:
     with stream:
         for sequence, line in enumerate(stream):
             try:
-                context = json.loads(line)
+                context = strict_json_loads(line)
             except json.JSONDecodeError:
                 return {"status": "invalid", "reason": "host-context-sample-json-invalid"}
             load = context.get("loadAverage") if isinstance(context, dict) else None
@@ -2129,7 +2130,7 @@ def main() -> int:
         try:
             if raw_evidence_path is None:
                 raise OSError("flight evidence is unavailable or unsafe")
-            raw_evidence = json.loads(raw_evidence_path.read_text(encoding="utf-8"))
+            raw_evidence = strict_json_loads(raw_evidence_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             raw_evidence = None
         grant = report.get("localGrant") or {}
@@ -2339,7 +2340,7 @@ def main() -> int:
     try:
         if fault_path is None:
             raise OSError("fault evidence is unavailable or unsafe")
-        fault_observation = json.loads(fault_path.read_text(encoding="utf-8"))
+        fault_observation = strict_json_loads(fault_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         fault_observation = None
     rate_probe_requested = config.get("fault") == "command-rate"
@@ -2347,7 +2348,7 @@ def main() -> int:
     try:
         if rate_probe_path is None:
             raise OSError("rate-probe evidence is unavailable or unsafe")
-        rate_probe_observation = json.loads(rate_probe_path.read_text(encoding="utf-8"))
+        rate_probe_observation = strict_json_loads(rate_probe_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         rate_probe_observation = None
     if (
@@ -2362,7 +2363,7 @@ def main() -> int:
     try:
         if mavlink_path is None:
             raise OSError("MAVLink evidence is unavailable or unsafe")
-        mavlink_observation = json.loads(mavlink_path.read_text(encoding="utf-8"))
+        mavlink_observation = strict_json_loads(mavlink_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         mavlink_observation = None
     mavlink_requested = config["mavlinkSwarm"]
@@ -2376,7 +2377,9 @@ def main() -> int:
     try:
         if authorization_path is None:
             raise OSError("authorization evidence is unavailable or unsafe")
-        authorization_observation = json.loads(authorization_path.read_text(encoding="utf-8"))
+        authorization_observation = strict_json_loads(
+            authorization_path.read_text(encoding="utf-8")
+        )
     except (OSError, json.JSONDecodeError):
         authorization_observation = None
     authorization_support = (

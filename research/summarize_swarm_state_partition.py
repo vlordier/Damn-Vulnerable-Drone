@@ -10,6 +10,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from dvd_research.strict_json import loads as strict_json_loads
 from swarm_controller_diagnostics import marker, state_coalescing_diagnostic
 
 MAX_DROPPED_MESSAGES = 200
@@ -95,7 +96,7 @@ def read_poses(run_dir: Path, models: set[str]) -> dict[str, list[tuple[float, l
         with (run_dir / "gazebo-pose.jsonl").open(encoding="utf-8") as stream:
             for line in stream:
                 try:
-                    frame = json.loads(line)
+                    frame = strict_json_loads(line)
                     stamp = frame["header"]["stamp"]
                     sim_time = float(stamp["sec"]) + float(stamp["nsec"]) / 1e9
                 except (json.JSONDecodeError, KeyError, TypeError, ValueError):
@@ -166,7 +167,7 @@ def authority_progress_during_partition(
 ) -> dict[str, Any]:
     path = run_dir / f"flight-evidence-{callsign}.json"
     try:
-        evidence = json.loads(path.read_text(encoding="utf-8"))
+        evidence = strict_json_loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return {"status": "unavailable", "eventCount": 0, "eventSequences": []}
     if (
@@ -232,7 +233,7 @@ def authority_progress_during_partition(
 
 
 def summarize(run_dir: Path) -> dict[str, Any]:
-    config = json.loads((run_dir / "research-swarm-config.json").read_text(encoding="utf-8"))
+    config = strict_json_loads((run_dir / "research-swarm-config.json").read_text(encoding="utf-8"))
     run_id = run_dir.name
     target = config.get("faultCallsign")
     fault = config.get("fault")
@@ -386,7 +387,7 @@ def summarize(run_dir: Path) -> dict[str, Any]:
         with actuator_path.open(encoding="utf-8") as stream:
             for line in stream:
                 try:
-                    row = json.loads(line)
+                    row = strict_json_loads(line)
                 except json.JSONDecodeError:
                     continue
                 callsign = row.get("vehicleId")
