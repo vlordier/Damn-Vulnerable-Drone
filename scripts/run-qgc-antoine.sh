@@ -9,6 +9,9 @@ QGC_BRIDGE_PORT="${QGC_BRIDGE_PORT:-14651}"
 QGC_SETTINGS_DIR="${QGC_SETTINGS_DIR:-/tmp/dvd-qgc-antoine-config}"
 QGC_APP="${ANTOINE_QGC_BINARY:-${ANTOINE_QGC_DIR}/build/${QGC_CONFIG}/QGroundControl.app/Contents/MacOS/QGroundControl}"
 QGC_SETTINGS_FILE="${QGC_SETTINGS_FILE:-${QGC_SETTINGS_DIR}/qgroundcontrol.com/QGroundControl Daily.ini}"
+QGC_RUNTIME_DIR="${QGC_RUNTIME_DIR:-/tmp/dvd-qgc-antoine}"
+QGC_LOG="${QGC_LOG:-${QGC_RUNTIME_DIR}/qgc.log}"
+QGC_PID_FILE="${QGC_PID_FILE:-${QGC_RUNTIME_DIR}/qgc.pid}"
 
 [[ -x "${QGC_APP}" ]] || {
   echo "Missing executable local QGC build: ${QGC_APP}" >&2
@@ -37,25 +40,25 @@ udpTargetHostIP=127.0.0.1
 udpTargetHostPort=${QGC_BRIDGE_PORT}
 EOF
 
-mkdir -p /tmp/dvd-qgc-antoine
+mkdir -p "${QGC_RUNTIME_DIR}"
 nohup env XDG_CONFIG_HOME="${QGC_SETTINGS_DIR}" "${QGC_APP}" --allow-multiple \
-  > /tmp/dvd-qgc-antoine/qgc.log 2>&1 </dev/null &
+  > "${QGC_LOG}" 2>&1 </dev/null &
 pid=$!
-printf '%s\n' "${pid}" >/tmp/dvd-qgc-antoine/qgc.pid
+printf '%s\n' "${pid}" >"${QGC_PID_FILE}"
 
 for ((attempt = 0; attempt < 40; attempt++)); do
   if lsof -nP -iUDP:"${QGC_UDP_LISTEN_PORT}" | rg -q 'QGroundCo'; then
     echo "Local QGC listening on UDP ${QGC_UDP_LISTEN_PORT}; bridge peer 127.0.0.1:${QGC_BRIDGE_PORT}"
-    echo "QGC log: /tmp/dvd-qgc-antoine/qgc.log"
+    echo "QGC log: ${QGC_LOG}"
     exit 0
   fi
   if ! kill -0 "${pid}" 2>/dev/null; then
-    cat /tmp/dvd-qgc-antoine/qgc.log >&2
+    cat "${QGC_LOG}" >&2
     exit 1
   fi
   sleep 0.25
 done
 
-cat /tmp/dvd-qgc-antoine/qgc.log >&2
+cat "${QGC_LOG}" >&2
 echo "QGC did not bind UDP ${QGC_UDP_LISTEN_PORT}" >&2
 exit 1

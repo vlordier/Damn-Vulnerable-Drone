@@ -259,6 +259,10 @@ being represented by the canonical patch hash in the run receipt.
 If `ANTOINE_QGC_BINARY` selects a custom build path, it must resolve inside
 that same checkout; preflight, the run receipt, and the QGC launcher all use
 the selected executable path.
+The full profile defaults its QGC settings, log, and PID files to separate
+subdirectories of the unique run directory, so another profile cannot replace
+the files captured or used by this run. Standalone `make qgc-antoine-run` keeps
+its separate `/tmp/dvd-qgc-antoine-config` and `/tmp/dvd-qgc-antoine` defaults.
 
 Run `make qgc-antoine-check` to send a harmless GCS heartbeat and targeted
 `REQUEST_DATA_STREAM` frame and verify both were written to the callsign's

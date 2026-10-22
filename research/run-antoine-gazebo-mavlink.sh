@@ -55,8 +55,9 @@ PROFILE_RECEIPT="${RUN_DIR}/interactive-profile-receipt.json"
 PROFILE_IDENTITY="${RUN_DIR}/.antoine-profile.identity"
 BRIDGE_IDENTITY="${RUN_DIR}/.bridge.identity"
 GUI_IDENTITY="${RUN_DIR}/.gazebo-gui.identity"
-QGC_SETTINGS_DIR="${QGC_SETTINGS_DIR:-/tmp/dvd-qgc-antoine-config}"
+QGC_SETTINGS_DIR="${QGC_SETTINGS_DIR:-${RUN_DIR}/qgc-settings}"
 QGC_SETTINGS_FILE="${QGC_SETTINGS_DIR}/qgroundcontrol.com/QGroundControl Daily.ini"
+QGC_RUNTIME_DIR="${QGC_RUNTIME_DIR:-${RUN_DIR}/qgc-runtime}"
 export ANTOINE_QGC_DIR="${ANTOINE_QGC_DIR:-${HOME}/Work/antoine-qgroundcontrol}"
 export QGC_CONFIG="${QGC_CONFIG:-Debug}"
 export QGC_SETTINGS_DIR
@@ -432,6 +433,7 @@ if [[ "${OPEN_QGC}" == "1" ]] && ! lsof -nP -iUDP:"${QGC_LISTEN_PORT}" 2>/dev/nu
     ANTOINE_QGC_BINARY="${QGC_BINARY}" \
     ANTOINE_QGC_DIR="${ANTOINE_QGC_DIR:-${HOME}/Work/antoine-qgroundcontrol}" \
     QGC_SETTINGS_DIR="${QGC_SETTINGS_DIR}" QGC_SETTINGS_FILE="${QGC_SETTINGS_FILE}" \
+    QGC_RUNTIME_DIR="${QGC_RUNTIME_DIR}" \
     QGC_CONFIG="${QGC_CONFIG:-Debug}" "${PROJECT_ROOT}/scripts/run-qgc-antoine.sh"
 fi
 

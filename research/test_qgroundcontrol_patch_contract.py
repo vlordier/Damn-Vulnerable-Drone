@@ -23,6 +23,13 @@ class QGroundControlPatchContractTests(unittest.TestCase):
         self.assertIn('--binary "${QGC_APP}"', qgc_launcher)
         self.assertIn('QGC_SETTINGS_FILE="${QGC_SETTINGS_FILE:-', qgc_launcher)
         self.assertIn('QGC_SETTINGS_FILE="${QGC_SETTINGS_FILE}"', profile_runner)
+        self.assertIn(
+            'QGC_SETTINGS_DIR="${QGC_SETTINGS_DIR:-${RUN_DIR}/qgc-settings}"', profile_runner
+        )
+        self.assertIn('QGC_RUNTIME_DIR="${QGC_RUNTIME_DIR}"', profile_runner)
+        self.assertIn('QGC_RUNTIME_DIR="${QGC_RUNTIME_DIR:-/tmp/dvd-qgc-antoine}"', qgc_launcher)
+        self.assertIn('QGC_LOG="${QGC_LOG:-${QGC_RUNTIME_DIR}/qgc.log}"', qgc_launcher)
+        self.assertIn('QGC_PID_FILE="${QGC_PID_FILE:-${QGC_RUNTIME_DIR}/qgc.pid}"', qgc_launcher)
         self.assertIn('qgc_binary="$${ANTOINE_QGC_BINARY:-', makefile)
         self.assertIn('ANTOINE_QGC_BINARY="${QGC_BINARY}"', profile_runner)
         self.assertIn('QGC_APP="${ANTOINE_QGC_BINARY:-', qgc_launcher)
