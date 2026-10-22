@@ -626,6 +626,7 @@ class GazeboPoseTimestampTests(unittest.TestCase):
                 {"header": {"stamp": {"sec": 4, "nsec": -1}}},
                 {"header": {"stamp": {"sec": True, "nsec": 0}}},
                 {"header": {"stamp": {"sec": "4", "nsec": 0}}},
+                {"header": {"stamp": {"sec": 1 << 63, "nsec": 0}}},
                 {"header": None},
                 {"header": {"stamp": None}},
             ]
@@ -639,12 +640,45 @@ class GazeboPoseTimestampTests(unittest.TestCase):
                     }
                 ]
                 lines.append(json.dumps(frame))
+            malformed_positions = (
+                {"x": float("nan"), "y": 0.0, "z": 1.0},
+                {"x": 1 << 10_000, "y": 0.0, "z": 1.0},
+                {"x": True, "y": 0.0, "z": 1.0},
+            )
+            for position in malformed_positions:
+                lines.append(
+                    json.dumps(
+                        {
+                            "header": {"stamp": {"sec": 5, "nsec": 0}},
+                            "pose": [{"name": "isr", "position": position}],
+                        }
+                    )
+                )
+            lines.append(
+                json.dumps(
+                    {
+                        "header": {"stamp": {"sec": 6, "nsec": 0}},
+                        "pose": [
+                            {
+                                "name": "isr",
+                                "position": {"x": 0.0, "y": 0.0, "z": 1.0},
+                                "orientation": {
+                                    "x": 1 << 10_000,
+                                    "y": 0.0,
+                                    "z": 0.0,
+                                    "w": 1.0,
+                                },
+                            }
+                        ],
+                    }
+                )
+            )
             pose_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
             poses, attitudes = load_pose_samples(run_dir, {"isr"})
 
-        self.assertEqual(poses["isr"], [(4.25, 0.0, 0.0, 1.0)])
-        self.assertEqual(attitudes["isr"], [0.0])
+        self.assertEqual(poses["isr"], [(4.25, 0.0, 0.0, 1.0), (6.0, 0.0, 0.0, 1.0)])
+        self.assertEqual(attitudes["isr"], [0.0, None])
 
     def test_plan_must_match_the_configured_roster(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

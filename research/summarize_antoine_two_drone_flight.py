@@ -66,6 +66,15 @@ def run_evidence_file(run_dir: Path, relative: str | Path) -> Path | None:
     return path
 
 
+def finite_json_number(value: Any) -> bool:
+    if type(value) not in {int, float}:
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
 def load_swarm_config(run_dir: Path) -> dict[str, Any]:
     config_path = run_evidence_file(run_dir, "research-swarm-config.json")
     if config_path is None and (
@@ -208,7 +217,7 @@ def load_pose_samples(
             nanoseconds = stamp.get("nsec")
             if (
                 type(seconds) is not int
-                or seconds < 0
+                or not 0 <= seconds <= (1 << 63) - 1
                 or type(nanoseconds) is not int
                 or not 0 <= nanoseconds < 1_000_000_000
             ):
@@ -221,22 +230,32 @@ def load_pose_samples(
                 if not isinstance(pose, dict) or pose.get("name") not in samples:
                     continue
                 position = pose.get("position", {})
+                if not isinstance(position, dict):
+                    continue
+                coordinates = [position.get(axis) for axis in ("x", "y", "z")]
+                if not all(finite_json_number(value) for value in coordinates):
+                    continue
                 try:
                     orientation = pose.get("orientation", {})
                     tilt = None
                     if isinstance(orientation, dict):
-                        quaternion = [float(orientation[key]) for key in ("x", "y", "z", "w")]
-                        norm = math.sqrt(sum(value * value for value in quaternion))
-                        if norm > 1e-9 and all(math.isfinite(value) for value in quaternion):
-                            x, y, z, w = (value / norm for value in quaternion)
+                        quaternion = [orientation[key] for key in ("x", "y", "z", "w")]
+                        if all(finite_json_number(value) for value in quaternion):
+                            scale = max(abs(value) for value in quaternion)
+                        else:
+                            scale = 0.0
+                        if scale > 1e-9:
+                            scaled = [value / scale for value in quaternion]
+                            norm = math.sqrt(sum(value * value for value in scaled))
+                            x, y, z, w = (value / norm for value in scaled)
                             tilt = math.acos(min(1.0, max(-1.0, 1.0 - 2.0 * (x * x + y * y))))
                     sample = (
                         timestamp,
-                        float(position["x"]),
-                        float(position["y"]),
-                        float(position["z"]),
+                        float(coordinates[0]),
+                        float(coordinates[1]),
+                        float(coordinates[2]),
                     )
-                except (KeyError, TypeError, ValueError):
+                except (KeyError, OverflowError, TypeError, ValueError):
                     continue
                 samples[pose["name"]].append(sample)
                 attitude_samples[pose["name"]].append(tilt)
