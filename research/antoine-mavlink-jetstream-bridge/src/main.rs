@@ -707,8 +707,14 @@ fn control_command(frame: &FrameInfo, vehicle_system_id: u8) -> Result<Option<se
             }
             Ok(value)
         };
+        let north = number(4)?;
+        let east = number(8)?;
+        let down = number(12)?;
+        if north.abs() > 3.0 || east.abs() > 3.0 || !(-3.0..=0.0).contains(&down) {
+            bail!("position target must stay within N/E ±3 m and down -3..=0 m");
+        }
         return Ok(Some(
-            serde_json::json!({"type":"set_position","payload":{"north_m":number(4)?,"east_m":number(8)?,"down_m":number(12)?}}),
+            serde_json::json!({"type":"set_position","payload":{"north_m":north,"east_m":east,"down_m":down}}),
         ));
     }
     if frame.message_id != 76 {
@@ -2353,6 +2359,35 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("must be finite"));
+    }
+
+    #[test]
+    fn position_target_enforces_the_antoine_lab_envelope() {
+        let mut position = vec![0_u8; 53];
+        position[50] = 1;
+        position[51] = 1;
+        position[52] = 1;
+        position[48..50].copy_from_slice(&0x0df8_u16.to_le_bytes());
+        let frame = |payload| FrameInfo {
+            system_id: 255,
+            component_id: 190,
+            message_id: 84,
+            sequence: 1,
+            payload,
+        };
+
+        for (offset, value) in [(4, 3.01_f32), (8, -3.01), (12, 0.01), (12, -3.01)] {
+            position[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+            assert!(control_command(&frame(position.clone()), 1)
+                .unwrap_err()
+                .to_string()
+                .contains("N/E ±3 m and down -3..=0 m"));
+        }
+
+        position[4..8].copy_from_slice(&3.0_f32.to_le_bytes());
+        position[8..12].copy_from_slice(&(-3.0_f32).to_le_bytes());
+        position[12..16].copy_from_slice(&(-3.0_f32).to_le_bytes());
+        assert!(control_command(&frame(position), 1).is_ok());
     }
 
     #[test]
