@@ -64,6 +64,10 @@ if [[ "${HEADLESS_ACCEPTANCE}" == "1" && "${OPEN_QGC}" != "0" ]]; then
   echo "Headless acceptance requires ANTOINE_GZ_OPEN_QGC=0" >&2
   exit 2
 fi
+if [[ "${HEADLESS_ACCEPTANCE}" == "1" ]]; then
+  uv run --project "${PROJECT_ROOT}/research" python \
+    "${PROJECT_ROOT}/research/check_udp_loopback.py"
+fi
 
 capture_provenance() {
   local phase="$1"
