@@ -187,6 +187,15 @@ class ResearchConsoleSmokeEvidenceTests(unittest.TestCase):
 
             camera["partition"] = "forged-partition"
             camera_path.write_text(json.dumps(camera), encoding="utf-8")
+            write_manifest(run_dir, build(run_dir))
+            mismatched = client.get("/attacks/research")
+            self.assertEqual(mismatched.status_code, 200)
+            mismatched_html = mismatched.get_data(as_text=True)
+            self.assertIn("run scope mismatch", mismatched_html)
+            self.assertIn("Evidence inconclusive or qualification gates missing", mismatched_html)
+
+            camera["capturedMessages"] = 99
+            camera_path.write_text(json.dumps(camera), encoding="utf-8")
             tampered = client.get("/attacks/research")
             self.assertEqual(tampered.status_code, 200)
             tampered_html = tampered.get_data(as_text=True)
