@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from actuator_lifecycle import disarmed_status
+from dvd_research.evidence_contract import contains_symlink_component
 from swarm_behavior import build_plan, evaluate_plan
 from swarm_controller_diagnostics import state_coalescing_diagnostic
 
@@ -1658,10 +1659,25 @@ def load_host_context_samples(run_dir: Path) -> dict[str, Any]:
 
 
 def hash_run_evidence(run_dir: Path, relative_paths: list[str]) -> dict[str, dict[str, Any]]:
+    run_dir = Path(run_dir)
+    if run_dir.is_symlink():
+        raise ValueError("refusing to hash swarm evidence through a symlinked run directory")
+    run_dir = run_dir.resolve(strict=True)
     evidence: dict[str, dict[str, Any]] = {}
     for relative in relative_paths:
-        path = run_dir / relative
-        if path.is_symlink() or not path.is_file():
+        relative_path = Path(relative)
+        path = run_dir / relative_path
+        if (
+            relative_path.is_absolute()
+            or ".." in relative_path.parts
+            or contains_symlink_component(run_dir, relative_path)
+            or not path.is_file()
+        ):
+            evidence[relative] = {"available": False}
+            continue
+        try:
+            path.resolve(strict=True).relative_to(run_dir)
+        except (OSError, ValueError):
             evidence[relative] = {"available": False}
             continue
         digest = hashlib.sha256()
@@ -1874,7 +1890,15 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("usage: summarize_antoine_two_drone_flight.py RUN_DIR")
-    run_dir = Path(sys.argv[1]).resolve()
+    run_dir = Path(sys.argv[1])
+    if run_dir.is_symlink():
+        raise SystemExit("refusing a symlinked swarm run directory")
+    try:
+        run_dir = run_dir.resolve(strict=True)
+    except OSError as error:
+        raise SystemExit(f"cannot resolve swarm run directory: {error}") from error
+    if not run_dir.is_dir():
+        raise SystemExit("swarm run path must be a directory")
     try:
         config = load_swarm_config(run_dir)
         vehicles = config["vehicles"]

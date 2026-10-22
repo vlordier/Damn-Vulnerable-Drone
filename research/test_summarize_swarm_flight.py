@@ -16,6 +16,7 @@ from unittest import mock
 from lifecycle_test_fixtures import build_lifecycle
 from summarize_antoine_two_drone_flight import (
     cross_vehicle_effect_windows_valid,
+    hash_run_evidence,
     load_swarm_config,
     load_swarm_plan,
     main,
@@ -27,6 +28,33 @@ from summarize_antoine_two_drone_flight import (
 from swarm_behavior import build_plan
 
 CALLSIGNS = (("drone-1", "isr"), ("drone-2", "fpv-a"))
+
+
+class EvidenceHashSymlinkTests(unittest.TestCase):
+    def test_symlinked_parent_makes_raw_evidence_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run-a"
+            run_dir.mkdir()
+            external = root / "external"
+            external.mkdir()
+            (external / "controller.log").write_text("outside run evidence\n", encoding="utf-8")
+            (run_dir / "logs").symlink_to(external, target_is_directory=True)
+
+            result = hash_run_evidence(run_dir, ["logs/controller.log"])
+
+            self.assertEqual(result, {"logs/controller.log": {"available": False}})
+
+    def test_symlinked_run_directory_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run-a"
+            run_dir.mkdir()
+            alias = root / "run-alias"
+            alias.symlink_to(run_dir, target_is_directory=True)
+
+            with self.assertRaisesRegex(ValueError, "symlinked run directory"):
+                hash_run_evidence(alias, ["research-profile.env"])
 
 
 def write_json(path: Path, value: dict) -> None:
