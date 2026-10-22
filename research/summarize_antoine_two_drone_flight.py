@@ -1505,7 +1505,14 @@ def load_provenance(run_dir: Path) -> tuple[bool | None, dict[str, Any]]:
 
 
 def load_host_context(run_dir: Path, phase: str) -> dict[str, Any]:
-    path = run_dir / f"research-host-context-{phase}.json"
+    relative = Path(f"research-host-context-{phase}.json")
+    path = run_dir / relative
+    if run_dir.is_symlink() or contains_symlink_component(run_dir, relative) or not path.is_file():
+        return {"status": "unavailable", "reason": "host-context-file-missing-or-unsafe"}
+    try:
+        path.resolve(strict=True).relative_to(run_dir.resolve(strict=True))
+    except (OSError, ValueError):
+        return {"status": "unavailable", "reason": "host-context-file-missing-or-unsafe"}
     try:
         context = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -1559,14 +1566,18 @@ def load_host_context(run_dir: Path, phase: str) -> dict[str, Any]:
 
 
 def load_host_context_samples(run_dir: Path) -> dict[str, Any]:
-    path = run_dir / "research-host-context-during.jsonl"
+    relative = Path("research-host-context-during.jsonl")
+    path = run_dir / relative
     sample_count = 0
     first_captured_at: str | None = None
     last_captured_at: str | None = None
+    if run_dir.is_symlink() or contains_symlink_component(run_dir, relative) or not path.is_file():
+        return {"status": "unavailable", "reason": "host-context-samples-missing-or-unsafe"}
     try:
+        path.resolve(strict=True).relative_to(run_dir.resolve(strict=True))
         stream = path.open(encoding="utf-8")
-    except OSError:
-        return {"status": "unavailable", "reason": "host-context-samples-missing"}
+    except (OSError, ValueError):
+        return {"status": "unavailable", "reason": "host-context-samples-missing-or-unsafe"}
     host_id: str | None = None
     logical_cpu_count: int | None = None
     previous_time = -1

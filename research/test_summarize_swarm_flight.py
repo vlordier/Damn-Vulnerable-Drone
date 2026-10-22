@@ -17,6 +17,8 @@ from lifecycle_test_fixtures import build_lifecycle
 from summarize_antoine_two_drone_flight import (
     cross_vehicle_effect_windows_valid,
     hash_run_evidence,
+    load_host_context,
+    load_host_context_samples,
     load_swarm_config,
     load_swarm_plan,
     main,
@@ -55,6 +57,27 @@ class EvidenceHashSymlinkTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "symlinked run directory"):
                 hash_run_evidence(alias, ["research-profile.env"])
+
+    def test_host_context_readers_reject_symlinked_run_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run-a"
+            run_dir.mkdir()
+            external = root / "external"
+            external.mkdir()
+            pre = external / "pre.json"
+            pre.write_text("{}", encoding="utf-8")
+            during = external / "during.jsonl"
+            during.write_text("{}\n{}\n", encoding="utf-8")
+            post = external / "post.json"
+            post.write_text("{}", encoding="utf-8")
+            (run_dir / "research-host-context-pre.json").symlink_to(pre)
+            (run_dir / "research-host-context-during.jsonl").symlink_to(during)
+            (run_dir / "research-host-context-post.json").symlink_to(post)
+
+            self.assertEqual(load_host_context(run_dir, "pre")["status"], "unavailable")
+            self.assertEqual(load_host_context_samples(run_dir)["status"], "unavailable")
+            self.assertEqual(load_host_context(run_dir, "post")["status"], "unavailable")
 
 
 def write_json(path: Path, value: dict) -> None:
