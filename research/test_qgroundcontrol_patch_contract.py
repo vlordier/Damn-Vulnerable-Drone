@@ -19,6 +19,8 @@ class QGroundControlPatchContractTests(unittest.TestCase):
             encoding="utf-8"
         )
         qgc_launcher = (ROOT / "scripts/run-qgc-antoine.sh").read_text(encoding="utf-8")
+        self.assertIn('QGC_SETTINGS_FILE="${QGC_SETTINGS_FILE:-', qgc_launcher)
+        self.assertIn('QGC_SETTINGS_FILE="${QGC_SETTINGS_FILE}"', profile_runner)
         self.assertIn('qgc_binary="$${ANTOINE_QGC_BINARY:-', makefile)
         self.assertIn('ANTOINE_QGC_BINARY="${QGC_BINARY}"', profile_runner)
         self.assertIn('QGC_APP="${ANTOINE_QGC_BINARY:-', qgc_launcher)

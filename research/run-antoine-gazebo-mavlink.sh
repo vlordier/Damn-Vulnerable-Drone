@@ -431,6 +431,7 @@ if [[ "${OPEN_QGC}" == "1" ]] && ! lsof -nP -iUDP:"${QGC_LISTEN_PORT}" 2>/dev/nu
   QGC_UDP_LISTEN_PORT="${QGC_LISTEN_PORT}" QGC_BRIDGE_PORT="${QGC_BIND_PORT}" \
     ANTOINE_QGC_BINARY="${QGC_BINARY}" \
     ANTOINE_QGC_DIR="${ANTOINE_QGC_DIR:-${HOME}/Work/antoine-qgroundcontrol}" \
+    QGC_SETTINGS_DIR="${QGC_SETTINGS_DIR}" QGC_SETTINGS_FILE="${QGC_SETTINGS_FILE}" \
     QGC_CONFIG="${QGC_CONFIG:-Debug}" "${PROJECT_ROOT}/scripts/run-qgc-antoine.sh"
 fi
 
