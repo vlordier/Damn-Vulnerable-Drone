@@ -215,6 +215,15 @@ altitude bound, and velocity bounds still apply. These assumptions do not
 establish contact, physical GNSS, battery voltage, thrust, or hardware
 readiness.
 
+The canonical QGC patch exposes the Antoine arm control only for a generic quad
+with MAVLink system ID 1, matching the system-ID restriction in the C++
+capability gate; it does not enable that control for every generic quad
+connected to QGC. The Fly View guided
+position command also enforces a 3 m radial distance from home. This is
+stricter than the bridge/controller envelope, which independently bounds north
+and east to ±3 m, so the GUI's supported area is a circle inside the adapter's
+square envelope. Both paths keep down position within -3..0 m.
+
 Gazebo telemetry must also be no more than 1,000 ms old or 250 ms in the
 future; stale and future observations are dropped before they can produce a
 pre-arm-ready frame. Source inspection identifies QGC's possible label inputs,
