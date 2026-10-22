@@ -31,6 +31,16 @@ class EarlyRevokeAuditTests(unittest.TestCase):
         self.assertFalse(valid)
         self.assertEqual(rows, [{"stage": "explicit-stop"}])
 
+    def test_invalid_utf8_actuator_audit_is_disqualifying(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "actuator-output.jsonl"
+            path.write_bytes(b'{"stage":"explicit-stop"}\n\xff\n')
+
+            rows, valid = read_actuator_audit(path)
+
+        self.assertFalse(valid)
+        self.assertEqual(rows, [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -18,8 +18,8 @@ def read_actuator_audit(path: Path) -> tuple[list[dict], bool]:
     rows = []
     valid = True
     try:
-        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError):
         return rows, False
     for line in lines:
         if not line.strip():
