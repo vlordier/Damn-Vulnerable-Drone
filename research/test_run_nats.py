@@ -5,9 +5,7 @@ import time
 import unittest
 from pathlib import Path
 
-from antoine_setpoint_mutation import validate_server as validate_mutation_server
-from antoine_setpoint_replay import validate_server as validate_replay_server
-from dvd_research.run_nats import read_run_nats_log
+from dvd_research.run_nats import read_run_nats_log, validate_run_nats_endpoint
 
 
 class RunNatsEvidenceTests(unittest.TestCase):
@@ -66,7 +64,40 @@ class RunNatsEvidenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "run directory is a symlink"):
                 read_run_nats_log(alias)
 
-    def test_mutation_and_replay_refuse_external_readiness_logs(self) -> None:
+    def test_run_endpoint_requires_its_exact_ready_loopback_port(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            log = run_dir / "logs" / "nats.log"
+            log.parent.mkdir(parents=True)
+            log.write_text(
+                "Listening for client connections on 127.0.0.1:4222\nServer is ready\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                validate_run_nats_endpoint("nats://127.0.0.1:4222", run_dir, time.monotonic() + 1),
+                4222,
+            )
+            with self.assertRaisesRegex(TimeoutError, "did not confirm"):
+                validate_run_nats_endpoint("nats://127.0.0.1:4223", run_dir, time.monotonic() - 1)
+
+    def test_run_endpoint_rejects_noncanonical_or_nonloopback_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory)
+            invalid_urls = (
+                "nats://localhost:4222",
+                "nats://127.0.0.2:4222",
+                "nats://user@127.0.0.1:4222",
+                "nats://127.0.0.1:0",
+                "nats://127.0.0.1:65536",
+                "nats://127.0.0.1:4222/other",
+                "nats://127.0.0.1:4222?token=secret",
+            )
+            for server in invalid_urls:
+                with self.subTest(server=server), self.assertRaisesRegex(ValueError, "endpoint"):
+                    validate_run_nats_endpoint(server, run_dir, time.monotonic() + 1)
+
+    def test_run_endpoint_rejects_an_external_readiness_log(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             run_dir = root / "run-a"
@@ -78,11 +109,6 @@ class RunNatsEvidenceTests(unittest.TestCase):
                 encoding="utf-8",
             )
             (run_dir / "logs").symlink_to(outside, target_is_directory=True)
-            deadline = time.monotonic() + 1
 
-            for validate in (validate_mutation_server, validate_replay_server):
-                with (
-                    self.subTest(validate=validate.__module__),
-                    self.assertRaisesRegex(ValueError, "contains a symlink"),
-                ):
-                    validate("nats://127.0.0.1:4222", run_dir, deadline)
+            with self.assertRaisesRegex(ValueError, "contains a symlink"):
+                validate_run_nats_endpoint("nats://127.0.0.1:4222", run_dir, time.monotonic() + 1)

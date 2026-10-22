@@ -12,7 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
-from dvd_research.run_nats import read_run_nats_log
+from dvd_research.run_files import write_run_json
+from dvd_research.run_nats import validate_run_nats_endpoint
 
 SUBJECTS = {
     "mission_setpoint": "furia.gzsitl.setpoint.drone-1",
@@ -122,19 +123,10 @@ def main() -> int:
     ):
         raise SystemExit("refusing any endpoint except this run's explicit IPv4 loopback NATS URL")
 
-    expected_ready_line = f"Listening for client connections on 127.0.0.1:{port}"
-    ready_deadline = time.monotonic() + 180
-    run_broker_ready = False
-    while time.monotonic() < ready_deadline:
-        broker_log = read_run_nats_log(args.run_dir) or ""
-        if expected_ready_line in broker_log and "Server is ready" in broker_log:
-            run_broker_ready = True
-            break
-        time.sleep(0.25)
-    if not run_broker_ready:
-        raise SystemExit(
-            "the run-owned NATS log did not confirm readiness on its assigned loopback port"
-        )
+    try:
+        validate_run_nats_endpoint(args.server, args.run_dir, time.monotonic() + 180)
+    except (TimeoutError, ValueError) as error:
+        raise SystemExit(str(error)) from error
 
     ready_deadline = time.monotonic() + 10
     while time.monotonic() < ready_deadline:
@@ -187,8 +179,7 @@ def main() -> int:
             "Do not draw a disclosure conclusion from this run."
         ),
     }
-    output = args.run_dir / "research-nats-observation.json"
-    output.write_text(json.dumps(report, indent=2) + "\n")
+    output = write_run_json(args.run_dir, Path("research-nats-observation.json"), report)
     print(output)
     return 0 if all(item["capturedMessages"] for item in results) else 2
 

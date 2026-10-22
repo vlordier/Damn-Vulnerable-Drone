@@ -11,6 +11,8 @@ import subprocess
 import time
 from pathlib import Path
 
+from dvd_research.run_files import write_run_json
+
 
 def main() -> int:
     parser = argparse.ArgumentParser()
@@ -161,9 +163,7 @@ def main() -> int:
         ),
     }
     args.run_dir.mkdir(parents=True, exist_ok=True)
-    (args.run_dir / "research-camera-observation.json").write_text(
-        json.dumps(report, indent=2) + "\n"
-    )
+    write_run_json(args.run_dir, Path("research-camera-observation.json"), report)
     print(
         json.dumps(
             {

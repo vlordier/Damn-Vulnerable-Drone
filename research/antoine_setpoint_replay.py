@@ -7,31 +7,13 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
 
-from dvd_research.run_nats import read_run_nats_log
-
-
-def validate_server(server: str, run_dir: Path, deadline: float) -> None:
-    parsed = urlsplit(server)
-    if (
-        parsed.scheme != "nats"
-        or parsed.hostname != "127.0.0.1"
-        or parsed.port is None
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in ("", "/")
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ValueError("refusing any NATS endpoint except an explicit IPv4 loopback URL")
-    ready_line = f"Listening for client connections on 127.0.0.1:{parsed.port}"
-    while time.monotonic() < deadline:
-        log = read_run_nats_log(run_dir) or ""
-        if ready_line in log and "Server is ready" in log:
-            return
-        time.sleep(0.1)
-    raise TimeoutError("run-owned NATS broker did not confirm the requested loopback endpoint")
+from antoine_setpoint_mutation import (
+    CONTROLLER_LOG,
+    wait_for_controller_ready,
+)
+from dvd_research.run_files import read_run_text, write_run_json
+from dvd_research.run_nats import validate_run_nats_endpoint
 
 
 def main() -> int:
@@ -40,8 +22,6 @@ def main() -> int:
     parser.add_argument("--run-dir", required=True, type=Path)
     args = parser.parse_args()
     run_dir = args.run_dir
-    controller_log = run_dir / "logs" / "antoine-controller.log"
-    motor_file = run_dir / "applier-authorized" / "drone-1.motors"
     subject = "furia.gzsitl.setpoint.drone-1"
     report = {
         "contract": "damn-vulnerable-drone.antoine-waypoint-replay-attempt",
@@ -55,18 +35,9 @@ def main() -> int:
     }
     try:
         deadline = time.monotonic() + 100
-        validate_server(args.server, run_dir, deadline)
-        while time.monotonic() < deadline:
-            try:
-                log = controller_log.read_text(errors="replace")
-                motor_sequence = int(motor_file.read_text().strip())
-            except (OSError, ValueError):
-                log, motor_sequence = "", 0
-            if "ANTOINE_GZ_SETPOINT_RECEIVED callsign=drone-1" in log and motor_sequence > 10:
-                break
-            time.sleep(0.1)
-        else:
-            raise TimeoutError("controller did not accept a live setpoint and actuator commands")
+        validate_run_nats_endpoint(args.server, run_dir, deadline)
+        wait_for_controller_ready(run_dir, deadline)
+        log = read_run_text(run_dir, CONTROLLER_LOG, errors="replace") or ""
 
         before_rejects = log.count(
             "ANTOINE_GZ_SETPOINT_REJECTED callsign=drone-1 reason=vehicle-or-sequence"
@@ -137,7 +108,7 @@ def main() -> int:
         rejected_at = None
         while time.monotonic() < deadline:
             try:
-                current_log = controller_log.read_text(errors="replace")
+                current_log = read_run_text(run_dir, CONTROLLER_LOG, errors="replace") or ""
             except OSError:
                 current_log = ""
             if current_log.count(reject_marker) > before_rejects:
@@ -152,12 +123,12 @@ def main() -> int:
                 "result": "rejected" if rejected_at else "inconclusive",
             }
         )
-        (run_dir / "research-waypoint-replay.json").write_text(json.dumps(report, indent=2) + "\n")
+        write_run_json(run_dir, Path("research-waypoint-replay.json"), report)
         print(json.dumps(report, indent=2))
         return 0 if rejected_at else 2
     except Exception as error:
         report.update({"result": "inconclusive", "error": f"{type(error).__name__}: {error}"})
-        (run_dir / "research-waypoint-replay.json").write_text(json.dumps(report, indent=2) + "\n")
+        write_run_json(run_dir, Path("research-waypoint-replay.json"), report)
         print(json.dumps(report, indent=2), file=sys.stderr)
         return 2
 

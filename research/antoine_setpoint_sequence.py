@@ -13,11 +13,11 @@ from antoine_setpoint_mutation import (
     last_motor_sequence,
     read_audit_rows,
     read_one_json,
-    validate_server,
     wait_for_controller_ready,
     wait_for_mutation_effect,
 )
 from dvd_research.run_files import read_run_text, write_run_json
+from dvd_research.run_nats import validate_run_nats_endpoint
 
 
 def publish(server: str, subject: str, message: dict) -> None:
@@ -69,7 +69,7 @@ def main() -> int:
     }
     try:
         deadline = time.monotonic() + 100
-        validate_server(args.server, run_dir, deadline)
+        validate_run_nats_endpoint(args.server, run_dir, deadline)
         wait_for_controller_ready(run_dir, deadline)
         captured = subprocess.run(
             ["nats", "--no-context", "--server", args.server, "sub", "--count=1", "--raw", subject],

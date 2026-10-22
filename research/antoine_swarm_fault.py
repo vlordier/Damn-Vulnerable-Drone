@@ -10,7 +10,9 @@ import selectors
 import subprocess
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
+
+from dvd_research.run_files import write_run_json
+from dvd_research.run_nats import validate_run_nats_endpoint
 
 
 def main() -> int:
@@ -25,9 +27,6 @@ def main() -> int:
     parser.add_argument("--max-messages", type=int, default=80)
     args = parser.parse_args()
 
-    endpoint = urlsplit(args.server)
-    if endpoint.scheme != "nats" or endpoint.hostname != "127.0.0.1" or endpoint.port is None:
-        raise SystemExit("observer only accepts a run-owned IPv4 loopback NATS endpoint")
     if (
         not 0.25 <= args.duration <= 10
         or not 0.25 <= args.startup_timeout <= 45
@@ -39,12 +38,19 @@ def main() -> int:
         )
     if args.callsign not in {f"drone-{index}" for index in range(1, 6)}:
         raise SystemExit("callsign must be one of drone-1..drone-5")
+    try:
+        validate_run_nats_endpoint(
+            args.server, args.run_dir, time.monotonic() + args.startup_timeout
+        )
+    except (TimeoutError, ValueError) as error:
+        raise SystemExit(
+            f"observer requires its run-owned loopback NATS broker: {error}"
+        ) from error
 
     # Antoine consumes callsign-scoped state subjects, so the observer follows
     # the same identity the runner selected rather than assuming drone-2.
     subject = f"furia.gzsitl.state.{args.callsign}"
     subscription = "furia.gzsitl.state.>"
-    output = args.run_dir / "research-swarm-fault.json"
     record = {
         "contract": "damn-vulnerable-drone.antoine-swarm-fault",
         "version": "1.0.0",
@@ -156,7 +162,7 @@ def main() -> int:
         if len(timestamps) >= 2 and observed_rate is not None and math.isfinite(observed_rate)
         else "inconclusive",
     )
-    output.write_text(json.dumps(record, indent=2) + "\n", encoding="utf-8")
+    output = write_run_json(args.run_dir, Path("research-swarm-fault.json"), record)
     print(output)
     return 0 if record["status"] == "observation-only" else 2
 

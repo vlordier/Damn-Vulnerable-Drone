@@ -7,10 +7,9 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from urllib.parse import urlsplit
 
 from dvd_research.run_files import read_run_text, write_run_json
-from dvd_research.run_nats import read_run_nats_log
+from dvd_research.run_nats import validate_run_nats_endpoint
 
 CONTROLLER_LOG = Path("logs/antoine-controller.log")
 MOTOR_SEQUENCE = Path("applier-authorized/drone-1.motors")
@@ -42,28 +41,6 @@ def last_motor_sequence(run_dir: Path) -> int:
         return int(value.strip())
     except ValueError:
         return 0
-
-
-def validate_server(server: str, run_dir: Path, deadline: float) -> None:
-    parsed = urlsplit(server)
-    if (
-        parsed.scheme != "nats"
-        or parsed.hostname != "127.0.0.1"
-        or parsed.port is None
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in ("", "/")
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise ValueError("refusing any NATS endpoint except an explicit IPv4 loopback URL")
-    expected_ready_line = f"Listening for client connections on 127.0.0.1:{parsed.port}"
-    while time.monotonic() < deadline:
-        log = read_run_nats_log(run_dir) or ""
-        if expected_ready_line in log and "Server is ready" in log:
-            return
-        time.sleep(0.1)
-    raise TimeoutError("NATS endpoint was not confirmed by this run's broker startup log")
 
 
 def wait_for_controller_ready(run_dir: Path, deadline: float) -> None:
@@ -164,7 +141,7 @@ def main() -> int:
     }
     try:
         deadline = time.monotonic() + 100
-        validate_server(args.server, run_dir, deadline)
+        validate_run_nats_endpoint(args.server, run_dir, deadline)
         run_id = run_dir.name
         wait_for_controller_ready(run_dir, deadline)
         subject = base["targetSubject"]

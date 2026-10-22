@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from dvd_research.evidence_contract import contains_symlink_component
 
@@ -35,3 +37,33 @@ def read_run_nats_log(run_dir: Path) -> str | None:
         return None
     except (OSError, ValueError) as error:
         raise ValueError("run-owned NATS log cannot be verified") from error
+
+
+def validate_run_nats_endpoint(server: str, run_dir: Path, deadline: float) -> int:
+    """Wait for this run's broker to confirm the exact loopback endpoint."""
+    try:
+        endpoint = urlsplit(server)
+        port = endpoint.port
+    except ValueError as error:
+        raise ValueError("refusing an invalid NATS endpoint") from error
+    if (
+        endpoint.scheme != "nats"
+        or endpoint.hostname != "127.0.0.1"
+        or port is None
+        or not 1 <= port <= 65535
+        or endpoint.username is not None
+        or endpoint.password is not None
+        or endpoint.path not in ("", "/")
+        or endpoint.query
+        or endpoint.fragment
+        or endpoint.netloc != f"127.0.0.1:{port}"
+    ):
+        raise ValueError("refusing any NATS endpoint except an explicit IPv4 loopback URL")
+
+    expected_line = f"Listening for client connections on 127.0.0.1:{port}"
+    while time.monotonic() < deadline:
+        log = read_run_nats_log(run_dir) or ""
+        if expected_line in log and "Server is ready" in log:
+            return port
+        time.sleep(0.1)
+    raise TimeoutError("run-owned NATS did not confirm the requested loopback endpoint")
