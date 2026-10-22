@@ -400,9 +400,20 @@ if [[ -n "$REQUESTED_RUN_DIR" ]]; then
   ANTOINE_BUILD_LOG="$PROVENANCE_SNAPSHOT_DIR/antoine-preflight-build.log"
   NATIVE_BUILD_RECEIPT_ARGS=()
   if [[ -f "$RUNTIME_ANTOINE_ROOT/scripts/antoine_sitl_build_receipt.py" ]]; then
-    uv run --no-project python "$PROJECT_ROOT/research/seal_antoine_source_snapshot.py" \
-      seal "$ANTOINE_SOURCE_SNAPSHOT" "$RUN_CARGO_TARGET_DIR" >"$ANTOINE_BUILD_LOG" 2>&1
-    export ANTOINE_SITL_BUILD_RECEIPT="$RUNTIME_ANTOINE_ROOT/.cargo-target/antoine-sitl-build-receipt/antoine_sitl_nats.build.json"
+    ANTOINE_SEALED_TARGET="$RUN_CARGO_TARGET_ROOT/sealed-builds/$RUN_BUILD_ID"
+    if [[ -e "$ANTOINE_SEALED_TARGET" || -L "$ANTOINE_SEALED_TARGET" ]]; then
+      echo "Refusing to reuse sealed Antoine build target: $ANTOINE_SEALED_TARGET" >&2
+      exit 1
+    fi
+    if ! uv run --no-project python "$PROJECT_ROOT/research/build_antoine_source_snapshot.py" \
+        --snapshot-dir "$ANTOINE_SOURCE_SNAPSHOT" \
+        --target-dir "$ANTOINE_SEALED_TARGET" \
+        --rustup-toolchain "$RUSTUP_TOOLCHAIN" >"$ANTOINE_BUILD_LOG" 2>&1; then
+      echo "Antoine native source-bound build failed; see $ANTOINE_BUILD_LOG." >&2
+      tail -40 "$ANTOINE_BUILD_LOG" >&2
+      exit 1
+    fi
+    export ANTOINE_SITL_BUILD_RECEIPT="$ANTOINE_SOURCE_SNAPSHOT/antoine-source-build-receipt.json"
     export CARGO_NET_OFFLINE=true
     NATIVE_BUILD_RECEIPT_ARGS=(--native-build-receipt "$ANTOINE_SITL_BUILD_RECEIPT")
     if ! uv run --no-project python "$PROJECT_ROOT/research/verify_antoine_native_receipt.py" \
@@ -414,6 +425,11 @@ if [[ -n "$REQUESTED_RUN_DIR" ]]; then
       tail -40 "$ANTOINE_BUILD_LOG" >&2
       exit 1
     fi
+    mkdir -p "$RUN_CARGO_TARGET_DIR/debug"
+    for binary in antoine_sitl_nats antoine_gz_local_authority antoine-boundary-service; do
+      cp -p "$RUNTIME_ANTOINE_ROOT/.cargo-target/antoine-sitl-build-receipt/debug/$binary" \
+        "$RUN_CARGO_TARGET_DIR/debug/$binary"
+    done
   elif ! CARGO_TARGET_DIR="$ANTOINE_GZ_CARGO_TARGET_DIR" cargo build --locked --offline \
       --manifest-path "$RUNTIME_ANTOINE_ROOT/sitl/antoine-sitl/Cargo.toml" --features nats \
       --bin antoine_sitl_nats --bin antoine_gz_local_authority >"$ANTOINE_BUILD_LOG" 2>&1; then
@@ -469,7 +485,10 @@ if [[ -n "$REQUESTED_RUN_DIR" ]]; then
 fi
 
 PROOF_IDENTITY_PATH="$RUNTIME_STATE_DIR/proof-$$.identity"
-dvd_run_owned_child "$PROJECT_ROOT" "$PROOF_IDENTITY_PATH" "$PROOF_SCRIPT" "${PROOF_ARGS[@]}" &
+(
+  cd "$RUNTIME_ANTOINE_ROOT"
+  dvd_run_owned_child "$PROJECT_ROOT" "$PROOF_IDENTITY_PATH" "$PROOF_SCRIPT" "${PROOF_ARGS[@]}"
+) &
 PROOF_PID=$!
 if [[ -n "$REQUESTED_RUN_DIR" ]]; then
   if [[ "$REQUESTED_RUN_DIR" != /* ]]; then
