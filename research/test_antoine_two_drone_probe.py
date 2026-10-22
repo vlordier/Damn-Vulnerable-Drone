@@ -11,6 +11,43 @@ import antoine_two_drone_probe
 
 
 class TwoDroneProbeTests(unittest.TestCase):
+    @staticmethod
+    def state(callsign: str, model: str, position: list[float]) -> dict:
+        return {
+            "schema": "furia.gzsitl.state",
+            "version": "1.1.0",
+            "identity": callsign,
+            "source": f"gz-sitl:{model}",
+            "simulation_time_ns": 1_000_000_000,
+            "position_enu_m": position,
+        }
+
+    def test_nats_state_must_match_callsign_model_and_finite_position(self) -> None:
+        valid = self.state("drone-1", "isr", [0.0, 1.0, 2.0])
+        self.assertEqual(
+            antoine_two_drone_probe.validate_nats_state("drone-1", "isr", valid),
+            (True, None),
+        )
+        wrong_model = {**valid, "source": "gz-sitl:fpv-a"}
+        self.assertFalse(
+            antoine_two_drone_probe.validate_nats_state("drone-1", "isr", wrong_model)[0]
+        )
+        for invalid_position in ([0.0, float("nan"), 2.0], [0.0, True, 2.0], [0.0, "1", 2.0]):
+            with self.subTest(position=invalid_position):
+                invalid = {**valid, "position_enu_m": invalid_position}
+                self.assertFalse(
+                    antoine_two_drone_probe.validate_nats_state("drone-1", "isr", invalid)[0]
+                )
+        invalid_time = {**valid, "simulation_time_ns": True}
+        self.assertFalse(
+            antoine_two_drone_probe.validate_nats_state("drone-1", "isr", invalid_time)[0]
+        )
+        self.assertFalse(antoine_two_drone_probe.validate_nats_state("drone-1", "isr", [1, 2, 3])[0])
+        out_of_range_time = {**valid, "simulation_time_ns": 1 << 64}
+        self.assertFalse(
+            antoine_two_drone_probe.validate_nats_state("drone-1", "isr", out_of_range_time)[0]
+        )
+
     def test_gazebo_truth_requires_advancing_complete_pose_frames(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory)
@@ -50,8 +87,8 @@ class TwoDroneProbeTests(unittest.TestCase):
                 "startup-neutral-zero-published drone-1\nstartup-neutral-zero-published drone-2\n"
             )
             states = [
-                json.dumps({"identity": "drone-1", "position_enu_m": [0, 0, 0]}),
-                json.dumps({"identity": "drone-2", "position_enu_m": [8, 0, 0]}),
+                json.dumps(self.state("drone-1", "isr", [0, 0, 0])),
+                json.dumps(self.state("drone-2", "fpv-a", [8, 0, 0])),
             ]
             gazebo_samples = "\n".join(
                 json.dumps(
@@ -180,8 +217,8 @@ class TwoDroneProbeTests(unittest.TestCase):
             applier.write_text(
                 "startup-neutral-zero-published drone-1\nstartup-neutral-zero-published drone-2\n"
             )
-            state = json.dumps({"identity": "drone-1", "position_enu_m": [0, 0, 0]})
-            other_state = json.dumps({"identity": "drone-2", "position_enu_m": [8, 0, 0]})
+            state = json.dumps(self.state("drone-1", "isr", [0, 0, 0]))
+            other_state = json.dumps(self.state("drone-2", "fpv-a", [8, 0, 0]))
             gazebo_samples = "\n".join(
                 json.dumps(
                     {

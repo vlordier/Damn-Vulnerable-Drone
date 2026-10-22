@@ -78,6 +78,34 @@ def gazebo_pose_samples(payload: str) -> list[dict]:
     return samples
 
 
+def validate_nats_state(callsign: str, model: str, state: object) -> tuple[bool, str | None]:
+    """Require a callsign-bound, model-bound, finite Gazebo state sample."""
+    if not isinstance(state, dict):
+        return False, "state is not a JSON object"
+    if state.get("schema") != "furia.gzsitl.state":
+        return False, "state schema does not identify Gazebo SITL telemetry"
+    if state.get("identity") != callsign:
+        return False, "state identity does not match its NATS subject"
+    if state.get("source") != f"gz-sitl:{model}":
+        return False, "state source does not match the expected Gazebo model"
+    position = state.get("position_enu_m")
+    if (
+        not isinstance(position, list)
+        or len(position) != 3
+        or any(
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(value)
+            for value in position
+        )
+    ):
+        return False, "state position is not a finite three-axis vector"
+    simulation_time_ns = state.get("simulation_time_ns")
+    if type(simulation_time_ns) is not int or not 0 <= simulation_time_ns <= (1 << 64) - 1:
+        return False, "state simulation timestamp is invalid"
+    return True, None
+
+
 def capture_gazebo_truth(gz: str, run_dir: Path, partition: str) -> dict:
     env = os.environ.copy()
     env["GZ_PARTITION"] = partition
@@ -204,12 +232,18 @@ def main() -> int:
         except (StopIteration, json.JSONDecodeError):
             states[callsign] = {"model": model, "received": False, "reason": "invalid JSON state"}
             continue
+        valid, reason = validate_nats_state(callsign, model, state)
         states[callsign] = {
             "model": model,
-            "received": state.get("identity") == callsign,
-            "source": state.get("source"),
-            "positionEnuM": state.get("position_enu_m"),
-            "simulationTimeNs": state.get("simulation_time_ns"),
+            "received": valid,
+            "reason": reason,
+            "schema": state.get("schema") if isinstance(state, dict) else None,
+            "version": state.get("version") if isinstance(state, dict) else None,
+            "source": state.get("source") if isinstance(state, dict) else None,
+            "positionEnuM": state.get("position_enu_m") if isinstance(state, dict) else None,
+            "simulationTimeNs": state.get("simulation_time_ns")
+            if isinstance(state, dict)
+            else None,
         }
 
     positions = [states.get(name, {}).get("positionEnuM") for name in vehicles]
@@ -219,7 +253,7 @@ def main() -> int:
         "drone-2": "startup-neutral-zero-published drone-2" in applier_log_text,
     }
     separated = False
-    if all(isinstance(point, list) and len(point) == 3 for point in positions):
+    if all(states[name].get("received") for name in vehicles):
         separated = sum((positions[0][i] - positions[1][i]) ** 2 for i in range(3)) ** 0.5 >= 5.0
     report = {
         "contract": "damn-vulnerable-drone.antoine-two-drone-smoke",
