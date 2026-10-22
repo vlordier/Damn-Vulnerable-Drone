@@ -237,6 +237,9 @@ fi
 # Pin the swarm baseline to the control rate used by its last qualified run.
 # Callers can still override this when measuring another controller rate.
 export ANTOINE_GZ_FLIGHT_CONTROL_HZ="${ANTOINE_GZ_FLIGHT_CONTROL_HZ:-20}"
+# Capture quaternion, raw/filtered angular rate, torque, and body-up diagnostics
+# needed to distinguish control-path instability from delayed or stale state.
+export ANTOINE_GZ_RATE_TRACE=1
 export ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M="${ARRIVAL_HOLD_RADIUS}"
 export ANTOINE_GZ_TERMINAL_BRAKING_RADIUS_M="${TERMINAL_BRAKING_RADIUS}"
 export ANTOINE_GZ_RETAIN_PREDECESSOR_GRANT="${RETAIN_PREDECESSOR_GRANT}"

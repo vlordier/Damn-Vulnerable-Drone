@@ -14,6 +14,7 @@ from verify_swarm_ab_pair import (
     summarize_host_load_comparison,
     verify_artifacts,
     verify_profile_config,
+    verify_profile_pair,
     verify_provenance,
 )
 
@@ -116,6 +117,48 @@ class PairProvenanceTests(unittest.TestCase):
         del baseline["executables"]["gazebo_binary"]
         with self.assertRaisesRegex(ValueError, "missing pinned executable"):
             verify_provenance(baseline, baseline)
+
+
+class PairProfileTests(unittest.TestCase):
+    def test_allows_only_the_selected_profile_factor_and_ephemeral_nats_port(self) -> None:
+        baseline = {
+            "ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M": "0.15",
+            "ANTOINE_GZ_TERMINAL_BRAKING_RADIUS_M": "0.15",
+            "ANTOINE_GZ_RETAIN_PREDECESSOR_GRANT": "1",
+            "ANTOINE_GZ_FLIGHT_CONTROL_HZ": "20",
+            "ANTOINE_GZ_TORQUE_GAIN": "0.8",
+            "ANTOINE_GZ_FLIGHT_NATS_PORT": "14224",
+        }
+        variant = {
+            **baseline,
+            "ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M": "0.75",
+            "ANTOINE_GZ_FLIGHT_NATS_PORT": "15431",
+        }
+
+        digest = verify_profile_pair(baseline, variant, "hold-radius")
+
+        self.assertEqual(len(digest), 64)
+
+    def test_rejects_a_control_rate_or_gain_difference_outside_the_factor(self) -> None:
+        baseline = {
+            "ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M": "0.15",
+            "ANTOINE_GZ_TERMINAL_BRAKING_RADIUS_M": "0.15",
+            "ANTOINE_GZ_RETAIN_PREDECESSOR_GRANT": "1",
+            "ANTOINE_GZ_FLIGHT_CONTROL_HZ": "20",
+            "ANTOINE_GZ_TORQUE_GAIN": "0.8",
+            "ANTOINE_GZ_FLIGHT_NATS_PORT": "14224",
+        }
+        for key, value in (
+            ("ANTOINE_GZ_FLIGHT_CONTROL_HZ", "25"),
+            ("ANTOINE_GZ_TORQUE_GAIN", "0.9"),
+        ):
+            variant = {
+                **baseline,
+                "ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M": "0.75",
+                key: value,
+            }
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, "runtime research"):
+                verify_profile_pair(baseline, variant, "hold-radius")
 
 
 class PairArtifactTests(unittest.TestCase):
@@ -299,7 +342,14 @@ class PairArtifactTests(unittest.TestCase):
             (run_dir / "research-profile.env").write_text(
                 "ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M=0.15\n"
                 "ANTOINE_GZ_TERMINAL_BRAKING_RADIUS_M=0.75\n"
-                "ANTOINE_GZ_RETAIN_PREDECESSOR_GRANT=1\n",
+                "ANTOINE_GZ_RETAIN_PREDECESSOR_GRANT=1\n"
+                "ANTOINE_SWARM_SIZE=2\n"
+                "ANTOINE_SWARM_SPACING_M=8\n"
+                "ANTOINE_SWARM_BEHAVIOR=lanes\n"
+                "ANTOINE_SWARM_MAVLINK=0\n"
+                "ANTOINE_GZ_FLIGHT_CONTROL_HZ=20\n"
+                "ANTOINE_GZ_FLIGHT_NATS_PORT=14224\n"
+                "ANTOINE_GZ_RATE_TRACE=1\n",
                 encoding="utf-8",
             )
             config["terminalBrakingRadiusM"] = 0.75

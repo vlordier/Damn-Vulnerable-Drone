@@ -21,6 +21,12 @@ FACTORS = {
     "braking-radius": "terminalBrakingRadiusM",
     "predecessor-retention": "retainPredecessorGrant",
 }
+PROFILE_FACTORS = {
+    "hold-radius": "ANTOINE_GZ_ARRIVAL_HOLD_RADIUS_M",
+    "braking-radius": "ANTOINE_GZ_TERMINAL_BRAKING_RADIUS_M",
+    "predecessor-retention": "ANTOINE_GZ_RETAIN_PREDECESSOR_GRANT",
+}
+RUN_LOCAL_PROFILE_KEYS = {"ANTOINE_GZ_FLIGHT_NATS_PORT"}
 REQUIRED_ARTIFACTS = (
     "gazebo-pose.jsonl",
     "research-provenance-comparison.json",
@@ -152,7 +158,7 @@ def verify_artifacts(run_dir: Path, report: dict[str, Any]) -> None:
             raise ValueError(f"raw evidence changed after report generation: {run_dir.name}/{name}")
 
 
-def verify_profile_config(run_dir: Path, config: dict[str, Any]) -> None:
+def verify_profile_config(run_dir: Path, config: dict[str, Any]) -> dict[str, str]:
     profile_path = run_dir / "research-profile.env"
     try:
         lines = profile_path.read_text(encoding="utf-8").splitlines()
@@ -170,15 +176,53 @@ def verify_profile_config(run_dir: Path, config: dict[str, Any]) -> None:
     except (KeyError, ValueError) as error:
         raise ValueError(f"run profile is missing swarm control values: {run_dir.name}") from error
     retention = values.get("ANTOINE_GZ_RETAIN_PREDECESSOR_GRANT")
+    try:
+        swarm_size = int(values["ANTOINE_SWARM_SIZE"])
+        spacing = float(values["ANTOINE_SWARM_SPACING_M"])
+        control_rate = float(values["ANTOINE_GZ_FLIGHT_CONTROL_HZ"])
+        nats_port = int(values["ANTOINE_GZ_FLIGHT_NATS_PORT"])
+    except (KeyError, ValueError) as error:
+        raise ValueError(
+            f"run profile is missing required runtime settings: {run_dir.name}"
+        ) from error
     if (
         not math.isfinite(hold_radius)
         or not math.isfinite(braking_radius)
+        or not math.isfinite(spacing)
+        or not math.isfinite(control_rate)
         or hold_radius != config["arrivalHoldRadiusM"]
         or braking_radius != config["terminalBrakingRadiusM"]
         or retention not in {"0", "1"}
         or (retention == "1") is not config["retainPredecessorGrant"]
+        or swarm_size != len(config["vehicles"])
+        or spacing != config["spacingM"]
+        or values.get("ANTOINE_SWARM_BEHAVIOR") != config["behavior"]
+        or values.get("ANTOINE_SWARM_MAVLINK") != ("1" if config["mavlinkSwarm"] else "0")
+        or control_rate <= 0
+        or not 1 <= nats_port <= 65535
+        or values.get("ANTOINE_GZ_RATE_TRACE") != "1"
     ):
         raise ValueError(f"run profile does not match swarm config: {run_dir.name}")
+    return values
+
+
+def verify_profile_pair(baseline: dict[str, str], variant: dict[str, str], factor: str) -> str:
+    factor_key = PROFILE_FACTORS[factor]
+    baseline_common = {
+        key: value
+        for key, value in baseline.items()
+        if key != factor_key and key not in RUN_LOCAL_PROFILE_KEYS
+    }
+    variant_common = {
+        key: value
+        for key, value in variant.items()
+        if key != factor_key and key not in RUN_LOCAL_PROFILE_KEYS
+    }
+    if baseline_common != variant_common:
+        raise ValueError("runtime research profiles differ outside the selected factor")
+    return hashlib.sha256(
+        json.dumps(baseline_common, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 def load_host_contexts(run_dir: Path) -> dict[str, Any]:
@@ -351,6 +395,7 @@ def verify_pair(baseline_dir: Path, variant_dir: Path, factor: str) -> dict[str,
         if any(report.get(control) != raw_config.get(control) for control in FACTORS.values()):
             raise ValueError("swarm report control settings do not match the run config")
     verify_provenance(baseline_report.get("provenance", {}), variant_report.get("provenance", {}))
+    profile_values = []
     for run_dir, report, config in (
         (baseline_dir, baseline_report, baseline_config),
         (variant_dir, variant_report, variant_config),
@@ -358,7 +403,8 @@ def verify_pair(baseline_dir: Path, variant_dir: Path, factor: str) -> dict[str,
         if report.get("runOwnedSourceBuildInputsPresent") is not True:
             raise ValueError(f"run-owned source/build inputs are not qualified: {run_dir.name}")
         verify_artifacts(run_dir, report)
-        verify_profile_config(run_dir, config)
+        profile_values.append(verify_profile_config(run_dir, config))
+    shared_profile_sha256 = verify_profile_pair(profile_values[0], profile_values[1], factor)
     baseline_host = load_host_contexts(baseline_dir)
     variant_host = load_host_contexts(variant_dir)
     require_same_host(baseline_host, variant_host)
@@ -373,6 +419,7 @@ def verify_pair(baseline_dir: Path, variant_dir: Path, factor: str) -> dict[str,
         "baselineValue": baseline_value,
         "variantValue": variant_value,
         "sharedConfigSha256": shared_config_sha256,
+        "sharedProfileSha256": shared_profile_sha256,
         "sharedProvenance": baseline_report["provenance"],
         "hostContext": {"baseline": baseline_host, "variant": variant_host},
         "hostLoadComparison": host_load_comparison,
