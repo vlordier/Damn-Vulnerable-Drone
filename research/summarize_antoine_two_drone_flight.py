@@ -200,11 +200,20 @@ def load_pose_samples(
                 continue
             if not isinstance(frame, dict):
                 continue
-            stamp = frame.get("header", {}).get("stamp", {})
-            try:
-                timestamp = int(stamp.get("sec", 0)) + int(stamp.get("nsec", 0)) / 1e9
-            except (AttributeError, TypeError, ValueError):
+            header = frame.get("header")
+            stamp = header.get("stamp") if isinstance(header, dict) else None
+            if not isinstance(stamp, dict):
                 continue
+            seconds = stamp.get("sec")
+            nanoseconds = stamp.get("nsec")
+            if (
+                type(seconds) is not int
+                or seconds < 0
+                or type(nanoseconds) is not int
+                or not 0 <= nanoseconds < 1_000_000_000
+            ):
+                continue
+            timestamp = seconds + nanoseconds / 1e9
             poses = frame.get("pose")
             if not isinstance(poses, list):
                 poses = [frame]

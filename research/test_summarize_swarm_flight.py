@@ -613,6 +613,39 @@ class ConfigLoadingTests(unittest.TestCase):
             self.assertEqual(plan["planSource"], "inferred-lanes-from-config")
             self.assertEqual(plan["behavior"], "lanes")
 
+
+class GazeboPoseTimestampTests(unittest.TestCase):
+    def test_pose_loader_requires_normalized_integer_gazebo_timestamps(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            pose_path = run_dir / "gazebo-pose.jsonl"
+            frames = [
+                {"header": {"stamp": {"sec": 4, "nsec": 250_000_000}}},
+                {"header": {"stamp": {"sec": 4, "nsec": 1_000_000_000}}},
+                {"header": {"stamp": {"sec": 4, "nsec": -1}}},
+                {"header": {"stamp": {"sec": True, "nsec": 0}}},
+                {"header": {"stamp": {"sec": "4", "nsec": 0}}},
+                {"header": None},
+                {"header": {"stamp": None}},
+            ]
+            lines = []
+            for frame in frames:
+                frame["pose"] = [
+                    {
+                        "name": "isr",
+                        "position": {"x": 0.0, "y": 0.0, "z": 1.0},
+                        "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
+                    }
+                ]
+                lines.append(json.dumps(frame))
+            pose_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+            poses, attitudes = load_pose_samples(run_dir, {"isr"})
+
+        self.assertEqual(poses["isr"], [(4.25, 0.0, 0.0, 1.0)])
+        self.assertEqual(attitudes["isr"], [0.0])
+
     def test_plan_must_match_the_configured_roster(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory)
