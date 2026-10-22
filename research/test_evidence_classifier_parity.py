@@ -228,6 +228,45 @@ def imported_classifier(path: Path) -> str | None:
 
 
 class EvidenceClassifierParityTests(unittest.TestCase):
+    def test_passed_two_drone_smoke_is_an_observation_only_classification(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-two-drone-smoke-test"
+            run_dir.mkdir()
+            report = {
+                "runId": run_dir.name,
+                "status": "passed",
+                "vehicles": {
+                    "drone-1": {"received": True},
+                    "drone-2": {"received": True},
+                },
+                "neutralActuatorStartupAttested": {"drone-1": True, "drone-2": True},
+                "gazeboTruth": {"status": "observed", "separationAtLeast5m": True},
+                "natsGazeboCorrelation": {"status": "matched"},
+                "natsStateSeparationAtLeast5m": True,
+            }
+            (run_dir / "research-two-drone-smoke.json").write_text(
+                json.dumps(report), encoding="utf-8"
+            )
+            (run_dir / "research-provenance-comparison.json").write_text(
+                json.dumps(
+                    {
+                        "runId": run_dir.name,
+                        "prePhaseValid": True,
+                        "postPhaseValid": True,
+                        "profileMatches": True,
+                        "stable": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            manifest = build_evidence_manifest(run_dir)
+
+        self.assertEqual(manifest["scenario"], "two-drone-nats-gazebo-smoke")
+        self.assertEqual(manifest["measurementClassification"], "observation_only")
+        self.assertTrue(manifest["measurements"]["twoDroneNatsGazeboCorrelationPassed"])
+        self.assertIsNot(manifest["measurements"].get("localFlightPassed"), True)
+
     def test_scenario_families_share_expected_labels(self) -> None:
         for family, measurements, expected in FIXTURES:
             with self.subTest(family=family):

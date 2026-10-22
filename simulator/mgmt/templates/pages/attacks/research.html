@@ -134,11 +134,13 @@
             </span>
           </div>
           {% if run.interpretation %}<p class="small text-muted mt-2 mb-2">{{ run.interpretation }}</p>{% endif %}
+          {% if run.smoke_correlation_status %}<p class="small mb-2">NATS/Gazebo state correlation: <strong>{{ run.smoke_correlation_status }}</strong> · {{ run.smoke_correlation_details }}</p>{% endif %}
           <p class="small mb-2">Provenance: {% if run.provenance_stable %}<span class="text-success">stable across the run</span>{% else %}<span class="text-warning">not stable or incomplete; classification is inconclusive</span>{% endif %}</p>
           <p class="small mb-2">Manifest signature: <span class="text-muted">{{ run.manifest_signature_status|replace('_', ' ') }}</span>{% if run.signature_url %} · <a href="{{ run.signature_url }}">download signature record</a>{% endif %}</p>
           {% if run.provenance_changes.inputs or run.provenance_changes.sourceTrees %}<p class="small text-muted">Changed inputs: {{ run.provenance_changes.inputs|join(', ') or 'none' }}; changed source trees: {{ run.provenance_changes.sourceTrees|join(', ') or 'none' }}.</p>{% endif %}
           <div class="d-flex gap-2">
             {% if run.download_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ run.download_url }}">Download result</a>{% endif %}
+            {% if run.failure_url %}<a class="btn btn-sm btn-outline-warning" href="{{ run.failure_url }}">Run failure details</a>{% endif %}
             {% if run.trajectory_url %}<a class="btn btn-sm btn-outline-primary" href="{{ run.trajectory_url }}" target="_blank" rel="noopener">View swarm trajectory</a>{% endif %}
             {% if run.manifest_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ run.manifest_url }}">Evidence manifest</a>{% endif %}
             {% if run.provenance_url %}<a class="btn btn-sm btn-outline-secondary" href="{{ run.provenance_url }}">Source provenance</a>{% endif %}

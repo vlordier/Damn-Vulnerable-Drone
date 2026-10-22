@@ -115,6 +115,7 @@ def build(run_dir: Path) -> dict[str, Any]:
     sensor_tamper = read_json(run_dir / "research-gps-tampering-summary.json")
     replay = read_json(run_dir / "research-waypoint-replay-summary.json")
     observation = read_json(run_dir / "research-nats-observation.json")
+    two_drone_smoke = read_json(run_dir / "research-two-drone-smoke.json")
     camera = read_json(run_dir / "research-camera-observation.json")
     sequence_summary = read_json(run_dir / "research-sequence-poisoning-summary.json")
     early_revoke = read_json(run_dir / "research-early-revoke.json")
@@ -133,6 +134,7 @@ def build(run_dir: Path) -> dict[str, Any]:
         or baseline
         or replay
         or observation
+        or two_drone_smoke
         or swarm_flight
         or {}
     )
@@ -144,6 +146,11 @@ def build(run_dir: Path) -> dict[str, Any]:
 
     if swarm_flight:
         source = swarm_flight
+    elif two_drone_smoke:
+        source = {
+            **two_drone_smoke,
+            "scenario": "two-drone-nats-gazebo-smoke",
+        }
 
     measurements: dict[str, Any] = {}
     if swarm_flight:
@@ -186,6 +193,34 @@ def build(run_dir: Path) -> dict[str, Any]:
             "faultObservationStatus": swarm_flight.get("faultObservation", {}).get("status")
             if isinstance(swarm_flight.get("faultObservation"), dict)
             else None,
+        }
+    elif two_drone_smoke:
+        vehicles = two_drone_smoke.get("vehicles", {})
+        vehicles = vehicles if isinstance(vehicles, dict) else {}
+        neutral = two_drone_smoke.get("neutralActuatorStartupAttested", {})
+        neutral = neutral if isinstance(neutral, dict) else {}
+        gazebo_truth = two_drone_smoke.get("gazeboTruth", {})
+        gazebo_truth = gazebo_truth if isinstance(gazebo_truth, dict) else {}
+        correlation = two_drone_smoke.get("natsGazeboCorrelation", {})
+        correlation = correlation if isinstance(correlation, dict) else {}
+        measurements = {
+            "runIdentityMatches": two_drone_smoke.get("runId") == run_dir.name,
+            "twoDroneSmokeStatus": two_drone_smoke.get("status", "unavailable"),
+            "twoDroneSmokePassed": two_drone_smoke.get("status") == "passed",
+            "twoDroneNatsStatesPassed": set(vehicles) == {"drone-1", "drone-2"}
+            and all(
+                isinstance(item, dict) and item.get("received") is True
+                for item in vehicles.values()
+            ),
+            "twoDroneNeutralStartupPassed": all(
+                neutral.get(callsign) is True for callsign in ("drone-1", "drone-2")
+            ),
+            "twoDroneGazeboTruthPassed": gazebo_truth.get("status") == "observed"
+            and gazebo_truth.get("separationAtLeast5m") is True,
+            "twoDroneNatsGazeboCorrelationPassed": correlation.get("status") == "matched",
+            "twoDroneNatsStateSeparationAtLeast5m": (
+                two_drone_smoke.get("natsStateSeparationAtLeast5m") is True
+            ),
         }
     elif result:
         attack = result.get("attack", {})

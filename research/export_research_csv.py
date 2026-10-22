@@ -67,6 +67,13 @@ FIELDS = [
     "baselinePeakAltitudeM",
     "peakAltitudeDeltaM",
     "swarmFlightStatus",
+    "twoDroneSmokeStatus",
+    "twoDroneSmokePassed",
+    "twoDroneNatsStatesPassed",
+    "twoDroneNeutralStartupPassed",
+    "twoDroneGazeboTruthPassed",
+    "twoDroneNatsGazeboCorrelationPassed",
+    "twoDroneNatsStateSeparationAtLeast5m",
     "baselineQualified",
     "gazeboAttitudeQualified",
 ]

@@ -147,6 +147,21 @@ def _mapping(value):
     return value if isinstance(value, dict) else {}
 
 
+def _smoke_correlation_details(value) -> str:
+    vehicles = _mapping(_mapping(value).get("vehicles"))
+    details = []
+    for callsign in ("drone-1", "drone-2"):
+        item = _mapping(vehicles.get(callsign))
+        if item.get("matched") is True:
+            details.append(
+                f"{callsign}: matched ({item.get('positionErrorM')} m, "
+                f"{item.get('simulationTimeDeltaSeconds')} s)"
+            )
+        else:
+            details.append(f"{callsign}: {item.get('reason', 'no matching state/truth sample')}")
+    return "; ".join(details)
+
+
 def _runner_command(scenario: dict) -> str:
     """Render env-style runner arguments before the script they configure."""
     script = f"./{scenario['runner']}"
@@ -337,9 +352,21 @@ def antoine_research_index():
                     "research-provenance-comparison.json",
                     "research-swarm-flight.json",
                     "research-mavlink-swarm.json",
+                    "research-two-drone-smoke.json",
                 )
                 if _public_evidence_file(run_dir, name)
             }
+            failure_path = _public_evidence_file(run_dir, "research-run-failure.txt")
+            failure_record = {}
+            if failure_path is not None:
+                try:
+                    failure_record = dict(
+                        line.split("=", 1)
+                        for line in failure_path.read_text(encoding="utf-8").splitlines()
+                        if "=" in line
+                    )
+                except OSError:
+                    failure_record = {}
             camera_result = {}
             if "research-camera-observation.json" in result_files:
                 try:
@@ -352,6 +379,7 @@ def antoine_research_index():
             manifest_integrity_valid = False
             manifest_errors = ["manifest unavailable"]
             manifest_measurements = {}
+            manifest = {}
             manifest_signature_status = "unsigned"
             if _public_evidence_file(run_dir, "research-evidence-manifest.json"):
                 try:
@@ -371,6 +399,19 @@ def antoine_research_index():
                 else:
                     manifest_integrity_valid = False
                     manifest_errors = [*manifest_errors, "manifest runId does not match its directory"]
+            public_evidence = _mapping(manifest).get("publicEvidence", [])
+            public_evidence = public_evidence if isinstance(public_evidence, list) else []
+            public_evidence_names = {
+                item.get("name")
+                for item in public_evidence
+                if isinstance(item, dict) and isinstance(item.get("name"), str)
+            }
+            if (
+                not manifest_integrity_valid
+                or failure_record.get("runId") != run_dir.name
+                or "research-run-failure.txt" not in public_evidence_names
+            ):
+                failure_record = {}
             qualification_status = (
                 classify_measurements(manifest_measurements)
                 if manifest_integrity_valid else "inconclusive"
@@ -389,6 +430,7 @@ def antoine_research_index():
                 "research-sequence-poisoning-summary.json",
                 "research-nats-observation.json",
                 "research-camera-observation.json",
+                "research-two-drone-smoke.json",
                 "research-swarm-flight.json",
             )
             result_name = next((name for name in result_priority if name in result_files), None)
@@ -402,7 +444,22 @@ def antoine_research_index():
                     result = {}
             if not result:
                 result_name = None
-                outcome = "Run started; result summary is missing"
+                if not manifest_integrity_valid:
+                    outcome = "Evidence manifest failed verification"
+                elif manifest_signature_status in {
+                    "invalid_signature",
+                    "manifest_digest_mismatch",
+                    "verification_unavailable",
+                    "trusted_key_unavailable",
+                    "untrusted_signer",
+                }:
+                    outcome = "Manifest signature invalid or signer untrusted"
+                elif failure_record:
+                    stage = failure_record.get("stage", "unknown")
+                    exit_code = failure_record.get("exitCode", "unknown")
+                    outcome = f"Run failed during {stage} (exit {exit_code})"
+                else:
+                    outcome = "Run started; result summary is missing"
                 outcome_variant = "warning"
                 attack = replay = gazebo = flight = comparison = sensor_flight = {}
                 observed_count = 0
@@ -447,6 +504,11 @@ def antoine_research_index():
                 elif qualification_status == "qualified_local_revoke_stop_observation":
                     outcome = f"Local revoke stopped actuators in {result.get('revokeToNeutralMs')} ms"
                     outcome_variant = "info"
+                elif result_name == "research-two-drone-smoke.json" and (
+                    qualification_status == "observation_only" and result.get("status") == "passed"
+                ):
+                    outcome = "Two-drone NATS/Gazebo wiring smoke passed; no controllers or flight"
+                    outcome_variant = "info"
                 elif qualification_status == "observation_only":
                     outcome = "Bounded local observation captured; no control authority claim"
                     outcome_variant = "info"
@@ -468,6 +530,9 @@ def antoine_research_index():
                     outcome_variant = "success"
                 elif qualification_status == "failed_swarm_flight":
                     outcome = "Measured swarm flight or probe failure; inspect the Gazebo and controller evidence"
+                    outcome_variant = "warning"
+                elif result_name == "research-two-drone-smoke.json":
+                    outcome = "Two-drone smoke inconclusive; inspect NATS/Gazebo state correlation"
                     outcome_variant = "warning"
                 else:
                     outcome = "Evidence inconclusive or qualification gates missing"
@@ -515,6 +580,9 @@ def antoine_research_index():
                     "camera_world_url": url_for("main.antoine_research_evidence", run_id=run_dir.name, filename="camera-world.json") if _public_evidence_file(run_dir, "camera-world.json") else None,
                     "latency_ms": attack.get("publishToStopMs"),
                     "manifest_url": url_for("main.antoine_research_evidence", run_id=run_dir.name, filename="research-evidence-manifest.json") if _public_evidence_file(run_dir, "research-evidence-manifest.json") else None,
+                    "failure_url": url_for("main.antoine_research_evidence", run_id=run_dir.name, filename="research-run-failure.txt") if failure_record else None,
+                    "smoke_correlation_status": _mapping(result.get("natsGazeboCorrelation")).get("status"),
+                    "smoke_correlation_details": _smoke_correlation_details(result.get("natsGazeboCorrelation")),
                     "provenance_url": url_for("main.antoine_research_evidence", run_id=run_dir.name, filename="research-provenance.json") if _public_evidence_file(run_dir, "research-provenance.json") else None,
                     "provenance_stable": manifest_measurements.get("provenanceStable") is True,
                     "provenance_changes": {
@@ -633,6 +701,8 @@ def antoine_research_evidence(run_id: str, filename: str):
         "research-swarm-flight.json",
         "research-swarm-plan.json",
         "research-mavlink-swarm.json",
+        "research-two-drone-smoke.json",
+        "research-run-failure.txt",
         "research-swarm-fault.json",
         "research-swarm-config.json",
         "research-swarm-trajectory.svg",
@@ -651,6 +721,13 @@ def antoine_research_evidence(run_id: str, filename: str):
         )
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
+    if filename == "research-run-failure.txt":
+        return send_file(
+            evidence_path,
+            mimetype="text/plain",
+            as_attachment=True,
+            download_name=filename,
+        )
     return send_file(
         evidence_path,
         mimetype="application/json",

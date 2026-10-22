@@ -268,6 +268,16 @@ def classify_measurements(measurements: dict) -> str:
         return "failed_swarm_flight"
     if (
         bound
+        and measurements.get("twoDroneSmokePassed") is True
+        and measurements.get("twoDroneNatsStatesPassed") is True
+        and measurements.get("twoDroneNeutralStartupPassed") is True
+        and measurements.get("twoDroneGazeboTruthPassed") is True
+        and measurements.get("twoDroneNatsGazeboCorrelationPassed") is True
+        and measurements.get("twoDroneNatsStateSeparationAtLeast5m") is True
+    ):
+        return "observation_only"
+    if (
+        bound
         and measurements.get("swarmFlightStatus") == "passed"
         and measurements.get("swarmFlightPassed") is True
         and measurements.get("baselineQualified") is True
