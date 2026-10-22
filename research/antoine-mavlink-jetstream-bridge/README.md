@@ -34,8 +34,10 @@ Gazebo telemetry must also carry a fresh, strictly advancing
 In `udp` mode, JetStream read-only vehicle requests also require an exact
 `runId` match whenever `--run-id` is configured; requests without one remain
 compatible only when the bridge itself has no selected run ID.
-Each callsign uses its own durable read-only request consumer, allowing
-multiple vehicle bridges to share one JetStream stream without filter clashes.
+Each bridge instance creates an ephemeral read-only request consumer filtered
+to its callsign. Parallel vehicles and same-callsign runs can share one stream;
+requests are not replayed after a bridge restart, and `runId` prevents
+cross-run forwarding.
 
 The supported control surface includes ARM/DISARM, takeoff, LAND, RTL, mode
 changes (STABILIZE, GUIDED, AUTO, HOLD, RTL, LAND), bounded local-NED position

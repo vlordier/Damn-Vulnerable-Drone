@@ -405,7 +405,7 @@ async fn local_bridge_routes_qgc_commands_bidirectionally_and_gates_nats_egress(
     let second_gcs = UdpSocket::bind("127.0.0.1:0").await?;
     let second_vehicle_bind = free_udp_addr()?;
     let second_qgc_bind = free_udp_addr()?;
-    let second_callsign = "integration-sitl-2";
+    let second_callsign = callsign;
     let second_bridge = Command::new(env!("CARGO_BIN_EXE_antoine-mavlink-jetstream-bridge"))
         .args([
             "--run-id",
