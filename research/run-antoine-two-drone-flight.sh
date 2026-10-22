@@ -45,7 +45,7 @@ HOST_CONTEXT_DURING="${REPORT_ROOT}/${RUN_ID}-host-context-during.jsonl"
 HOST_CONTEXT_STOP="${REPORT_ROOT}/.${RUN_ID}-host-context-stop"
 HOST_CONTEXT_IDENTITY="${REPORT_ROOT}/.${RUN_ID}-host-context.identity"
 HOST_CONTEXT_PID=""
-ANTOINE_BRIDGE_DIR="${ANTOINE_BRIDGE_DIR:-${HOME}/Work/antoine-mavlink-jetstream-bridge}"
+ANTOINE_BRIDGE_DIR="${ANTOINE_BRIDGE_DIR:-${PROJECT_ROOT}/research/antoine-mavlink-jetstream-bridge}"
 FLIGHT_FAULT_ENV=()
 if [[ ! "${SWARM_SIZE}" =~ ^[0-9]+$ ]] || ((SWARM_SIZE < 2 || SWARM_SIZE > 5)); then
   echo "Swarm size must be an integer from 2 through 5" >&2
@@ -82,6 +82,10 @@ case "${SWARM_MAVLINK}" in
     exit 2
     ;;
 esac
+if [[ "${SWARM_MAVLINK}" == "1" ]]; then
+  uv run --project "${PROJECT_ROOT}/research" python \
+    "${PROJECT_ROOT}/research/check_udp_loopback.py"
+fi
 if [[ -z "${FLIGHT_SECONDS}" ]]; then
   FLIGHT_SECONDS="$(uv run --no-project python "${PROJECT_ROOT}/research/swarm_behavior.py" \
     flight-seconds --behavior "${SWARM_BEHAVIOR}" --size "${SWARM_SIZE}" \

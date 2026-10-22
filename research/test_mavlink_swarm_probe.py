@@ -14,6 +14,7 @@ from contextlib import redirect_stdout
 from pathlib import Path
 from unittest import mock
 
+from check_udp_loopback import local_udp_loopback_available
 from mavlink_swarm_probe import (
     CRC_EXTRA,
     main,
@@ -167,22 +168,6 @@ def reserve_ports(count: int) -> list[int]:
     finally:
         for sock in sockets:
             sock.close()
-
-
-def local_udp_loopback_available() -> bool:
-    receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        receiver.bind(("127.0.0.1", 0))
-        receiver.settimeout(0.5)
-        sender.sendto(b"dvd-udp-loopback-check", receiver.getsockname())
-        payload, _ = receiver.recvfrom(64)
-        return payload == b"dvd-udp-loopback-check"
-    except OSError:
-        return False
-    finally:
-        receiver.close()
-        sender.close()
 
 
 def send_frames(peer_ports: list[int], system_ids: list[int], count: int = 3) -> None:
