@@ -88,7 +88,7 @@ cleanup() {
   [[ -z "$APPLIER_PID" ]] || wait "$APPLIER_PID" 2>/dev/null || true
   [[ -z "$SIM_PID" ]] || wait "$SIM_PID" 2>/dev/null || true
   [[ -z "$NATS_PID" ]] || wait "$NATS_PID" 2>/dev/null || true
-  rm -f "$BRIDGE_ID" "$SIM_ID" "$NATS_ID"
+  rm -f "$APPLIER_ID" "$BRIDGE_ID" "$SIM_ID" "$NATS_ID"
   return "$status"
 }
 trap cleanup EXIT INT TERM
