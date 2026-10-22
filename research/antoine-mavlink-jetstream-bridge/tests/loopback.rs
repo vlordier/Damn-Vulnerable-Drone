@@ -461,10 +461,10 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
                 let request_id = value["request_id"].clone();
                 let reject_mission_query = request_id
                     .as_str()
-                    .is_some_and(|id| id.contains("-mission-query-12-"));
+                    .is_some_and(|id| id.contains("-mission-query-14-"));
                 let omit_mission_state = request_id
                     .as_str()
-                    .is_some_and(|id| id.contains("-mission-query-13-"));
+                    .is_some_and(|id| id.contains("-mission-query-15-"));
                 let reject_mission_upload = value["command"]["type"] == "mission_upload"
                     && upload_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0;
                 let response = if reject_mission_query {
@@ -777,7 +777,59 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     let _ = timeout(Duration::from_secs(2), reply_rx.recv())
         .await
         .context("SITL mission query was not received")?;
-    let rejected_mission_list = v2_frame(43, 12, 255, &[1, 1, 0], 132);
+
+    let unsupported_mission_list = v2_frame(43, 12, 255, &[1, 1, 1], 132);
+    gcs.send_to(&unsupported_mission_list, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("unsupported mission-list ACK timeout")??;
+    let (_, unsupported_list_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(unsupported_list_ack) =
+        unsupported_list_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for unsupported mission-list type");
+    };
+    assert_eq!(
+        unsupported_list_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_UNSUPPORTED
+    );
+    assert!(
+        timeout(Duration::from_millis(100), reply_rx.recv())
+            .await
+            .is_err(),
+        "unsupported mission-list type must not query Antoine"
+    );
+
+    let unsupported_count_payload = [1, 0, 1, 1, 1];
+    let unsupported_count = v2_frame(44, 13, 255, &unsupported_count_payload, 221);
+    gcs.send_to(&unsupported_count, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("unsupported mission-count ACK timeout")??;
+    let (_, unsupported_count_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(unsupported_count_ack) =
+        unsupported_count_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for unsupported mission-count type");
+    };
+    assert_eq!(
+        unsupported_count_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_UNSUPPORTED
+    );
+    assert!(
+        timeout(Duration::from_millis(100), reply_rx.recv())
+            .await
+            .is_err(),
+        "unsupported mission-count type must not start an upload"
+    );
+
+    let rejected_mission_list = v2_frame(43, 14, 255, &[1, 1, 0], 132);
     gcs.send_to(&rejected_mission_list, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
@@ -799,7 +851,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     let _ = timeout(Duration::from_secs(2), reply_rx.recv())
         .await
         .context("rejected SITL mission query was not received")?;
-    let malformed_mission_list = v2_frame(43, 13, 255, &[1, 1, 0], 132);
+    let malformed_mission_list = v2_frame(43, 15, 255, &[1, 1, 0], 132);
     gcs.send_to(&malformed_mission_list, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
@@ -826,7 +878,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     mission_count_payload[0..2].copy_from_slice(&1_u16.to_le_bytes());
     mission_count_payload[2] = 1;
     mission_count_payload[3] = 1;
-    let mission_count_request = v2_frame(44, 14, 255, &mission_count_payload, 221);
+    let mission_count_request = v2_frame(44, 16, 255, &mission_count_payload, 221);
     gcs.send_to(&mission_count_request, qgc_bind).await?;
     let mut mission_request_seen = false;
     for _ in 0..4 {

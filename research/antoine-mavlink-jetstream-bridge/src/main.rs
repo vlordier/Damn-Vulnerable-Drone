@@ -587,6 +587,7 @@ fn mission_ack(
             mavtype: match result {
                 0 => MavMissionResult::MAV_MISSION_ACCEPTED,
                 2 => MavMissionResult::MAV_MISSION_UNSUPPORTED_FRAME,
+                3 => MavMissionResult::MAV_MISSION_UNSUPPORTED,
                 13 => MavMissionResult::MAV_MISSION_INVALID_SEQUENCE,
                 _ => MavMissionResult::MAV_MISSION_ERROR,
             },
@@ -1062,18 +1063,36 @@ async fn qgc_to_antoine_nats(
             "QGC MAVLink frame received"
         );
         if frame.message_id == 44 {
-            if frame.payload.len() < 4 || frame.payload.len() > 5 {
+            if frame.payload.len() < 4 {
                 continue;
             }
             let count = u16::from_le_bytes([frame.payload[0], frame.payload[1]]) as usize;
             let target = frame.payload[2];
             let component = frame.payload[3];
             let mission_type = frame.payload.get(4).copied().unwrap_or(0);
-            if (target != 0 && target != config.system_id)
-                || (component != 0 && component != 1)
-                || mission_type != 0
-                || count > 5
-            {
+            if (target != 0 && target != config.system_id) || (component != 0 && component != 1) {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    1,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
+            }
+            if mission_type != 0 {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    3,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
+            }
+            if frame.payload.len() > 5 || count > 5 {
                 let ack = mission_ack(
                     frame.sequence.wrapping_add(1),
                     config.system_id,
@@ -1177,8 +1196,29 @@ async fn qgc_to_antoine_nats(
             if frame.payload.len() < 2
                 || (frame.payload[0] != 0 && frame.payload[0] != config.system_id)
                 || (frame.payload[1] != 0 && frame.payload[1] != 1)
-                || frame.payload.get(2).copied().unwrap_or(0) != 0
             {
+                continue;
+            }
+            if frame.payload.len() > 3 {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    1,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
+            }
+            if frame.payload.get(2).copied().unwrap_or(0) != 0 {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    3,
+                );
+                gcs.send_to(&ack, source).await?;
                 continue;
             }
             let request_id = format!(
@@ -1299,8 +1339,29 @@ async fn qgc_to_antoine_nats(
             if frame.payload.len() < 4
                 || frame.payload[2] != config.system_id
                 || frame.payload[3] != 1
-                || frame.payload.get(4).copied().unwrap_or(0) != 0
             {
+                continue;
+            }
+            if frame.payload.len() > 5 {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    1,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
+            }
+            if frame.payload.get(4).copied().unwrap_or(0) != 0 {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    3,
+                );
+                gcs.send_to(&ack, source).await?;
                 continue;
             }
             let item_seq = u16::from_le_bytes([frame.payload[0], frame.payload[1]]) as usize;
