@@ -94,7 +94,11 @@ def main() -> int:
                 if now >= deadline:
                     break
                 if subscriber is None:
-                    subscriber = start_subscriber()
+                    try:
+                        subscriber = start_subscriber()
+                    except OSError as error:
+                        startup_errors.append(f"subscriber could not start: {type(error).__name__}")
+                        break
                     if subscriber.stdout is None:
                         raise RuntimeError("could not capture NATS subscriber output")
                     selector.register(subscriber.stdout, selectors.EVENT_READ)
