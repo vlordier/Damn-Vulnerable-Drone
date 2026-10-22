@@ -36,6 +36,8 @@ REQUIRED_ARTIFACTS = (
     "research-antoine-process-launches.tsv",
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+SWARM_CONFIG_CONTRACT = "damn-vulnerable-drone.antoine-swarm-config"
+SWARM_CONFIG_VERSION = "1.3.0"
 
 
 def is_sha256(value: Any) -> bool:
@@ -84,6 +86,14 @@ def config_pair(
         json.dumps(baseline_common, sort_keys=True, separators=(",", ":")).encode()
     ).hexdigest()
     return key, baseline_value, variant_value, digest
+
+
+def validate_config_identity(config: dict[str, Any], label: str) -> None:
+    if (
+        config.get("contract") != SWARM_CONFIG_CONTRACT
+        or config.get("version") != SWARM_CONFIG_VERSION
+    ):
+        raise ValueError(f"{label} swarm config has an unsupported contract or version")
 
 
 def verify_provenance(baseline: dict[str, Any], variant: dict[str, Any]) -> None:
@@ -402,6 +412,8 @@ def verify_pair(baseline_dir: Path, variant_dir: Path, factor: str) -> dict[str,
     variant_config_raw = read_object(
         variant_dir / "research-swarm-config.json", "variant swarm config"
     )
+    validate_config_identity(baseline_config_raw, "baseline")
+    validate_config_identity(variant_config_raw, "variant")
     baseline_config = load_swarm_config(baseline_dir)
     variant_config = load_swarm_config(variant_dir)
     key, baseline_value, variant_value, shared_config_sha256 = config_pair(

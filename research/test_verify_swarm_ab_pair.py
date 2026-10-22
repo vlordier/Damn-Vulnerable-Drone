@@ -14,6 +14,7 @@ from verify_swarm_ab_pair import (
     require_same_host,
     summarize_host_load_comparison,
     summarize_outcome,
+    validate_config_identity,
     verify_artifacts,
     verify_profile_config,
     verify_profile_pair,
@@ -68,6 +69,20 @@ def stable_provenance() -> dict:
 
 
 class PairConfigTests(unittest.TestCase):
+    def test_requires_the_versioned_swarm_config_contract(self) -> None:
+        config = swarm_config()
+        validate_config_identity(config, "baseline")
+        for field, value in (
+            ("contract", "unknown.swarm-config"),
+            ("version", "1.2.0"),
+        ):
+            invalid = {**config, field: value}
+            with (
+                self.subTest(field=field),
+                self.assertRaisesRegex(ValueError, "unsupported contract or version"),
+            ):
+                validate_config_identity(invalid, "baseline")
+
     def test_accepts_only_the_selected_radius_difference(self) -> None:
         baseline = swarm_config()
         variant = swarm_config()
