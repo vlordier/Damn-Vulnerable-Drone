@@ -87,7 +87,8 @@ Supported controls:
   applying them, and reads the live mission from Antoine for mission-list
   responses. Each upload handshake is bound to the loopback UDP source,
   MAVLink system ID, and component ID that sent `MISSION_COUNT`; mission items
-  from another local socket or component are rejected.
+  from another local socket or component are rejected. An upload with no item
+  activity for 10 seconds expires and is rejected.
 
 The bridge maps `MAV_CMD_NAV_RETURN_TO_LAUNCH` to a targetless `{"type":"rtl"}`
 request. The frame must target this vehicle, and all seven command parameters

@@ -1,6 +1,6 @@
 use std::{
     net::SocketAddr,
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use anyhow::{bail, Context, Result};
@@ -18,6 +18,7 @@ const COMMAND_SUBJECT: &str = "furia.mavlink.request";
 const DURABLE: &str = "antoine_mavlink_readonly_requests";
 const MAX_GAZEBO_TELEMETRY_AGE_MS: u64 = 1_000;
 const MAX_GAZEBO_TELEMETRY_FUTURE_MS: u64 = 250;
+const MISSION_UPLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Clone)]
 struct Config {
@@ -59,6 +60,20 @@ struct FrameInfo {
     message_id: u32,
     sequence: u8,
     payload: Vec<u8>,
+}
+
+struct PendingMissionUpload {
+    source: SocketAddr,
+    system_id: u8,
+    component_id: u8,
+    items: Vec<Option<[f64; 3]>>,
+    last_activity: Instant,
+}
+
+impl PendingMissionUpload {
+    fn is_idle_at(&self, now: Instant) -> bool {
+        now.duration_since(self.last_activity) >= MISSION_UPLOAD_IDLE_TIMEOUT
+    }
 }
 
 fn x25_checksum(bytes: &[u8], crc_extra: u8) -> u16 {
@@ -1028,7 +1043,7 @@ async fn qgc_to_antoine_nats(
 ) -> Result<()> {
     let command_subject = config.control_subject.clone();
     let mut buffer = vec![0_u8; 4096];
-    let mut mission_upload: Option<(SocketAddr, u8, u8, Vec<Option<[f64; 3]>>)> = None;
+    let mut mission_upload: Option<PendingMissionUpload> = None;
     let mut uploaded_waypoints: Vec<[f64; 3]> = Vec::new();
     loop {
         let (length, source) = gcs.recv_from(&mut buffer).await?;
@@ -1132,22 +1147,23 @@ async fn qgc_to_antoine_nats(
                 gcs.send_to(&ack, source).await?;
                 continue;
             }
-            if let Some((old_source, old_system, old_component, _)) = mission_upload.take() {
+            if let Some(old_upload) = mission_upload.take() {
                 let ack = mission_ack(
                     frame.sequence.wrapping_add(1),
                     config.system_id,
-                    old_system,
-                    old_component,
+                    old_upload.system_id,
+                    old_upload.component_id,
                     1,
                 );
-                gcs.send_to(&ack, old_source).await?;
+                gcs.send_to(&ack, old_upload.source).await?;
             }
-            mission_upload = Some((
+            mission_upload = Some(PendingMissionUpload {
                 source,
-                frame.system_id,
-                frame.component_id,
-                vec![None; count],
-            ));
+                system_id: frame.system_id,
+                component_id: frame.component_id,
+                items: vec![None; count],
+                last_activity: Instant::now(),
+            });
             let request = mission_request_int(
                 frame.sequence.wrapping_add(1),
                 config.system_id,
@@ -1506,10 +1522,26 @@ async fn qgc_to_antoine_nats(
                     * config.home_lat_deg.to_radians().cos();
                 (north, east, -wire_z)
             };
-            if let Some((upload_source, sender, component, items)) = mission_upload.as_mut() {
-                if *upload_source != source
-                    || *sender != frame.system_id
-                    || *component != frame.component_id
+            if mission_upload
+                .as_ref()
+                .is_some_and(|upload| upload.is_idle_at(Instant::now()))
+            {
+                if let Some(expired_upload) = mission_upload.take() {
+                    let ack = mission_ack(
+                        frame.sequence.wrapping_add(1),
+                        config.system_id,
+                        expired_upload.system_id,
+                        expired_upload.component_id,
+                        1,
+                    );
+                    gcs.send_to(&ack, expired_upload.source).await?;
+                }
+                continue;
+            }
+            if let Some(upload) = mission_upload.as_mut() {
+                if upload.source != source
+                    || upload.system_id != frame.system_id
+                    || upload.component_id != frame.component_id
                 {
                     let ack = mission_ack(
                         frame.sequence.wrapping_add(1),
@@ -1521,8 +1553,8 @@ async fn qgc_to_antoine_nats(
                     gcs.send_to(&ack, source).await?;
                     continue;
                 }
-                let expected = items.iter().position(Option::is_none);
-                if seq >= items.len()
+                let expected = upload.items.iter().position(Option::is_none);
+                if seq >= upload.items.len()
                     || expected != Some(seq)
                     || !x.is_finite()
                     || !y.is_finite()
@@ -1542,8 +1574,9 @@ async fn qgc_to_antoine_nats(
                     gcs.send_to(&ack, source).await?;
                     continue;
                 }
-                items[seq] = Some([x, y, z]);
-                if seq + 1 < items.len() {
+                upload.items[seq] = Some([x, y, z]);
+                upload.last_activity = Instant::now();
+                if seq + 1 < upload.items.len() {
                     let request = mission_request_int(
                         frame.sequence.wrapping_add(1),
                         config.system_id,
@@ -1553,9 +1586,9 @@ async fn qgc_to_antoine_nats(
                         (seq + 1) as u16,
                     );
                     gcs.send_to(&request, source).await?;
-                } else if items.iter().all(Option::is_some) {
+                } else if upload.items.iter().all(Option::is_some) {
                     let waypoints: Vec<[f64; 3]> =
-                        items.iter().filter_map(|point| *point).collect();
+                        upload.items.iter().filter_map(|point| *point).collect();
                     let request_id = format!(
                         "{}-mission-{}-{}",
                         frame.system_id,
@@ -1972,6 +2005,21 @@ mod tests {
         payload[35] = 0;
         assert!(mission_waypoint_metadata_supported(&payload, 1));
         assert!(!mission_waypoint_metadata_supported(&payload[..36], 0));
+    }
+
+    #[test]
+    fn pending_mission_upload_expires_after_idle_timeout() {
+        let last_activity = Instant::now();
+        let upload = PendingMissionUpload {
+            source: "127.0.0.1:14550".parse().unwrap(),
+            system_id: 255,
+            component_id: 190,
+            items: vec![None],
+            last_activity,
+        };
+        assert!(!upload
+            .is_idle_at(last_activity + MISSION_UPLOAD_IDLE_TIMEOUT - Duration::from_millis(1)));
+        assert!(upload.is_idle_at(last_activity + MISSION_UPLOAD_IDLE_TIMEOUT));
     }
 
     #[test]
