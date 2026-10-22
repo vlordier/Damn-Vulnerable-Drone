@@ -64,7 +64,9 @@ RUN ./waf copter
 COPY ./flight-controller/drone.parm /ardupilot/drone.parm
 COPY ./flight-controller/init.sh /ardupilot/mgmt/init.sh
 
-RUN sudo apt-get update && sudo apt-get install -y dos2unix
-RUN sudo dos2unix /ardupilot/mgmt/init.sh && sudo chmod +x /ardupilot/mgmt/init.sh
+USER root
+RUN apt-get update && apt-get install -y dos2unix
+RUN dos2unix /ardupilot/mgmt/init.sh && chmod +x /ardupilot/mgmt/init.sh
 
-ENTRYPOINT mgmt/init.sh
+USER ${USER_NAME}
+ENTRYPOINT ["mgmt/init.sh"]
