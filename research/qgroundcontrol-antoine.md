@@ -446,6 +446,18 @@ unverified, so it is not counted as the configured patched app.
 
 The default headless launcher captures, verifies, seals, builds, and launches
 Antoine from a run-owned source snapshot. The latest QGC-free live acceptance at
+`/private/tmp/antoine-gz-mavlink-20261022T001255Z-29145a78-6671-4413-94bf-6a37a6c7598c/gazebo-mavlink-acceptance.json`
+passed with 68 audited MAVLink frames, valid `antoine-gz` telemetry, a 0.061 m
+Gazebo/MAVLink altitude delta, and final `armed=false`. Its bounded direct-NATS
+probe again showed that unsigned RTL requests, including stale-run,
+unrelated-task, fake-expired-grant, and caller-target variants, are accepted by
+the run-owned loopback test authority; caller targets were ignored in favor of
+captured home. This is an expected local research finding, not a Core NATS or
+production authorization claim. Pre/post provenance comparison reported stable
+inputs and source trees. Post-stop status at
+`/private/tmp/antoine-gz-mavlink-20261022T001255Z-29145a78-6671-4413-94bf-6a37a6c7598c/interactive-profile-status-after-stop.json`
+confirmed the supervisor and bridge exited and the run-owned NATS and UDP
+ports closed. The preceding QGC-free live acceptance at
 `/private/tmp/antoine-gz-mavlink-20261022T000044Z-92f764a0-088e-450e-99b1-f1aa0789e6c0/gazebo-mavlink-acceptance.json`
 passed after reusing binaries only when their sealed source snapshot matched the
 fresh run snapshot. It recorded valid `antoine-gz` NATS telemetry, 122 audited
