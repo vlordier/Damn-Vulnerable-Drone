@@ -1,9 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-minimum_mib="${QGC_GAZEBO_MIN_FREE_MIB:-2048}"
+minimum_mib="${MIN_FREE_MIB:-${QGC_GAZEBO_MIN_FREE_MIB:-2048}}"
+minimum_setting="MIN_FREE_MIB"
+if [[ -z "${MIN_FREE_MIB:-}" ]]; then
+  minimum_setting="QGC_GAZEBO_MIN_FREE_MIB"
+fi
 if [[ ! "${minimum_mib}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "QGC_GAZEBO_MIN_FREE_MIB must be a positive integer (MiB); got '${minimum_mib}'." >&2
+  echo "${minimum_setting} must be a positive integer (MiB); got '${minimum_mib}'." >&2
   exit 2
 fi
 minimum_kib=$((minimum_mib * 1024))
@@ -32,8 +36,8 @@ for requested_path in "$@"; do
   fi
   if (( available_kib < minimum_kib )); then
     available_mib=$((available_kib / 1024))
-    echo "Insufficient free disk space for the QGC/Gazebo profile: ${requested_path} has ${available_mib} MiB free; need at least ${minimum_mib} MiB." >&2
-    echo 'Free space or set QGC_GAZEBO_MIN_FREE_MIB to a lower positive value to continue.' >&2
+    echo "Insufficient free disk space: ${requested_path} has ${available_mib} MiB free; need at least ${minimum_mib} MiB." >&2
+    echo "Free space or set ${minimum_setting} to a lower positive value to continue." >&2
     exit 1
   fi
 done

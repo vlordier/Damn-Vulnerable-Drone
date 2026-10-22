@@ -151,6 +151,11 @@ if [[ -z "${LEADER_WAYPOINTS}" ]] || [[ "${SWARM_SIZE}" -gt 2 && -z "${SECONDARY
   echo "Swarm planner did not produce the expected per-vehicle paths." >&2
   exit 2
 fi
+# Check capacity before creating run artifacts or entering the snapshot/build path.
+MIN_FREE_MIB="${ANTOINE_SWARM_MIN_FREE_MIB:-4096}" \
+  "${PROJECT_ROOT}/research/check-free-space.sh" \
+  "${REPORT_ROOT}" "${PROJECT_ROOT}" \
+  "${ANTOINE_GZ_CARGO_TARGET_DIR:-${PROJECT_ROOT}/.cargo-target/antoine-gz}"
 mkdir -p "${REPORT_ROOT}"
 [[ ! -e "${RUN_DIR}" ]] || { echo "Refusing to overwrite evidence: ${RUN_DIR}" >&2; exit 1; }
 case "${FAULT}" in none|state-stream-timing|state-stream-partition|controller-state-blackhole|state-blackhole|command-rate|cross-vehicle-authorization) ;; *) echo "Unsupported swarm fault: ${FAULT}" >&2; exit 2 ;; esac

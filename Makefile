@@ -5,13 +5,14 @@ UV ?= uv
 SHELLCHECK ?= shellcheck
 RESEARCH_PYTHON := $(UV) run --project research
 RESEARCH_FLIGHT := research/run-antoine-two-drone-flight.sh
-SWARM_RUNNER = RUSTUP_TOOLCHAIN="$(RUSTUP_TOOLCHAIN)" ANTOINE_GZ_CARGO_TARGET_DIR="$(ANTOINE_GZ_CARGO_TARGET_DIR)" ./$(RESEARCH_FLIGHT)
+SWARM_RUNNER = RUSTUP_TOOLCHAIN="$(RUSTUP_TOOLCHAIN)" ANTOINE_GZ_CARGO_TARGET_DIR="$(ANTOINE_GZ_CARGO_TARGET_DIR)" ANTOINE_SWARM_MIN_FREE_MIB="$(ANTOINE_SWARM_MIN_FREE_MIB)" ./$(RESEARCH_FLIGHT)
 SWARM_LIVE_SECONDS ?= 75
-LAB_SHELL_SCRIPTS := research/run-antoine-two-drone-flight.sh research/run-antoine-gazebo-mavlink.sh scripts/run-antoine.sh scripts/run-qgc-antoine.sh
+LAB_SHELL_SCRIPTS := research/run-antoine-two-drone-flight.sh research/run-antoine-gazebo-mavlink.sh research/check-free-space.sh scripts/run-antoine.sh scripts/run-qgc-antoine.sh
 ANTOINE_BRIDGE_DIR ?= $(CURDIR)/research/antoine-mavlink-jetstream-bridge
 ANTOINE_BRIDGE_TARGET_DIR ?= /tmp/dvd-antoine-bridge-target
 ANTOINE_QGC_DIR ?= $(HOME)/Work/antoine-qgroundcontrol
 ANTOINE_GZ_CARGO_TARGET_DIR ?= /tmp/antoine-gz-target
+ANTOINE_SWARM_MIN_FREE_MIB ?= 4096
 QGC_CONFIG ?= Debug
 QGC_GAZEBO_MIN_FREE_MIB ?= 2048
 ANTOINE_GZ_FLIGHT_GUI ?= 1
@@ -213,6 +214,7 @@ swarm-bridge: ## Fly with one MAVLink telemetry bridge per drone
 	ANTOINE_SWARM_MAVLINK=1 $(SWARM_RUNNER)
 
 test-swarm: ## Run planner, summarizer, and MAVLink probe unit tests
+	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_check_free_space.py' -v
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_swarm_behavior.py' -v
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_swarm_cross_vehicle_probe.py' -v
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_summarize_swarm_flight.py' -v
@@ -369,7 +371,7 @@ qgc-gazebo-preflight: ## Check large interactive-profile prerequisites before st
 	fi; \
 	if [[ "$$preflight_failed" -ne 0 ]]; then exit 1; fi; \
 	echo 'Interactive QGC and Gazebo executables are present.'; \
-	QGC_GAZEBO_MIN_FREE_MIB="$(QGC_GAZEBO_MIN_FREE_MIB)" ./research/check-free-space.sh \
+	MIN_FREE_MIB="$(QGC_GAZEBO_MIN_FREE_MIB)" ./research/check-free-space.sh \
 	  "$(ANTOINE_GZ_CARGO_TARGET_DIR)" "$(ANTOINE_BRIDGE_TARGET_DIR)" \
 	  "$$qgc_binary" "$$gz_binary"
 
