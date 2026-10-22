@@ -1483,6 +1483,8 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
         "probeStatus",
         "baselineStatus",
         "baselineGates",
+        "baselineFailedReasons",
+        "baselineInconclusiveReasons",
         "vehicleCount",
         "vehicles",
         "vehiclePairs",
@@ -1553,27 +1555,45 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
             or len(artifact["sha256"]) != 64
         ):
             raise ValueError(f"generated swarm report has invalid artifact digest: {name}")
-    if report["baselineStatus"] == "qualified_baseline" and not all(
-        report["baselineGates"].values()
-    ):
-        raise ValueError("generated swarm report qualified a baseline with a failed gate")
     measured_attitude_failure = any(
         vehicle["attitudeQuality"].get("measured") is True
         and vehicle["attitudeQuality"].get("passed") is False
         for vehicle in vehicles.values()
     )
-    if report["baselineStatus"] == "failed" and not measured_attitude_failure:
-        raise ValueError("generated swarm report failed without a measured attitude violation")
-    if measured_attitude_failure and (
-        report["baselineStatus"] != "failed" or report["status"] != "failed"
-    ):
-        raise ValueError("generated swarm report hid a measured attitude violation")
-    if report["status"] == "passed" and (
-        report["baselineStatus"] != "qualified_baseline"
-        or report["behaviorStatus"] != "passed"
-        or report["probeStatus"] not in {"passed", "not_requested"}
-    ):
-        raise ValueError("generated swarm report passed without complete qualification")
+    failed_reasons = report["baselineFailedReasons"]
+    inconclusive_reasons = report["baselineInconclusiveReasons"]
+    expected_failed_reasons = ["gazeboAttitudeWithinEnvelope"] if measured_attitude_failure else []
+    expected_inconclusive_reasons = [
+        name
+        for name, passed in report["baselineGates"].items()
+        if not passed and name not in expected_failed_reasons
+    ]
+    if failed_reasons != expected_failed_reasons:
+        raise ValueError("generated swarm report has inconsistent baseline failure reasons")
+    if inconclusive_reasons != expected_inconclusive_reasons:
+        raise ValueError("generated swarm report has inconsistent baseline inconclusive reasons")
+    expected_baseline_status = (
+        "failed"
+        if measured_attitude_failure
+        else "qualified_baseline"
+        if all(report["baselineGates"].values())
+        else "inconclusive"
+    )
+    if report["baselineStatus"] != expected_baseline_status:
+        raise ValueError("generated swarm report has inconsistent baseline status")
+    expected_status = (
+        "failed"
+        if measured_attitude_failure
+        or report["behaviorStatus"] == "failed"
+        or report["probeStatus"] == "failed"
+        else "inconclusive"
+        if expected_baseline_status != "qualified_baseline"
+        or report["behaviorStatus"] == "inconclusive"
+        or report["probeStatus"] == "inconclusive"
+        else "passed"
+    )
+    if report["status"] != expected_status:
+        raise ValueError("generated swarm report has inconsistent aggregate status")
 
 
 def main() -> int:

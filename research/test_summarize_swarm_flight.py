@@ -22,6 +22,7 @@ from summarize_antoine_two_drone_flight import (
     measure_pose_stream,
     selected_vehicle_authorization_evidence,
     synchronized_waypoint_snapshot,
+    validate_swarm_report,
 )
 from swarm_behavior import build_plan
 
@@ -812,6 +813,23 @@ class SummaryTests(unittest.TestCase):
         self.assertNotIn("gazeboAttitudeWithinEnvelope", result["baselineInconclusiveReasons"])
         self.assertEqual(result["status"], "failed")
         self.assertEqual(result["exitCode"], 1)
+
+    def test_report_validation_rejects_inconsistent_attitude_failure_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-test"
+            build_run(run_dir, "lanes")
+            pose_path = run_dir / "gazebo-pose.jsonl"
+            frames = [json.loads(line) for line in pose_path.read_text().splitlines()]
+            for frame in frames:
+                for pose in frame["pose"]:
+                    if pose["name"] == "isr":
+                        pose["orientation"] = {"x": 1.0, "y": 0.0, "z": 0.0, "w": 0.0}
+            pose_path.write_text("".join(json.dumps(frame) + "\n" for frame in frames))
+            result = run_summary(run_dir)
+
+        result["baselineFailedReasons"] = []
+        with self.assertRaisesRegex(ValueError, "inconsistent baseline failure reasons"):
+            validate_swarm_report(result, run_dir.name)
 
     def test_missing_gazebo_quaternion_makes_attitude_evidence_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
