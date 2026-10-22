@@ -45,6 +45,47 @@ class EvidenceManifestSymlinkTests(unittest.TestCase):
 
         self.assertIs(manifest["measurements"]["applierSessionAuditComplete"], True)
 
+    def test_symlinked_applier_audit_is_incomplete_and_never_exported(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run-a"
+            run_dir.mkdir()
+            private_audit = root / "private-session.jsonl"
+            private_audit.write_text(
+                '{"event":"session-start"}\n'
+                '{"event":"clean-shutdown"}\n',
+                encoding="utf-8",
+            )
+            audit_dir = run_dir / "applier-neutral"
+            audit_dir.mkdir()
+            (audit_dir / "applier-session.jsonl").symlink_to(private_audit)
+
+            manifest = build(run_dir)
+
+        self.assertIs(manifest["measurements"]["applierSessionAuditComplete"], False)
+        self.assertNotIn(
+            "applier-neutral/applier-session.jsonl",
+            {item["name"] for item in manifest["publicEvidence"]},
+        )
+
+    def test_applier_audit_under_symlinked_parent_is_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run-a"
+            run_dir.mkdir()
+            outside = root / "outside"
+            outside.mkdir()
+            (outside / "applier-session.jsonl").write_text(
+                '{"event":"session-start"}\n'
+                '{"event":"clean-shutdown"}\n',
+                encoding="utf-8",
+            )
+            (run_dir / "applier-neutral").symlink_to(outside, target_is_directory=True)
+
+            manifest = build(run_dir)
+
+        self.assertIs(manifest["measurements"]["applierSessionAuditComplete"], False)
+
     def test_incomplete_applier_audit_downgrades_otherwise_qualified_swarm_run(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run-a"
