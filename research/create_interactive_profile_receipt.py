@@ -116,9 +116,27 @@ def snapshot_record(run_dir: Path, snapshot_dir: Path, filename: str, contract: 
     receipt_path = snapshot_dir / filename
     if receipt_path.is_symlink() or not receipt_path.is_file():
         raise ValueError(f"source snapshot receipt is missing: {receipt_path}")
-    document = json.loads(receipt_path.read_text(encoding="utf-8"))
+
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        value: dict[str, Any] = {}
+        for key, item in pairs:
+            if key in value:
+                raise ValueError(f"source snapshot receipt contains duplicate JSON key: {key}")
+            value[key] = item
+        return value
+
+    def reject_constant(value: str) -> None:
+        raise ValueError(f"source snapshot receipt contains non-standard JSON number: {value}")
+
+    document = json.loads(
+        receipt_path.read_text(encoding="utf-8"),
+        object_pairs_hook=unique_object,
+        parse_constant=reject_constant,
+    )
     if (
-        document.get("contract") != contract
+        not isinstance(document, dict)
+        or document.get("version") != "1.1.0"
+        or document.get("contract") != contract
         or document.get("status") != "verified"
         or not isinstance(document.get("snapshotManifestSha256"), str)
         or not isinstance(document.get("files"), list)
@@ -133,10 +151,21 @@ def snapshot_record(run_dir: Path, snapshot_dir: Path, filename: str, contract: 
         raw_path = entry.get("path")
         expected_size = entry.get("sizeBytes")
         expected_hash = entry.get("sha256")
-        if not isinstance(raw_path, str) or not raw_path:
+        if (
+            set(entry) != {"path", "sizeBytes", "sha256"}
+            or not isinstance(raw_path, str)
+            or not raw_path
+            or "\\" in raw_path
+            or "\0" in raw_path
+        ):
             raise ValueError(f"source snapshot manifest is invalid: {receipt_path}")
         relative = Path(raw_path)
-        if relative.is_absolute() or ".." in relative.parts or relative in seen:
+        if (
+            relative.is_absolute()
+            or relative.as_posix() != raw_path
+            or ".." in relative.parts
+            or relative in seen
+        ):
             raise ValueError(f"source snapshot manifest has an unsafe path: {receipt_path}")
         source = snapshot_dir / relative
         try:
@@ -148,8 +177,8 @@ def snapshot_record(run_dir: Path, snapshot_dir: Path, filename: str, contract: 
             not resolved_source.is_relative_to(snapshot_dir)
             or content_hash is None
             or content_hash != expected_hash
-            or not isinstance(expected_size, int)
-            or isinstance(expected_size, bool)
+            or type(expected_size) is not int
+            or expected_size < 0
             or source.stat().st_size != expected_size
         ):
             raise ValueError(f"source snapshot bytes do not match their receipt: {source}")

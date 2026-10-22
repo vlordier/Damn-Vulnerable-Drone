@@ -9,10 +9,88 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from create_interactive_profile_receipt import create_receipt, source_record
+from create_interactive_profile_receipt import create_receipt, snapshot_record, source_record
 
 
 class InteractiveReceiptTests(unittest.TestCase):
+    @staticmethod
+    def _snapshot_fixture(root: Path, contract: str) -> tuple[Path, Path, Path, str]:
+        run_dir = root / "run-123"
+        snapshot_dir = run_dir / "snapshot"
+        snapshot_dir.mkdir(parents=True)
+        data = b"x"
+        (snapshot_dir / "input").write_bytes(data)
+        digest = hashlib.sha256(data).hexdigest()
+        manifest = hashlib.sha256(f"input\0{digest}\n".encode()).hexdigest()
+        receipt = snapshot_dir / "snapshot.json"
+        receipt.write_text(
+            json.dumps(
+                {
+                    "contract": contract,
+                    "version": "1.1.0",
+                    "status": "verified",
+                    "snapshotManifestSha256": manifest,
+                    "files": [{"path": "input", "sizeBytes": 1, "sha256": digest}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        return run_dir, snapshot_dir, receipt, contract
+
+    def test_snapshot_record_accepts_exact_v110_receipt(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir, snapshot, _receipt, contract = self._snapshot_fixture(
+                Path(directory), "damn-vulnerable-drone.antoine-source-snapshot"
+            )
+            result = snapshot_record(run_dir, snapshot, "snapshot.json", contract)
+            self.assertEqual(result["fileCount"], 1)
+
+    def test_snapshot_record_rejects_duplicate_json_keys(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir, snapshot, receipt, contract = self._snapshot_fixture(
+                Path(directory), "damn-vulnerable-drone.antoine-source-snapshot"
+            )
+            text = receipt.read_text(encoding="utf-8").replace(
+                '"status": "verified"', '"status": "invalid", "status": "verified"'
+            )
+            receipt.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
+                snapshot_record(run_dir, snapshot, "snapshot.json", contract)
+
+    def test_snapshot_record_rejects_nonstandard_json_constants(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir, snapshot, receipt, contract = self._snapshot_fixture(
+                Path(directory), "damn-vulnerable-drone.antoine-source-snapshot"
+            )
+            text = receipt.read_text(encoding="utf-8").replace('"sizeBytes": 1', '"sizeBytes": NaN')
+            receipt.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "non-standard JSON number"):
+                snapshot_record(run_dir, snapshot, "snapshot.json", contract)
+
+    def test_snapshot_record_rejects_boolean_file_size(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir, snapshot, receipt, contract = self._snapshot_fixture(
+                Path(directory), "damn-vulnerable-drone.antoine-source-snapshot"
+            )
+            text = receipt.read_text(encoding="utf-8").replace(
+                '"sizeBytes": 1', '"sizeBytes": true'
+            )
+            receipt.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "bytes do not match"):
+                snapshot_record(run_dir, snapshot, "snapshot.json", contract)
+
+    def test_snapshot_record_rejects_unsupported_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir, snapshot, receipt, contract = self._snapshot_fixture(
+                Path(directory), "damn-vulnerable-drone.antoine-source-snapshot"
+            )
+            text = receipt.read_text(encoding="utf-8").replace(
+                '"version": "1.1.0"', '"version": "1.0.0"'
+            )
+            receipt.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "receipt is incomplete"):
+                snapshot_record(run_dir, snapshot, "snapshot.json", contract)
+
     def test_headless_gazebo_receipt_excludes_qgroundcontrol_inputs(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -216,6 +294,7 @@ class InteractiveReceiptTests(unittest.TestCase):
                 json.dumps(
                     {
                         "contract": "damn-vulnerable-drone.antoine-source-snapshot",
+                        "version": "1.1.0",
                         "status": "verified",
                         "snapshotManifestSha256": antoine_manifest,
                         "files": [
@@ -233,6 +312,7 @@ class InteractiveReceiptTests(unittest.TestCase):
                 json.dumps(
                     {
                         "contract": "damn-vulnerable-drone.gazebo-source-snapshot",
+                        "version": "1.1.0",
                         "status": "verified",
                         "snapshotManifestSha256": gazebo_manifest,
                         "files": [
