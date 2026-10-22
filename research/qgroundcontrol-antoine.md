@@ -425,9 +425,11 @@ and tamper rejection tests.
 Create a non-overwriting candidate from a stable run with
 `make qgc-gazebo-pin-candidate PROFILE_RECEIPT=... PROFILE_COMPARISON=... PROFILE_PIN_CANDIDATE=...`.
 The candidate command requires matching run IDs and a stable pre/post
-comparison; headless candidates also require a passing flight report with a
-disarmed final MAVLink state and recorded final Gazebo pose. It rehashes the
-run-owned source snapshot files before recording their pins. It records complete
+comparison; it reads the receipt and comparison only as regular, non-symlink
+files inside the receipt's run directory. Headless candidates also require a
+passing flight report with a disarmed final MAVLink state and recorded final
+Gazebo pose. It rehashes the run-owned source snapshot files before recording
+their pins. It records complete
 source, artifact, and toolchain values. If a
 source checkout is unavailable, it can use the matching run-owned source
 snapshot only when that snapshot has a verified manifest, receipt digest, and

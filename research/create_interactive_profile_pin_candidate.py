@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from create_interactive_profile_receipt import snapshot_record
+from dvd_research.run_files import read_run_text
 from interactive_profile_snapshot import is_sha256, snapshot_record_error
 
 PIN_CONTRACT = "damn-vulnerable-drone.interactive-profile-pins"
@@ -50,6 +51,9 @@ def _validate_source_snapshots(value: Any) -> dict[str, Any]:
 
 def validate_run_evidence(receipt: dict[str, Any], run_directory: Path) -> None:
     """Rehash the run-owned snapshots and require successful headless acceptance."""
+    run_directory = Path(run_directory)
+    if run_directory.is_symlink():
+        raise ValueError("run directory is a symlink")
     run_directory = run_directory.resolve(strict=True)
     if receipt.get("runId") != run_directory.name:
         raise ValueError("receipt run ID does not match its evidence directory")
@@ -104,6 +108,24 @@ def validate_run_evidence(receipt: dict[str, Any], run_directory: Path) -> None:
             )
         ):
             raise ValueError("headless pin candidate requires passing disarmed Gazebo acceptance")
+
+
+def read_run_input(run_directory: Path, input_path: Path, description: str) -> Any:
+    """Read a JSON input only when it is a regular, non-linked file in the run."""
+    run_directory = Path(run_directory)
+    absolute_root = Path(os.path.abspath(run_directory))
+    absolute_input = Path(os.path.abspath(input_path))
+    try:
+        relative_path = absolute_input.relative_to(absolute_root)
+    except ValueError as error:
+        raise ValueError(f"{description} must be inside the receipt run directory") from error
+    content = read_run_text(run_directory, relative_path)
+    if content is None:
+        raise ValueError(f"{description} is missing from the receipt run directory")
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{description} is invalid JSON") from error
 
 
 def create_candidate(receipt: Any, comparison: Any) -> dict[str, Any]:
@@ -207,8 +229,8 @@ def main() -> int:
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
     try:
-        receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
-        comparison = json.loads(args.comparison.read_text(encoding="utf-8"))
+        receipt = read_run_input(args.receipt.parent, args.receipt, "profile receipt")
+        comparison = read_run_input(args.receipt.parent, args.comparison, "provenance comparison")
         validate_run_evidence(receipt, args.receipt.parent)
         candidate = create_candidate(receipt, comparison)
         payload = (json.dumps(candidate, indent=2, sort_keys=True) + "\n").encode()

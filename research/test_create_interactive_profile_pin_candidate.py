@@ -5,7 +5,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from create_interactive_profile_pin_candidate import create_candidate, validate_run_evidence
+from create_interactive_profile_pin_candidate import (
+    create_candidate,
+    read_run_input,
+    validate_run_evidence,
+)
 from verify_interactive_profile_pins import verify
 
 
@@ -60,6 +64,40 @@ class InteractiveProfilePinCandidateTests(unittest.TestCase):
         self.comparison["stable"] = False
         with self.assertRaisesRegex(ValueError, "stable provenance comparison"):
             create_candidate(self.receipt, self.comparison)
+
+    def test_run_input_must_be_a_regular_file_inside_the_run(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir = root / "run-123"
+            run_dir.mkdir()
+            receipt_path = run_dir / "receipt.json"
+            receipt_path.write_text('{"runId":"run-123"}', encoding="utf-8")
+            self.assertEqual(read_run_input(run_dir, receipt_path, "receipt"), {"runId": "run-123"})
+
+            outside = root / "outside.json"
+            outside.write_text('{"runId":"run-123"}', encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "inside the receipt run directory"):
+                read_run_input(run_dir, outside, "comparison")
+
+            alias = root / "linked-run"
+            alias.symlink_to(run_dir, target_is_directory=True)
+            with self.assertRaisesRegex(ValueError, "run directory is a symlink"):
+                read_run_input(alias, alias / "receipt.json", "receipt")
+
+    def test_run_input_rejects_symlinked_receipt_or_comparison(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            run_dir = root / "run-123"
+            run_dir.mkdir()
+            external = root / "external.json"
+            external.write_text('{"runId":"run-123"}', encoding="utf-8")
+            for name in ("receipt.json", "comparison.json"):
+                with self.subTest(name=name):
+                    linked = run_dir / name
+                    linked.symlink_to(external)
+                    with self.assertRaisesRegex(ValueError, "symlink"):
+                        read_run_input(run_dir, linked, name)
+                    linked.unlink()
 
     def test_candidate_rejects_different_run_ids(self) -> None:
         self.comparison["runId"] = "other-run"
