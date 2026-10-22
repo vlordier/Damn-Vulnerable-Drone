@@ -28,6 +28,32 @@ def validate_camera_scope(run_dir: Path, env: dict[str, str]) -> str:
     return partition
 
 
+def _skip_json_object(output: str, start: int) -> int:
+    """Skip one balanced object after strict decoding rejects it."""
+    depth = 0
+    in_string = False
+    escaped = False
+    for index in range(start, len(output)):
+        char = output[index]
+        if in_string:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                in_string = False
+            continue
+        if char == '"':
+            in_string = True
+        elif char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return index + 1
+    return len(output)
+
+
 def parse_camera_messages(output: str) -> tuple[int, int, int, set[tuple[int, int]], set[int]]:
     """Count valid camera frames without accepting ambiguous JSON objects."""
     message_count = 0
@@ -43,7 +69,7 @@ def parse_camera_messages(output: str) -> tuple[int, int, int, set[tuple[int, in
         try:
             item, end = strict_json_raw_decode(output, start)
         except json.JSONDecodeError:
-            cursor = start + 1
+            cursor = _skip_json_object(output, start)
             continue
         cursor = end
         if not isinstance(item, dict):
