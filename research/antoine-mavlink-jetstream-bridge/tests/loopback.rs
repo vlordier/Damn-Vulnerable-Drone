@@ -854,6 +854,37 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         "unsupported mission-clear type must not clear Antoine's mission"
     );
 
+    let mut unsupported_item_payload = vec![0; 38];
+    unsupported_item_payload[30] = 16;
+    unsupported_item_payload[32] = 1;
+    unsupported_item_payload[33] = 1;
+    unsupported_item_payload[34] = 6;
+    unsupported_item_payload[37] = 1;
+    let unsupported_mission_item = v2_frame(73, 19, 255, &unsupported_item_payload, 38);
+    gcs.send_to(&unsupported_mission_item, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("unsupported mission-item ACK timeout")??;
+    let (_, unsupported_item_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(unsupported_item_ack) =
+        unsupported_item_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for unsupported mission-item type");
+    };
+    assert_eq!(
+        unsupported_item_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_UNSUPPORTED
+    );
+    assert!(
+        timeout(Duration::from_millis(100), reply_rx.recv())
+            .await
+            .is_err(),
+        "unsupported mission item must not be published to Antoine"
+    );
+
     let rejected_mission_list = v2_frame(43, 14, 255, &[1, 1, 0], 132);
     gcs.send_to(&rejected_mission_list, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))

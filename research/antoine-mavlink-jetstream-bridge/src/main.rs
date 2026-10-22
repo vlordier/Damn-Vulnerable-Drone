@@ -1419,6 +1419,18 @@ async fn qgc_to_antoine_nats(
             if frame.payload.len() < 37 {
                 continue;
             }
+            if frame.payload.len() > 38 {
+                mission_upload = None;
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    1,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
+            }
             let seq = u16::from_le_bytes([frame.payload[28], frame.payload[29]]) as usize;
             let command_id = u16::from_le_bytes([frame.payload[30], frame.payload[31]]);
             let target = frame.payload[32];
@@ -1436,6 +1448,18 @@ async fn qgc_to_antoine_nats(
                     frame.system_id,
                     frame.component_id,
                     2,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
+            }
+            if frame.payload.get(37).copied().unwrap_or(0) != 0 {
+                mission_upload = None;
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    3,
                 );
                 gcs.send_to(&ack, source).await?;
                 continue;
