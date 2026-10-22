@@ -307,6 +307,8 @@ class GazeboFailureReportTests(unittest.TestCase):
                     raise AssertionError("cleanup must require a fresh armed heartbeat")
 
             async def wait_pose(self, *_args, **_kwargs) -> tuple[float, float, float]:
+                if _args and _args[-1] == "failure cleanup RTL":
+                    raise AssertionError("RTL pose confirmation lost")
                 return (0.0, 0.0, 0.0)
 
             async def mission_clear(self) -> None:
@@ -362,9 +364,10 @@ class GazeboFailureReportTests(unittest.TestCase):
             cleanup_reports[0],
             {
                 "attempted": True,
-                "rtlConfirmed": True,
+                "rtlConfirmed": False,
                 "landConfirmed": True,
                 "disarmConfirmed": True,
+                "errors": {"rtl": "AssertionError: RTL pose confirmation lost"},
             },
         )
 

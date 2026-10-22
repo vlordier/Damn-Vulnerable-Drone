@@ -846,6 +846,7 @@ async def run_check() -> dict:
             "rtlConfirmed": False,
             "landConfirmed": False,
             "disarmConfirmed": False,
+            "errors": {},
         }
         if armed and home is not None:
             try:
@@ -854,11 +855,21 @@ async def run_check() -> dict:
                     lambda point: math.dist(point, home) <= 0.25, 40, "failure cleanup RTL"
                 )
                 cleanup["rtlConfirmed"] = True
+            except Exception as cleanup_error:
+                cleanup["errors"]["rtl"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
+                print(f"Safety cleanup could not confirm RTL: {cleanup_error}", file=sys.stderr)
+
+            try:
                 await check.request(check.long(21), 21, wait=2)
                 await check.wait_pose(
                     lambda point: math.dist(point, home) <= 0.25, 15, "failure cleanup LAND"
                 )
                 cleanup["landConfirmed"] = True
+            except Exception as cleanup_error:
+                cleanup["errors"]["land"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
+                print(f"Safety cleanup could not confirm LAND: {cleanup_error}", file=sys.stderr)
+
+            try:
                 await check.disarm_after_settle(home)
                 disarmed_state = await check.wait_state(
                     lambda state: state.get("armed") is False,
@@ -868,9 +879,9 @@ async def run_check() -> dict:
                 )
                 cleanup["disarmConfirmed"] = disarmed_state.get("armed") is False
             except Exception as cleanup_error:
-                cleanup["error"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
+                cleanup["errors"]["disarm"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
                 print(
-                    f"Safety cleanup could not confirm LAND/DISARM: {cleanup_error}",
+                    f"Safety cleanup could not confirm disarm: {cleanup_error}",
                     file=sys.stderr,
                 )
         report_path = write_failed_report(run_directory, callsign, failure, cleanup, check)
