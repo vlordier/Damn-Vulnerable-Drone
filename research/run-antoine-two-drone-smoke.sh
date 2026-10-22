@@ -81,6 +81,11 @@ uv run --no-project python "$PROJECT_ROOT/research/prepare_antoine_two_drone_wor
 set +u
 source "$GZ_INSTALL/setup.bash"
 set -u
+# Gazebo's colcon setup does not consistently configure these runtime search
+# paths. Keep the selected install first while retaining explicit caller paths.
+GZ_CONFIG_PATH="$GZ_INSTALL/share/gz${GZ_CONFIG_PATH:+:$GZ_CONFIG_PATH}"
+GZ_SIM_SYSTEM_PLUGIN_PATH="$GZ_INSTALL/lib${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
+export GZ_CONFIG_PATH GZ_SIM_SYSTEM_PLUGIN_PATH
 export GZ_IP=127.0.0.1
 export GZ_PARTITION="$PARTITION"
 export GZ_CLI="$GZ_BIN"
@@ -92,6 +97,8 @@ export DYLD_LIBRARY_PATH="$GZ_INSTALL/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PAT
   printf 'GZ_PARTITION=%s\n' "$GZ_PARTITION"
   printf 'GZ_CLI=%s\n' "$GZ_CLI"
   printf 'GZ_INSTALL=%s\n' "$GZ_INSTALL"
+  printf 'GZ_CONFIG_PATH=%s\n' "$GZ_CONFIG_PATH"
+  printf 'GZ_SIM_SYSTEM_PLUGIN_PATH=%s\n' "$GZ_SIM_SYSTEM_PLUGIN_PATH"
   printf 'GZ_SIM_RESOURCE_PATH=%s\n' "$GZ_SIM_RESOURCE_PATH"
   printf 'ANTOINE_GZ_FLIGHT_NATS_PORT=%s\n' "$ANTOINE_GZ_FLIGHT_NATS_PORT"
 } >"$RUN_DIR/research-profile.env"
