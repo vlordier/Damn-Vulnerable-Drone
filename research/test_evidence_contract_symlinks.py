@@ -18,8 +18,7 @@ class EvidenceManifestSymlinkTests(unittest.TestCase):
             audit_dir.mkdir(parents=True)
             audit = audit_dir / "applier-session.jsonl"
             audit.write_text(
-                '{"event":"session-start"}\n'
-                '{"event":"publisher-inventory"}\n',
+                '{"event":"session-start"}\n{"event":"publisher-inventory"}\n',
                 encoding="utf-8",
             )
 
@@ -36,8 +35,7 @@ class EvidenceManifestSymlinkTests(unittest.TestCase):
             audit_dir = run_dir / "applier-neutral"
             audit_dir.mkdir(parents=True)
             (audit_dir / "applier-session.jsonl").write_text(
-                '{"event":"session-start"}\n'
-                '{"event":"clean-shutdown"}\n',
+                '{"event":"session-start"}\n{"event":"clean-shutdown"}\n',
                 encoding="utf-8",
             )
 
@@ -52,8 +50,7 @@ class EvidenceManifestSymlinkTests(unittest.TestCase):
             run_dir.mkdir()
             private_audit = root / "private-session.jsonl"
             private_audit.write_text(
-                '{"event":"session-start"}\n'
-                '{"event":"clean-shutdown"}\n',
+                '{"event":"session-start"}\n{"event":"clean-shutdown"}\n',
                 encoding="utf-8",
             )
             audit_dir = run_dir / "applier-neutral"
@@ -76,8 +73,7 @@ class EvidenceManifestSymlinkTests(unittest.TestCase):
             outside = root / "outside"
             outside.mkdir()
             (outside / "applier-session.jsonl").write_text(
-                '{"event":"session-start"}\n'
-                '{"event":"clean-shutdown"}\n',
+                '{"event":"session-start"}\n{"event":"clean-shutdown"}\n',
                 encoding="utf-8",
             )
             (run_dir / "applier-neutral").symlink_to(outside, target_is_directory=True)
@@ -122,8 +118,7 @@ class EvidenceManifestSymlinkTests(unittest.TestCase):
             audit_dir = run_dir / "applier-neutral"
             audit_dir.mkdir()
             (audit_dir / "applier-session.jsonl").write_text(
-                '{"event":"session-start"}\n'
-                '{"event":"publisher-inventory"}\n',
+                '{"event":"session-start"}\n{"event":"publisher-inventory"}\n',
                 encoding="utf-8",
             )
 

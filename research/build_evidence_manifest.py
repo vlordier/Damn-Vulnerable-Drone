@@ -383,9 +383,8 @@ def build(run_dir: Path) -> dict[str, Any]:
     session_audit_present = session_audit.exists() or session_audit.is_symlink()
     if session_audit_present:
         session_events = []
-        safe_session_audit = (
-            session_audit.is_file()
-            and not contains_symlink_component(run_dir, session_audit_relative)
+        safe_session_audit = session_audit.is_file() and not contains_symlink_component(
+            run_dir, session_audit_relative
         )
         if safe_session_audit:
             try:

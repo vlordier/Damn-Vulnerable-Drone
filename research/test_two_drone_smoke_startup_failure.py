@@ -10,7 +10,6 @@ from pathlib import Path
 
 from dvd_research.evidence_contract import verify_manifest
 
-
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "research" / "run-antoine-two-drone-smoke.sh"
 

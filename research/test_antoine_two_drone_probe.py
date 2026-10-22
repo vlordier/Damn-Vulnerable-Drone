@@ -42,7 +42,9 @@ class TwoDroneProbeTests(unittest.TestCase):
         self.assertFalse(
             antoine_two_drone_probe.validate_nats_state("drone-1", "isr", invalid_time)[0]
         )
-        self.assertFalse(antoine_two_drone_probe.validate_nats_state("drone-1", "isr", [1, 2, 3])[0])
+        self.assertFalse(
+            antoine_two_drone_probe.validate_nats_state("drone-1", "isr", [1, 2, 3])[0]
+        )
         out_of_range_time = {**valid, "simulation_time_ns": 1 << 64}
         self.assertFalse(
             antoine_two_drone_probe.validate_nats_state("drone-1", "isr", out_of_range_time)[0]
