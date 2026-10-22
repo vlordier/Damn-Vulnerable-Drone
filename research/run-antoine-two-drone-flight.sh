@@ -621,5 +621,6 @@ printf 'swarm fault: %s (status %s)\n' "${FAULT}" "${FAULT_STATUS}"
 printf 'swarm MAVLink telemetry: %s (status %s)\n' "${SWARM_MAVLINK}" "${MAVLINK_STATUS}"
 printf 'cross-vehicle authorization probe: %s (status %s)\n' "${FAULT}" "${AUTH_PROBE_STATUS}"
 cat "${REPORT_ROOT}/${RUN_ID}-launcher.log"
-if [[ "${FLIGHT_STATUS}" -ne 0 || "${SUMMARY_STATUS}" -ne 0 || "${FAULT_STATUS}" -ne 0 ||
+if [[ "${SUMMARY_STATUS}" -ne 0 ]]; then exit "${SUMMARY_STATUS}"; fi
+if [[ "${FLIGHT_STATUS}" -ne 0 || "${FAULT_STATUS}" -ne 0 ||
   "${MAVLINK_STATUS}" -ne 0 || "${AUTH_PROBE_STATUS}" -ne 0 ]]; then exit 2; fi
