@@ -13,6 +13,17 @@ from pathlib import Path
 
 from dvd_research.run_files import write_run_json
 from dvd_research.run_nats import validate_run_nats_endpoint
+from dvd_research.strict_json import loads as strict_json_loads
+
+
+def matching_vehicle_state(line: str | bytes, callsign: str) -> dict | None:
+    try:
+        payload = strict_json_loads(line)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if isinstance(payload, dict) and payload.get("identity") == callsign:
+        return payload
+    return None
 
 
 def main() -> int:
@@ -123,11 +134,7 @@ def main() -> int:
                     line = key.fileobj.readline()
                     if not line:
                         continue
-                    try:
-                        payload = json.loads(line)
-                    except (UnicodeDecodeError, json.JSONDecodeError):
-                        continue
-                    if not isinstance(payload, dict) or payload.get("identity") != args.callsign:
+                    if matching_vehicle_state(line, args.callsign) is None:
                         continue
                     received_ns = time.monotonic_ns()
                     if observation_deadline is None:

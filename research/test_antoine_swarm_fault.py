@@ -10,6 +10,19 @@ import antoine_swarm_fault
 
 
 class AntoineSwarmFaultTests(unittest.TestCase):
+    def test_state_observer_rejects_duplicate_identity(self) -> None:
+        self.assertIsNone(
+            antoine_swarm_fault.matching_vehicle_state(
+                b'{"identity":"spoofed","identity":"drone-2"}', "drone-2"
+            )
+        )
+        self.assertEqual(
+            antoine_swarm_fault.matching_vehicle_state(
+                b'{"identity":"drone-2","time_s":1.0}', "drone-2"
+            ),
+            {"identity": "drone-2", "time_s": 1.0},
+        )
+
     def test_missing_nats_subscriber_writes_inconclusive_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run"

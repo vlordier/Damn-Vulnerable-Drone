@@ -16,6 +16,7 @@ from urllib.parse import urlsplit
 
 from dvd_research.run_files import read_run_tail_text, read_run_text, resolve_run_file
 from dvd_research.run_nats import validate_run_nats_endpoint
+from dvd_research.strict_json import loads as strict_json_loads
 
 SUPPORTED_MUTATIONS = {"wrong-callsign", "wrong-task", "wrong-target", "stale-run"}
 MAX_PROBE_MESSAGES = 1
@@ -69,7 +70,7 @@ def validate_vehicle_callsigns(source: str, target: str) -> None:
 def read_one_json(output: str) -> dict:
     for line in output.splitlines():
         try:
-            value = json.loads(line)
+            value = strict_json_loads(line)
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict):
@@ -157,7 +158,7 @@ def target_plan(run_dir: Path, callsign: str) -> tuple[str, list[float]]:
     config_text = read_run_text(run_dir, Path("research-swarm-config.json"))
     if config_text is None:
         raise ValueError("run-owned swarm config is unavailable")
-    config = json.loads(config_text)
+    config = strict_json_loads(config_text)
     if not isinstance(config, dict) or not isinstance(config.get("vehicles"), list):
         raise ValueError("swarm config must contain a vehicle roster")
     matches = [
@@ -284,7 +285,7 @@ def vehicle_effect_snapshot(run_dir: Path, models: dict[str, str]) -> dict:
     wanted_models = set(models.values())
     for line in reversed(lines):
         try:
-            frame = json.loads(line)
+            frame = strict_json_loads(line)
             stamp = frame["header"]["stamp"]
             sim_time = pose_simulation_time(stamp)
         except (json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError):
@@ -325,7 +326,7 @@ def vehicle_effect_snapshot(run_dir: Path, models: dict[str, str]) -> dict:
     wanted_callsigns = set(models)
     for line in reversed(actuator_lines):
         try:
-            row = json.loads(line)
+            row = strict_json_loads(line)
         except json.JSONDecodeError:
             continue
         if not isinstance(row, dict):
@@ -490,7 +491,7 @@ def pose_window_at_target(
     samples = []
     for line in lines:
         try:
-            frame = json.loads(line)
+            frame = strict_json_loads(line)
             stamp = frame["header"]["stamp"]
             timestamp = pose_simulation_time(stamp)
         except (json.JSONDecodeError, KeyError, TypeError, ValueError, AttributeError):
@@ -689,7 +690,7 @@ def main() -> int:
         config_text = read_run_text(run_dir, Path("research-swarm-config.json"))
         if config_text is None:
             raise ValueError("run-owned swarm config is unavailable")
-        config = json.loads(config_text)
+        config = strict_json_loads(config_text)
         models = vehicle_models_from_config(config)
         validate_probe_roster(models, args.source, args.target)
         pose_deadline = time.monotonic() + args.wait_timeout_seconds

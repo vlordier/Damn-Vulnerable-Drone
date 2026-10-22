@@ -10,6 +10,7 @@ from pathlib import Path
 
 from dvd_research.run_files import read_run_text, write_run_json
 from dvd_research.run_nats import validate_run_nats_endpoint
+from dvd_research.strict_json import loads as strict_json_loads
 
 CONTROLLER_LOG = Path("logs/antoine-controller.log")
 MOTOR_SEQUENCE = Path("applier-authorized/drone-1.motors")
@@ -22,7 +23,7 @@ def read_one_json(output: str) -> dict:
         if not line:
             continue
         try:
-            value = json.loads(line)
+            value = strict_json_loads(line)
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict):
@@ -67,7 +68,7 @@ def read_audit_rows(run_dir: Path) -> list[dict]:
     if content is not None:
         for line in content.splitlines():
             try:
-                row = json.loads(line)
+                row = strict_json_loads(line)
             except json.JSONDecodeError:
                 continue
             if isinstance(row, dict):

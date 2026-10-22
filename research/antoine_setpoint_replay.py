@@ -10,6 +10,7 @@ from pathlib import Path
 
 from antoine_setpoint_mutation import (
     CONTROLLER_LOG,
+    read_one_json,
     wait_for_controller_ready,
 )
 from dvd_research.run_files import read_run_text, write_run_json
@@ -49,17 +50,7 @@ def main() -> int:
             timeout=8,
             check=True,
         )
-        payload = None
-        for line in captured.stdout.splitlines():
-            try:
-                candidate = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(candidate, dict):
-                payload = candidate
-                break
-        if payload is None:
-            raise ValueError("could not decode one live JSON setpoint")
+        payload = read_one_json(captured.stdout)
         expected_binding = {
             "contract": "furia.gzsitl.mission-setpoint",
             "version": "2.1.0",

@@ -20,6 +20,7 @@ from swarm_cross_vehicle_probe import (
     mutate_setpoint,
     pose_simulation_time,
     pose_window_at_target,
+    read_one_json,
     target_plan,
     validate_probe_roster,
     validate_run_evidence_paths,
@@ -67,6 +68,10 @@ def valid_live_setpoint() -> dict:
 
 
 class MutationTests(unittest.TestCase):
+    def test_raw_setpoint_decoder_rejects_duplicate_binding_fields(self) -> None:
+        with self.assertRaisesRegex(ValueError, "NATS raw subscription"):
+            read_one_json('{"vehicleId":"drone-1","vehicleId":"drone-2"}')
+
     PROBE_HASH = "a" * 64
 
     def test_run_owned_launcher_applies_run_identity_source_patch(self) -> None:
@@ -364,7 +369,7 @@ class PoseTruthTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
-            with self.assertRaisesRegex(ValueError, "final waypoint is malformed"):
+            with self.assertRaisesRegex(ValueError, "non-standard JSON constant NaN"):
                 target_plan(run_dir, "drone-1")
 
     def test_probe_rejects_evidence_symlink_that_escapes_the_run(self) -> None:
