@@ -34,6 +34,7 @@ MAXIMUM_ATTITUDE_TILT_RADIANS = 0.6
 MAXIMUM_CONTROL_TICKS_PER_STATE_SAMPLE = 1.1
 MINIMUM_CADENCE_TELEMETRY_SAMPLES = 20
 MAX_CROSS_VEHICLE_POSE_EFFECT_M = 1.0
+MAX_CROSS_VEHICLE_ACTUATOR_EFFECT_L2 = 0.0
 MAX_CROSS_VEHICLE_EFFECT_WINDOW_SECONDS = 2.0
 SUPPORTED_SWARM_FAULTS = {
     "none",
@@ -994,6 +995,22 @@ def valid_vec3(value: Any) -> bool:
     )
 
 
+def actuator_numeric_vector(values: Any) -> list[float] | None:
+    if not isinstance(values, dict):
+        return None
+    vector: list[float] = []
+    for key in sorted(values):
+        value = values[key]
+        candidates = value if isinstance(value, list) else [value]
+        if any(
+            not isinstance(item, (int, float)) or isinstance(item, bool) or not math.isfinite(item)
+            for item in candidates
+        ):
+            return None
+        vector.extend(float(item) for item in candidates)
+    return vector or None
+
+
 def cross_vehicle_effect_windows_valid(
     report: dict[str, Any], vehicles: list[dict[str, Any]], run_id: str
 ) -> bool:
@@ -1043,18 +1060,26 @@ def cross_vehicle_effect_windows_valid(
                 or actuator.get("runId") != run_id
                 or actuator.get("vehicleId") != callsign
                 or type(actuator.get("sequence")) is not int
-            ):
-                return False
-            if actuator.get("stage") == "authorized-command" and (
-                actuator.get("executionGrantRunId") != run_id
+                or actuator.get("stage") != "authorized-command"
+                or actuator.get("executionGrantRunId") != run_id
                 or actuator.get("executionGrantVehicleId") != callsign
             ):
                 return False
-    tolerance = report.get("effectComparison", {}).get("poseEffectToleranceM")
+    effect_comparison = report.get("effectComparison")
+    if not isinstance(effect_comparison, dict):
+        return False
+    tolerance = effect_comparison.get("poseEffectToleranceM")
     if (
         type(tolerance) not in {int, float}
         or not math.isfinite(tolerance)
         or tolerance != MAX_CROSS_VEHICLE_POSE_EFFECT_M
+    ):
+        return False
+    actuator_tolerance = effect_comparison.get("actuatorOutputEffectToleranceL2")
+    if (
+        type(actuator_tolerance) not in {int, float}
+        or not math.isfinite(actuator_tolerance)
+        or actuator_tolerance != MAX_CROSS_VEHICLE_ACTUATOR_EFFECT_L2
     ):
         return False
     before_poses = before["poseByVehicle"]
@@ -1070,6 +1095,20 @@ def cross_vehicle_effect_windows_valid(
         first_actuator = before["actuatorByVehicle"][callsign]
         decision_actuator = during["actuatorByVehicle"][callsign]
         last_actuator = after["actuatorByVehicle"][callsign]
+        first_vector = actuator_numeric_vector(first_actuator.get("values"))
+        decision_vector = actuator_numeric_vector(decision_actuator.get("values"))
+        last_vector = actuator_numeric_vector(last_actuator.get("values"))
+        reported_vehicles = effect_comparison.get("vehicles")
+        reported_effect = (
+            reported_vehicles.get(callsign) if isinstance(reported_vehicles, dict) else None
+        )
+        actuator_delta = (
+            math.dist(first_vector, last_vector)
+            if first_vector is not None
+            and last_vector is not None
+            and len(first_vector) == len(last_vector)
+            else None
+        )
         if (
             not isinstance(start, dict)
             or not isinstance(decision_pose, dict)
@@ -1088,6 +1127,16 @@ def cross_vehicle_effect_windows_valid(
             or decision_actuator["sequence"] < first_actuator["sequence"]
             or last_actuator["sequence"] < first_actuator["sequence"]
             or last_actuator["sequence"] < decision_actuator["sequence"]
+            or first_vector is None
+            or decision_vector is None
+            or last_vector is None
+            or len(first_vector) != len(decision_vector)
+            or len(first_vector) != len(last_vector)
+            or math.dist(first_vector, decision_vector) > actuator_tolerance
+            or actuator_delta is None
+            or actuator_delta > actuator_tolerance
+            or not isinstance(reported_effect, dict)
+            or reported_effect.get("actuatorValuesDeltaL2") != actuator_delta
         ):
             return False
     return True
@@ -2345,6 +2394,8 @@ def main() -> int:
         isinstance(authorization_effects, dict)
         and authorization_effects.get("runId") == run_dir.name
         and authorization_effects.get("status") == "measured"
+        and authorization_effects.get("actuatorOutputEffectToleranceL2")
+        == MAX_CROSS_VEHICLE_ACTUATOR_EFFECT_L2
         and isinstance(authorization_effects.get("vehicles"), dict)
         and set(authorization_effects["vehicles"]) == {item["callsign"] for item in vehicles}
         and all(
@@ -2358,6 +2409,9 @@ def main() -> int:
             and type(effect.get("poseElapsedSimulationSeconds")) in {int, float}
             and effect["poseElapsedSimulationSeconds"] > 0
             and effect.get("actuatorIdentityValid") is True
+            and type(effect.get("actuatorValuesDeltaL2")) in {int, float}
+            and math.isfinite(effect["actuatorValuesDeltaL2"])
+            and effect["actuatorValuesDeltaL2"] <= MAX_CROSS_VEHICLE_ACTUATOR_EFFECT_L2
             and type(effect.get("actuatorSequenceBefore")) is int
             and type(effect.get("actuatorSequenceAfter")) is int
             and effect["actuatorSequenceAfter"] >= effect["actuatorSequenceBefore"]

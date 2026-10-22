@@ -1617,6 +1617,7 @@ class SummaryTests(unittest.TestCase):
                         "runId": run_dir.name,
                         "status": "measured",
                         "poseEffectToleranceM": 1.0,
+                        "actuatorOutputEffectToleranceL2": 0.0,
                         "vehicles": {
                             callsign: {
                                 "model": model,
@@ -1625,6 +1626,7 @@ class SummaryTests(unittest.TestCase):
                                 "actuatorIdentityValid": True,
                                 "actuatorSequenceBefore": 1,
                                 "actuatorSequenceAfter": 2,
+                                "actuatorValuesDeltaL2": 0.0,
                             }
                             for callsign, model in CALLSIGNS
                         },
@@ -1671,6 +1673,7 @@ class SummaryTests(unittest.TestCase):
                             "stage": "authorized-command",
                             "executionGrantRunId": run_dir.name,
                             "executionGrantVehicleId": callsign,
+                            "values": {"motor": [0.1, 0.2]},
                         }
                         for index, (callsign, _model) in enumerate(CALLSIGNS)
                     },
@@ -1685,7 +1688,16 @@ class SummaryTests(unittest.TestCase):
 
     def test_cross_vehicle_effect_windows_recompute_bounds_and_identity(self) -> None:
         vehicles = [{"callsign": callsign, "model": model} for callsign, model in CALLSIGNS]
-        report = {"injectionAtUnixMs": 2000, "effectComparison": {"poseEffectToleranceM": 1.0}}
+        report = {
+            "injectionAtUnixMs": 2000,
+            "effectComparison": {
+                "poseEffectToleranceM": 1.0,
+                "actuatorOutputEffectToleranceL2": 0.0,
+                "vehicles": {
+                    callsign: {"actuatorValuesDeltaL2": 0.0} for callsign, _model in CALLSIGNS
+                },
+            },
+        }
         for key, stamp, sim_time, y in zip(
             ("effectSnapshotBefore", "effectSnapshotAtDecision", "effectSnapshotAfterObservation"),
             (1000, 2000, 3000),
@@ -1712,12 +1724,23 @@ class SummaryTests(unittest.TestCase):
                         "stage": "authorized-command",
                         "executionGrantRunId": "run-1",
                         "executionGrantVehicleId": callsign,
+                        "values": {"motor": [0.1, 0.2]},
                     }
                     for callsign, _model in CALLSIGNS
                 },
             }
         report["effectComparison"]["poseEffectToleranceM"] = 1.0
         self.assertTrue(cross_vehicle_effect_windows_valid(report, vehicles, "run-1"))
+        report["effectSnapshotAfterObservation"]["actuatorByVehicle"]["drone-2"]["values"] = {
+            "motor": [0.1, 0.3]
+        }
+        self.assertFalse(cross_vehicle_effect_windows_valid(report, vehicles, "run-1"))
+        report["effectSnapshotAfterObservation"]["actuatorByVehicle"]["drone-2"]["values"] = {
+            "motor": [0.1, 0.2]
+        }
+        report["effectComparison"]["vehicles"]["drone-2"]["actuatorValuesDeltaL2"] = 0.1
+        self.assertFalse(cross_vehicle_effect_windows_valid(report, vehicles, "run-1"))
+        report["effectComparison"]["vehicles"]["drone-2"]["actuatorValuesDeltaL2"] = 0.0
         report["effectSnapshotAfterObservation"]["actuatorByVehicle"]["drone-2"]["runId"] = (
             "other-run"
         )
@@ -1729,7 +1752,16 @@ class SummaryTests(unittest.TestCase):
         vehicles = [{"callsign": callsign, "model": model} for callsign, model in CALLSIGNS]
 
         def fixture() -> dict:
-            report = {"injectionAtUnixMs": 2000, "effectComparison": {"poseEffectToleranceM": 1.0}}
+            report = {
+                "injectionAtUnixMs": 2000,
+                "effectComparison": {
+                    "poseEffectToleranceM": 1.0,
+                    "actuatorOutputEffectToleranceL2": 0.0,
+                    "vehicles": {
+                        callsign: {"actuatorValuesDeltaL2": 0.0} for callsign, _model in CALLSIGNS
+                    },
+                },
+            }
             for key, stamp, sim_time, y in zip(
                 (
                     "effectSnapshotBefore",
@@ -1753,7 +1785,12 @@ class SummaryTests(unittest.TestCase):
                         for _callsign, model in CALLSIGNS
                     },
                     "actuatorByVehicle": {
-                        callsign: {"runId": "run-1", "vehicleId": callsign, "sequence": stamp}
+                        callsign: {
+                            "runId": "run-1",
+                            "vehicleId": callsign,
+                            "sequence": stamp,
+                            "values": {"motor": [0.1, 0.2]},
+                        }
                         for callsign, _model in CALLSIGNS
                     },
                 }

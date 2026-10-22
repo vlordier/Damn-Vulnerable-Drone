@@ -22,6 +22,7 @@ MAX_PROBE_MESSAGES = 1
 MAX_POSE_BYTES = 512_000
 MAX_ACTUATOR_BYTES = 512_000
 POSE_EFFECT_TOLERANCE_M = 1.0
+ACTUATOR_OUTPUT_EFFECT_TOLERANCE_L2 = 0.0
 PROBE_SEQUENCE_GAP = 100
 DECISION_TIMEOUT_SECONDS = 5.0
 
@@ -402,7 +403,7 @@ def compare_effect_snapshots(
         first_vector = actuator_numeric_vector(first_actuator.get("values"))
         last_vector = actuator_numeric_vector(last_actuator.get("values"))
         actuator_delta = (
-            round(math.dist(first_vector, last_vector), 6)
+            math.dist(first_vector, last_vector)
             if first_vector is not None
             and last_vector is not None
             and len(first_vector) == len(last_vector)
@@ -427,17 +428,42 @@ def compare_effect_snapshots(
             "actuatorAuthorityAfter": last_actuator.get("authority"),
         }
     complete = not missing and len(vehicles) == len(models)
-    within_tolerance = complete and all(
-        item["poseElapsedSimulationSeconds"] > 0
-        and item["poseDisplacementM"] <= POSE_EFFECT_TOLERANCE_M
-        and item["actuatorSequenceAdvanced"]
-        and item["actuatorIdentityValid"]
+    actuator_measurements_complete = complete and all(
+        item["actuatorValuesDeltaL2"] is not None for item in vehicles.values()
+    )
+    actuator_outputs_stable = actuator_measurements_complete and all(
+        item["actuatorValuesDeltaL2"] <= ACTUATOR_OUTPUT_EFFECT_TOLERANCE_L2
         for item in vehicles.values()
     )
+    within_tolerance = (
+        complete
+        and all(
+            item["poseElapsedSimulationSeconds"] > 0
+            and item["poseDisplacementM"] <= POSE_EFFECT_TOLERANCE_M
+            and item["actuatorSequenceAdvanced"]
+            and item["actuatorIdentityValid"]
+            for item in vehicles.values()
+        )
+        and actuator_outputs_stable
+    )
+    if not actuator_measurements_complete:
+        status = "inconclusive"
+        actuator_effect_status = "measurement-incomplete"
+    elif not actuator_outputs_stable:
+        status = "inconclusive"
+        actuator_effect_status = "output-drift-exceeds-bound"
+    elif within_tolerance:
+        status = "measured"
+        actuator_effect_status = "within-bound"
+    else:
+        status = "failed"
+        actuator_effect_status = "within-bound"
     return {
-        "status": "measured" if within_tolerance else "inconclusive" if not complete else "failed",
+        "status": status,
         "runId": run_id,
         "poseEffectToleranceM": POSE_EFFECT_TOLERANCE_M,
+        "actuatorOutputEffectToleranceL2": ACTUATOR_OUTPUT_EFFECT_TOLERANCE_L2,
+        "actuatorEffectStatus": actuator_effect_status,
         "missing": missing,
         "vehicles": vehicles,
     }

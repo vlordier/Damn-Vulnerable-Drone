@@ -165,8 +165,44 @@ class MutationTests(unittest.TestCase):
         )
 
         self.assertEqual(valid["status"], "measured")
+        self.assertEqual(valid["actuatorOutputEffectToleranceL2"], 0.0)
+        self.assertEqual(valid["vehicles"]["drone-1"]["actuatorValuesDeltaL2"], 0.0)
         self.assertEqual(foreign_grant["status"], "failed")
         self.assertFalse(foreign_grant["vehicles"]["drone-1"]["actuatorIdentityValid"])
+
+    def test_actuator_output_drift_cannot_be_qualified_as_a_rejected_effect(self) -> None:
+        before = {
+            "missing": [],
+            "poseByVehicle": {
+                "fpv-a": {"simulationTimeSeconds": 1.0, "positionEnuM": [1.0, 2.0, 3.0]}
+            },
+            "actuatorByVehicle": {
+                "drone-1": {
+                    "runId": "run-1",
+                    "vehicleId": "drone-1",
+                    "executionGrantRunId": "run-1",
+                    "executionGrantVehicleId": "drone-1",
+                    "sequence": 10,
+                    "values": {"motor": [0.1, 0.2]},
+                }
+            },
+        }
+        after = json.loads(json.dumps(before))
+        after["poseByVehicle"]["fpv-a"]["simulationTimeSeconds"] = 2.0
+        after["actuatorByVehicle"]["drone-1"]["sequence"] = 11
+        after["actuatorByVehicle"]["drone-1"]["values"]["motor"] = [0.1, 0.3]
+
+        result = compare_effect_snapshots(before, after, {"drone-1": "fpv-a"}, "run-1")
+
+        self.assertEqual(result["status"], "inconclusive")
+        self.assertEqual(result["actuatorEffectStatus"], "output-drift-exceeds-bound")
+        self.assertGreater(result["vehicles"]["drone-1"]["actuatorValuesDeltaL2"], 0.0)
+
+        missing = json.loads(json.dumps(before))
+        del missing["actuatorByVehicle"]["drone-1"]["values"]
+        result = compare_effect_snapshots(missing, after, {"drone-1": "fpv-a"}, "run-1")
+        self.assertEqual(result["status"], "inconclusive")
+        self.assertEqual(result["actuatorEffectStatus"], "measurement-incomplete")
 
     def test_wrong_callsign_changes_only_vehicle_binding_and_freshness_sequence(self) -> None:
         original = valid_live_setpoint()
@@ -385,6 +421,8 @@ class PoseTruthTests(unittest.TestCase):
                 str(run_dir),
                 "--mutation",
                 "stale-run",
+                "--wait-timeout-seconds",
+                "1",
             ]
             with (
                 patch.object(sys, "argv", argv),
