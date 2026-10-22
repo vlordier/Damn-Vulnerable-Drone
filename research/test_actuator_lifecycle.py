@@ -10,6 +10,35 @@ from lifecycle_test_fixtures import build_lifecycle
 
 
 class LifecycleTests(unittest.TestCase):
+    def test_symlinked_applier_directory_cannot_establish_disarm(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run-a"
+            run_dir.mkdir()
+            evidence, rows = build_lifecycle(run_dir, "drone-1")
+            external = root / "external-applier-neutral"
+            (run_dir / "applier-neutral").rename(external)
+            (run_dir / "applier-neutral").symlink_to(external, target_is_directory=True)
+
+            result = disarmed_status(run_dir, "drone-1", evidence, rows)
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIsNone(result["disarmed"])
+
+    def test_symlinked_run_directory_cannot_establish_disarm(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run-a"
+            run_dir.mkdir()
+            evidence, rows = build_lifecycle(run_dir, "drone-1")
+            alias = root / "run-alias"
+            alias.symlink_to(run_dir, target_is_directory=True)
+
+            result = disarmed_status(alias, "drone-1", evidence, rows)
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIsNone(result["disarmed"])
+
     def test_explicit_signed_lifecycle_and_independent_stop_are_measured(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory)

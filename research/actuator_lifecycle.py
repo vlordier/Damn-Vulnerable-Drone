@@ -6,6 +6,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from dvd_research.evidence_contract import contains_symlink_component
+
 
 def _integer(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
@@ -20,6 +22,15 @@ def disarmed_status(
     def unavailable(reason: str) -> dict[str, Any]:
         return {"status": "unavailable", "disarmed": None, "reason": reason}
 
+    run_dir = Path(run_dir)
+    if run_dir.is_symlink():
+        return unavailable("Run directory is a symlink.")
+    try:
+        run_dir = run_dir.resolve(strict=True)
+    except OSError:
+        return unavailable("Run directory is missing or cannot be resolved.")
+    if not run_dir.is_dir():
+        return unavailable("Run path is not a directory.")
     if not isinstance(evidence, dict) or not isinstance(evidence.get("finalActuatorState"), dict):
         return unavailable(
             "No explicit actuator-lifecycle acknowledgement; neutral motors and revoked grants do not establish disarm."
@@ -40,7 +51,8 @@ def disarmed_status(
     latest_path = directory / f"{callsign}.armed-state.json"
     try:
         for path in (audit_path, latest_path):
-            if path.is_symlink() or path.stat().st_size > 1_048_576:
+            relative = path.relative_to(run_dir)
+            if contains_symlink_component(run_dir, relative) or path.stat().st_size > 1_048_576:
                 return unavailable("Unsafe or oversized actuator-lifecycle artifact.")
         rows = [json.loads(line) for line in audit_path.read_text().splitlines() if line.strip()]
         if any(not isinstance(row, dict) for row in rows):
