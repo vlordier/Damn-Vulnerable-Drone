@@ -34,6 +34,10 @@ class GazeboFailureReportTests(unittest.TestCase):
 
         self.assertIn('export ANTOINE_GZ_MAVLINK_CALLSIGN="${CALLSIGN}"', runner)
         self.assertIn('export ANTOINE_GZ_CALLSIGN="${CALLSIGN}"', runner)
+        self.assertIn(
+            'CALLSIGN="${ANTOINE_GZ_MAVLINK_CALLSIGN:-${ANTOINE_GZ_CALLSIGN:-drone-1}}"',
+            runner,
+        )
         self.assertIn("printf 'ANTOINE_GZ_CALLSIGN=%s\\n' \"${ANTOINE_GZ_CALLSIGN}\"", runner)
         self.assertIn('"ANTOINE_GZ_CALLSIGN",', provenance)
 
