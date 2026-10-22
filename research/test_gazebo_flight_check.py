@@ -326,6 +326,16 @@ class GazeboFailureReportTests(unittest.TestCase):
         self.assertIsNone(checker.telemetry_rejection)
         self.assertTrue(checker.valid_telemetry_received.is_set())
 
+        duplicate_identity = (
+            b'{"schema":"furia.telemetry","version":"1.0.0",'
+            b'"identity":"spoofed","identity":"drone-1",'
+            b'"protocol":"antoine-gz","runId":"run-1",'
+            b'"observedAtUnixMs":1800000000000}'
+        )
+        asyncio.run(deliver(duplicate_identity))
+        self.assertEqual(checker.raw_telemetry, valid)
+        self.assertEqual(checker.telemetry_rejection, "telemetry is not valid JSON")
+
         for invalid in (
             {**valid, "protocol": "antoine"},
             {**valid, "version": "2.0.0"},

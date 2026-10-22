@@ -316,6 +316,24 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertIn("Gazebo protocol", result["reason"])
         read_messages.assert_called_once_with(14226, "furia.telemetry.drone-1")
 
+    def test_read_nats_messages_rejects_duplicate_keys(self) -> None:
+        result = type(
+            "Result",
+            (),
+            {
+                "returncode": 0,
+                "stdout": '{"identity":"spoofed","identity":"drone-1"}\n',
+            },
+        )()
+        with patch("interactive_profile.subprocess.run", return_value=result):
+            messages, error = interactive_profile.read_nats_messages(
+                14226, "furia.telemetry.drone-1"
+            )
+
+        self.assertEqual(messages, [])
+        self.assertEqual(error["status"], "invalid")
+        self.assertIn("non-JSON", error["reason"])
+
     def test_sample_telemetry_requires_matching_run_id(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         samples = [

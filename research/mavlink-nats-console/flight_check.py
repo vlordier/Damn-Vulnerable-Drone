@@ -21,6 +21,8 @@ from pathlib import Path
 import nats
 from flight_check_support import require_check
 
+from dvd_research.strict_json import loads as strict_json_loads
+
 logging.getLogger("nats").setLevel(logging.ERROR)
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -121,7 +123,7 @@ class FlightCheck:
 
     async def on_telemetry(self, msg):
         try:
-            value = json.loads(msg.data)
+            value = strict_json_loads(msg.data)
         except (UnicodeDecodeError, json.JSONDecodeError):
             self._record_callback_rejection("telemetry payload is not valid JSON")
             return
@@ -151,7 +153,7 @@ class FlightCheck:
 
     async def on_audit(self, msg):
         try:
-            value = json.loads(msg.data)
+            value = strict_json_loads(msg.data)
         except (UnicodeDecodeError, json.JSONDecodeError):
             self._record_callback_rejection("audit payload is not valid JSON")
             return
@@ -245,7 +247,7 @@ class FlightCheck:
             json.dumps(envelope).encode(),
             timeout=2,
         )
-        response = json.loads(reply.data)
+        response = strict_json_loads(reply.data)
         require_check(isinstance(response, dict), "direct NATS response is not a JSON object")
         response["requestIdMatched"] = response.get("requestId") == request_id
         require_check(response["requestIdMatched"], response)
@@ -373,7 +375,7 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
             ).encode(),
             timeout=2,
         )
-        mission_state = json.loads(mission.data)
+        mission_state = strict_json_loads(mission.data)
         require_check(
             isinstance(mission_state, dict), "mission query response is not a JSON object"
         )
@@ -408,7 +410,7 @@ async def scenario(url: str, qgc_port: int, bridge_port: int, callsign: str, rep
             ).encode(),
             timeout=2,
         )
-        mission_after_execution = json.loads(mission_after_execution_reply.data)
+        mission_after_execution = strict_json_loads(mission_after_execution_reply.data)
         require_check(
             isinstance(mission_after_execution, dict),
             "post-execution mission query response is not a JSON object",

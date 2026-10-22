@@ -16,6 +16,7 @@ from flight_check import FlightCheck
 from flight_check_support import finite_json_number, require_check
 
 from dvd_research.run_files import read_run_tail_text, resolve_run_file, write_run_json
+from dvd_research.strict_json import loads as strict_json_loads
 
 POSE_SAMPLE_MAX_AGE_SECONDS = 1.5
 MAVLINK_STATE_MAX_AGE_SECONDS = 1.5
@@ -118,7 +119,7 @@ class GazeboFlightCheck(FlightCheck):
 
     async def on_telemetry(self, msg):
         try:
-            value = json.loads(msg.data)
+            value = strict_json_loads(msg.data)
         except (UnicodeDecodeError, json.JSONDecodeError):
             self.telemetry_rejection = "telemetry is not valid JSON"
             return
@@ -262,7 +263,7 @@ class GazeboFlightCheck(FlightCheck):
             return None
         for line in reversed(lines):
             try:
-                value = json.loads(line)
+                value = strict_json_loads(line)
             except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
             if not isinstance(value, dict):
@@ -426,7 +427,7 @@ class GazeboFlightCheck(FlightCheck):
             json.dumps(envelope).encode(),
             timeout=2,
         )
-        response = json.loads(reply.data)
+        response = strict_json_loads(reply.data)
         response["requestIdMatched"] = response.get("requestId") == request_id
         require_check(response["requestIdMatched"], response)
         return response
@@ -447,7 +448,7 @@ class GazeboFlightCheck(FlightCheck):
         records = []
         for line in content.splitlines():
             try:
-                record = json.loads(line)
+                record = strict_json_loads(line)
             except json.JSONDecodeError:
                 continue
             if (
@@ -674,7 +675,7 @@ async def run_check() -> dict:
             ).encode(),
             timeout=2,
         )
-        mission_state = json.loads(mission_response.data)
+        mission_state = strict_json_loads(mission_response.data)
         require_check(mission_state.get("missionUploaded") is True, mission_state)
         require_check(len(mission_state.get("waypoints", [])) == len(waypoints), mission_state)
         await check.request(check.long(300), 300)

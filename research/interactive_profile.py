@@ -21,6 +21,7 @@ from typing import Any
 from dvd_research.evidence_contract import contains_symlink_component
 from dvd_research.nats_identity import valid_callsign
 from dvd_research.run_files import read_run_text
+from dvd_research.strict_json import loads as strict_json_loads
 
 STOP_TIMEOUT_SECONDS = 5.0
 STOP_POLL_SECONDS = 0.1
@@ -43,7 +44,7 @@ GAZEBO_VEHICLE_POSE_NAME = "isr"
 
 
 def _load_receipt(receipt_path: Path) -> dict[str, Any]:
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt = strict_json_loads(receipt_path.read_text(encoding="utf-8"))
     if not isinstance(receipt, dict):
         raise ValueError("profile receipt must be a JSON object")
     if (
@@ -283,7 +284,9 @@ def read_nats_messages(port: int, subject: str) -> tuple[list[Any], dict[str, st
     if result.returncode != 0:
         return [], {"status": "unavailable", "reason": f"NATS subscription failed for {subject}"}
     try:
-        return [json.loads(line) for line in result.stdout.splitlines() if line.strip()], None
+        return [
+            strict_json_loads(line) for line in result.stdout.splitlines() if line.strip()
+        ], None
     except (json.JSONDecodeError, TypeError):
         return [], {"status": "invalid", "reason": f"NATS returned non-JSON data for {subject}"}
 
@@ -379,7 +382,7 @@ def _sample_audited_heartbeat(
             "reason": f"no latest run-owned {label} audit frame is available",
         }
     try:
-        message = json.loads(result.stdout)
+        message = strict_json_loads(result.stdout)
         if isinstance(message, dict) and isinstance(message.get("message"), dict):
             message = message["message"]
         if not isinstance(message, dict):
@@ -388,9 +391,9 @@ def _sample_audited_heartbeat(
         if isinstance(data, str):
             try:
                 decoded = base64.b64decode(data, validate=True).decode("utf-8")
-                envelope = json.loads(decoded)
+                envelope = strict_json_loads(decoded)
             except (ValueError, UnicodeDecodeError, json.JSONDecodeError):
-                envelope = json.loads(data)
+                envelope = strict_json_loads(data)
         elif isinstance(data, dict):
             envelope = data
         else:
@@ -634,7 +637,7 @@ def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
     samples: list[dict[str, Any]] = []
     for line in tail.splitlines():
         try:
-            message = json.loads(line)
+            message = strict_json_loads(line)
         except json.JSONDecodeError:
             continue
         if not isinstance(message, dict):

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import json
 import os
 import socket
 import struct
@@ -14,6 +13,8 @@ import uuid
 import nats
 from flight_check_support import require_check
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy
+
+from dvd_research.strict_json import loads as strict_json_loads
 
 
 def arm_value_from_audit(record: dict) -> float:
@@ -41,7 +42,7 @@ async def main() -> None:
 
     async def next_json(subscription: nats.aio.subscription.Subscription) -> dict:
         message = await asyncio.wait_for(subscription.next_msg(), timeout=5)
-        return json.loads(message.data)
+        return strict_json_loads(message.data)
 
     async def wait_telemetry_state(armed: bool) -> dict:
         deadline = time.monotonic() + 5
@@ -119,7 +120,7 @@ async def main() -> None:
             except nats.errors.TimeoutError:
                 continue
             for message in audit_messages:
-                record = json.loads(message.data)
+                record = strict_json_loads(message.data)
                 await message.ack()
                 if record.get("direction") != "gcs_to_antoine" or record.get("message_id") != 76:
                     continue

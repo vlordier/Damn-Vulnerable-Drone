@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import os
 import socket
 import time
@@ -12,6 +11,8 @@ import uuid
 import nats
 from flight_check_support import require_check
 from nats.js.api import AckPolicy, ConsumerConfig, DeliverPolicy
+
+from dvd_research.strict_json import loads as strict_json_loads
 
 
 def x25(data: bytes, extra: int) -> int:
@@ -91,7 +92,7 @@ async def main() -> None:
             except nats.errors.TimeoutError:
                 continue
             for message in messages:
-                row = json.loads(message.data)
+                row = strict_json_loads(message.data)
                 await message.ack()
                 if row.get("direction") == "gcs_to_antoine" and row.get("message_id") == 0:
                     # Request message 66 encodes a u16 stream ID, u16 message

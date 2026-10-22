@@ -50,6 +50,10 @@ class MavlinkFlightCheckGateTests(unittest.TestCase):
             await checker.on_audit(Message(b'{"message_id":true}'))
             await checker.on_telemetry(Message(b'{"identity":"drone-1","armed":true}'))
             await checker.on_audit(Message(b'{"message_id":76}'))
+            await checker.on_telemetry(
+                Message(b'{"identity":"spoofed","identity":"drone-1","armed":false}')
+            )
+            await checker.on_audit(Message(b'{"message_id":1,"message_id":76}'))
 
         asyncio.run(deliver())
 
@@ -64,6 +68,8 @@ class MavlinkFlightCheckGateTests(unittest.TestCase):
                 "audit payload is not valid JSON",
                 "audit payload is not a JSON object",
                 "audit payload has no valid MAVLink message ID",
+                "telemetry payload is not valid JSON",
+                "audit payload is not valid JSON",
             ],
         )
 
