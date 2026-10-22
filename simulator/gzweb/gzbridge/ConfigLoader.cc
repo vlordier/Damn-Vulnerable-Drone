@@ -30,9 +30,9 @@ void ConfigLoader::loadAllFiles(ConfigLoader* c, const std::string& path)
 }
 
 ConfigLoader::ConfigLoader(const std::string& fileEnding)
+	: m_fileEnding(fileEnding), m_LoadOrder(0.0f), tok(TOKEN_EOF), lastTok(TOKEN_EOF)
 {
-	//Register as a ScriptLoader
-	m_fileEnding = fileEnding;
+	// _nextToken shifts the current token before reading the first one.
 }
 
 ConfigLoader::~ConfigLoader()
