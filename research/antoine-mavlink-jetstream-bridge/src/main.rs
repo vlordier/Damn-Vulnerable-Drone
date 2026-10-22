@@ -1065,6 +1065,11 @@ fn read_only_request(frame: &FrameInfo, target_system: u8) -> bool {
     }
 }
 
+fn request_run_id_matches(configured_run_id: Option<&str>, value: &serde_json::Value) -> bool {
+    configured_run_id
+        .is_none_or(|run_id| value.get("runId").and_then(serde_json::Value::as_str) == Some(run_id))
+}
+
 async fn publish_frame(
     js: &jetstream::Context,
     callsign: &str,
@@ -2145,6 +2150,9 @@ async fn readonly_jetstream_to_vehicle(
         let message = message?;
         let result = async {
             let value: serde_json::Value = serde_json::from_slice(&message.payload)?;
+            if !request_run_id_matches(config.run_id.as_deref(), &value) {
+                bail!("JetStream request run identity does not match this bridge run");
+            }
             let encoded = value
                 .get("raw_base64")
                 .and_then(|v| v.as_str())
@@ -2587,6 +2595,26 @@ mod tests {
             "antoine-nats",
             None,
             &serde_json::json!({})
+        ));
+    }
+
+    #[test]
+    fn jetstream_vehicle_requests_must_match_configured_run_identity() {
+        assert!(request_run_id_matches(
+            Some("selected-run"),
+            &serde_json::json!({"runId":"selected-run"})
+        ));
+        assert!(!request_run_id_matches(
+            Some("selected-run"),
+            &serde_json::json!({"runId":"other-run"})
+        ));
+        assert!(!request_run_id_matches(
+            Some("selected-run"),
+            &serde_json::json!({"raw_base64":"frame"})
+        ));
+        assert!(request_run_id_matches(
+            None,
+            &serde_json::json!({"raw_base64":"legacy request"})
         ));
     }
 

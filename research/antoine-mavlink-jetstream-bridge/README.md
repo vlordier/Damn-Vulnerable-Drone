@@ -29,6 +29,9 @@ authority envelopes or publish actuator commands. This is a loopback research
 authority, not Core/Prime/Vigie authority. This mode requires `--run-id` and
 copies it into every JetStream MAVLink frame envelope so status and acceptance
 can reject cross-run audit records.
+In `udp` mode, JetStream read-only vehicle requests also require an exact
+`runId` match whenever `--run-id` is configured; requests without one remain
+compatible only when the bridge itself has no selected run ID.
 
 The supported control surface includes ARM/DISARM, takeoff, LAND, RTL, mode
 changes (STABILIZE, GUIDED, AUTO, HOLD, RTL, LAND), bounded local-NED position

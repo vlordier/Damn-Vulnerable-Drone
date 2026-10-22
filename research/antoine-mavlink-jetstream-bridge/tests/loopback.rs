@@ -210,6 +210,8 @@ async fn local_bridge_routes_qgc_commands_bidirectionally_and_gates_nats_egress(
 
     let bridge_child = Command::new(env!("CARGO_BIN_EXE_antoine-mavlink-jetstream-bridge"))
         .args([
+            "--run-id",
+            "bridge-run-1",
             "--nats-url",
             &nats_url,
             "--callsign",
@@ -274,6 +276,25 @@ async fn local_bridge_routes_qgc_commands_bidirectionally_and_gates_nats_egress(
         .publish(
             format!("furia.mavlink.request.{callsign}"),
             serde_json::json!({
+                "runId": "stale-run",
+                "raw_base64": BASE64.encode(request_data_stream.as_slice())
+            })
+            .to_string()
+            .into(),
+        )
+        .await?;
+    ack.await?;
+    assert!(
+        timeout(Duration::from_millis(200), vehicle.recv_from(&mut buf))
+            .await
+            .is_err(),
+        "JetStream requests from another run must not reach the vehicle"
+    );
+    let ack = js
+        .publish(
+            format!("furia.mavlink.request.{callsign}"),
+            serde_json::json!({
+                "runId": "bridge-run-1",
                 "raw_base64": BASE64.encode(request_data_stream.as_slice())
             })
             .to_string()
@@ -294,6 +315,7 @@ async fn local_bridge_routes_qgc_commands_bidirectionally_and_gates_nats_egress(
         .publish(
             format!("furia.mavlink.request.{callsign}"),
             serde_json::json!({
+                "runId": "bridge-run-1",
                 "raw_base64": BASE64.encode(arm_command.as_slice())
             })
             .to_string()
@@ -366,7 +388,7 @@ async fn local_bridge_routes_qgc_commands_bidirectionally_and_gates_nats_egress(
     let mut stream = js.get_stream(STREAM).await?;
     let info = stream.info().await?;
     assert_eq!(
-        info.state.messages, 8,
+        info.state.messages, 9,
         "invalid MAVLink CRC must not be persisted"
     );
     assert_eq!(info.state.subjects_count, 4);
