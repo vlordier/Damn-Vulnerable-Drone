@@ -23,7 +23,9 @@ projection, but sends operator requests to the run-owned Gazebo local-authority
 process. That authority validates each request and signs the grant and setpoint
 consumed by the normal Antoine Gazebo controller. The bridge cannot mint
 authority envelopes or publish actuator commands. This is a loopback research
-authority, not Core/Prime/Vigie authority.
+authority, not Core/Prime/Vigie authority. This mode requires `--run-id` and
+copies it into every JetStream MAVLink frame envelope so status and acceptance
+can reject cross-run audit records.
 
 The supported control surface includes ARM/DISARM, takeoff, LAND, RTL, mode
 changes (STABILIZE, GUIDED, AUTO, HOLD, RTL, LAND), bounded local-NED position

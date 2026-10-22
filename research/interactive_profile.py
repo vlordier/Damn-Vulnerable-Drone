@@ -391,12 +391,13 @@ def _sample_audited_heartbeat(
         or envelope.get("schema") != "furia.mavlink.frame"
         or envelope.get("version") != "1.0.0"
         or envelope.get("callsign") != callsign
+        or envelope.get("runId") != receipt.get("runId")
         or envelope.get("direction") != direction
         or envelope.get("message_id") != 0
     ):
         return {
             "status": "unverified",
-            "reason": f"latest audit frame is not this callsign's {label} heartbeat",
+            "reason": f"latest audit frame is not this run's {label} heartbeat",
         }
     received_ms = envelope.get("received_at_unix_ms")
     if (
@@ -413,6 +414,7 @@ def _sample_audited_heartbeat(
         return {"status": "unverified", "reason": f"{label} heartbeat did not arrive from loopback"}
     result = {
         "status": "observed",
+        "runId": envelope["runId"],
         "source": source,
         "ageSeconds": max(0.0, age),
         "messageId": 0,

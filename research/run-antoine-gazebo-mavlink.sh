@@ -407,6 +407,7 @@ if lsof -nP -iUDP:"${QGC_BIND_PORT}" >/dev/null 2>&1; then
   exit 1
 fi
 dvd_run_owned_child "${PROJECT_ROOT}" "${BRIDGE_IDENTITY}" "${BRIDGE_BIN}" --mode gazebo-nats --callsign "${CALLSIGN}" \
+  --run-id "${RUN_ID}" \
   --nats-url "${NATS_URL}" \
   --qgc-bind "127.0.0.1:${QGC_BIND_PORT}" \
   --qgc-peer "127.0.0.1:${QGC_LISTEN_PORT}" \

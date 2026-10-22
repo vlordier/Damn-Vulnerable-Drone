@@ -25,6 +25,7 @@ const MAX_SETPOINT_CLOCK_FUTURE_SKEW: Duration = Duration::from_millis(250);
 #[derive(Debug, Clone)]
 struct Config {
     callsign: String,
+    run_id: Option<String>,
     nats_url: String,
     vehicle_bind: SocketAddr,
     vehicle_peer: SocketAddr,
@@ -45,6 +46,8 @@ struct FrameEnvelope {
     schema: &'static str,
     version: &'static str,
     callsign: String,
+    #[serde(rename = "runId", skip_serializing_if = "Option::is_none")]
+    run_id: Option<String>,
     direction: String,
     received_at_unix_ms: u128,
     source: String,
@@ -299,6 +302,10 @@ fn arg(name: &str, default: &str) -> String {
 fn config() -> Result<Config> {
     let mut config = Config {
         mode: arg("--mode", "udp"),
+        run_id: {
+            let value = arg("--run-id", "");
+            (!value.is_empty()).then_some(value)
+        },
         control_subject: String::new(),
         home_alt_msl: arg("--home-alt-msl", "82").parse()?,
         home_lat_deg: arg("--home-lat-deg", "48.0002").parse()?,
@@ -361,6 +368,9 @@ fn config() -> Result<Config> {
     }
     if !matches!(config.mode.as_str(), "udp" | "antoine-nats" | "gazebo-nats") {
         bail!("--mode must be udp, antoine-nats, or gazebo-nats");
+    }
+    if config.mode == "gazebo-nats" && config.run_id.is_none() {
+        bail!("--run-id is required in gazebo-nats mode");
     }
     Ok(config)
 }
@@ -1009,6 +1019,7 @@ fn read_only_request(frame: &FrameInfo, target_system: u8) -> bool {
 async fn publish_frame(
     js: &jetstream::Context,
     callsign: &str,
+    run_id: Option<&str>,
     direction: &str,
     source: &str,
     raw: &[u8],
@@ -1022,6 +1033,7 @@ async fn publish_frame(
         schema: "furia.mavlink.frame",
         version: "1.0.0",
         callsign: callsign.to_owned(),
+        run_id: run_id.map(str::to_owned),
         direction: direction.to_owned(),
         received_at_unix_ms: unix_ms()?,
         source: source.to_owned(),
@@ -1065,6 +1077,7 @@ async fn vehicle_to_gcs(
         publish_frame(
             &js,
             &config.callsign,
+            config.run_id.as_deref(),
             "vehicle_to_gcs",
             &src.to_string(),
             raw,
@@ -1097,6 +1110,7 @@ async fn gcs_to_vehicle(
         publish_frame(
             &js,
             &config.callsign,
+            config.run_id.as_deref(),
             "gcs_to_vehicle",
             &src.to_string(),
             raw,
@@ -1233,6 +1247,7 @@ async fn qgc_to_antoine_nats(
         publish_frame(
             &js,
             &config.callsign,
+            config.run_id.as_deref(),
             "gcs_to_antoine",
             &source.to_string(),
             raw,
@@ -2143,6 +2158,7 @@ async fn main() -> Result<()> {
 
     let v2g_config = Config {
         mode: config.mode.clone(),
+        run_id: config.run_id.clone(),
         home_alt_msl: config.home_alt_msl,
         home_lat_deg: config.home_lat_deg,
         home_lon_deg: config.home_lon_deg,
@@ -2159,6 +2175,7 @@ async fn main() -> Result<()> {
     };
     let g2j_config = Config {
         mode: config.mode.clone(),
+        run_id: config.run_id.clone(),
         home_alt_msl: config.home_alt_msl,
         home_lat_deg: config.home_lat_deg,
         home_lon_deg: config.home_lon_deg,
@@ -2175,6 +2192,7 @@ async fn main() -> Result<()> {
     };
     let j2v_config = Config {
         mode: config.mode.clone(),
+        run_id: config.run_id.clone(),
         home_alt_msl: config.home_alt_msl,
         home_lat_deg: config.home_lat_deg,
         home_lon_deg: config.home_lon_deg,
@@ -2244,6 +2262,7 @@ mod tests {
     fn test_config(mode: &str) -> Config {
         Config {
             callsign: "drone-1".to_owned(),
+            run_id: Some("test-run".to_owned()),
             nats_url: "nats://127.0.0.1:4222".to_owned(),
             vehicle_bind: "127.0.0.1:14560".parse().unwrap(),
             vehicle_peer: "127.0.0.1:14561".parse().unwrap(),

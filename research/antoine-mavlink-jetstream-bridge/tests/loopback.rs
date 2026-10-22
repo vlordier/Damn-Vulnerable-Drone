@@ -15,6 +15,16 @@ use tokio::time::timeout;
 const STREAM: &str = "ANTOINE_MAVLINK";
 static NATS_INTEGRATION_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[test]
+fn gazebo_mode_requires_run_identity() {
+    let output = Command::new(env!("CARGO_BIN_EXE_antoine-mavlink-jetstream-bridge"))
+        .args(["--mode", "gazebo-nats"])
+        .output()
+        .expect("run bridge configuration check");
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("--run-id is required"));
+}
+
 struct ChildGuard(Child);
 
 impl Drop for ChildGuard {
@@ -1777,6 +1787,8 @@ async fn gazebo_nats_mode_routes_gcs_arm_through_local_authority() -> Result<()>
         .args([
             "--mode",
             "gazebo-nats",
+            "--run-id",
+            "gazebo-authority-test-run",
             "--nats-url",
             &nats_url,
             "--callsign",
@@ -1901,5 +1913,6 @@ async fn gazebo_nats_mode_routes_gcs_arm_through_local_authority() -> Result<()>
     let audit: serde_json::Value = serde_json::from_slice(&audit.payload)?;
     assert_eq!(audit["direction"], "gcs_to_antoine");
     assert_eq!(audit["message_id"], 76);
+    assert_eq!(audit["runId"], "gazebo-authority-test-run");
     Ok(())
 }

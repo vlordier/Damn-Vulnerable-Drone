@@ -645,6 +645,7 @@ class InteractiveProfileTests(unittest.TestCase):
             "schema": "furia.mavlink.frame",
             "version": "1.0.0",
             "callsign": "drone-1",
+            "runId": Path(self.temp.name).name,
             "direction": "gcs_to_antoine",
             "received_at_unix_ms": int(interactive_profile.time.time() * 1000),
             "source": "127.0.0.1:53000",
@@ -659,6 +660,7 @@ class InteractiveProfileTests(unittest.TestCase):
             )
 
         self.assertEqual(result["status"], "observed")
+        self.assertEqual(result["runId"], Path(self.temp.name).name)
         command = run.call_args.args[0]
         self.assertEqual(
             command[-5:],
@@ -673,6 +675,28 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertIn("stream", command)
         self.assertNotIn("sub", command)
         self.assertNotIn("publish", command)
+
+    def test_audit_heartbeat_requires_matching_run_id(self) -> None:
+        self.heartbeat.stop()
+        envelope = {
+            "schema": "furia.mavlink.frame",
+            "version": "1.0.0",
+            "callsign": "drone-1",
+            "runId": "another-run",
+            "direction": "gcs_to_antoine",
+            "received_at_unix_ms": int(interactive_profile.time.time() * 1000),
+            "source": "127.0.0.1:53000",
+            "message_id": 0,
+        }
+        with patch("interactive_profile.subprocess.run") as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = json.dumps({"data": json.dumps(envelope)})
+            result = interactive_profile.sample_qgc_heartbeat(
+                json.loads(self.receipt.read_text(encoding="utf-8"))
+            )
+
+        self.assertEqual(result["status"], "unverified")
+        self.assertIn("this run", result["reason"])
 
     def test_audit_heartbeat_requires_run_owned_nats_readiness_log(self) -> None:
         self.heartbeat.stop()
@@ -700,6 +724,7 @@ class InteractiveProfileTests(unittest.TestCase):
             "schema": "furia.mavlink.frame",
             "version": "1.0.0",
             "callsign": "drone-1",
+            "runId": Path(self.temp.name).name,
             "direction": "gcs_to_antoine",
             "received_at_unix_ms": 1,
             "source": "127.0.0.1:53000",
@@ -724,6 +749,7 @@ class InteractiveProfileTests(unittest.TestCase):
             "schema": "furia.mavlink.frame",
             "version": "1.0.0",
             "callsign": "drone-1",
+            "runId": Path(self.temp.name).name,
             "direction": "vehicle_to_gcs",
             "received_at_unix_ms": int(interactive_profile.time.time() * 1000),
             "source": "127.0.0.1:14651",
@@ -748,6 +774,7 @@ class InteractiveProfileTests(unittest.TestCase):
             "schema": "furia.mavlink.frame",
             "version": "1.0.0",
             "callsign": "drone-1",
+            "runId": Path(self.temp.name).name,
             "direction": "gcs_to_antoine",
             "received_at_unix_ms": int(interactive_profile.time.time() * 1000),
             "source": "127.0.0.1:53000",
