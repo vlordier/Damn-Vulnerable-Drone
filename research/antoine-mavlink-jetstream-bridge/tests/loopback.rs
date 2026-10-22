@@ -963,6 +963,41 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     assert_eq!(uploaded["command"]["payload"]["waypoints"][0][1], 0.0);
     assert_eq!(uploaded["command"]["payload"]["waypoints"][0][2], -1.0);
 
+    let unsupported_mission_count = v2_frame(44, 40, 255, &mission_count_payload, 221);
+    gcs.send_to(&unsupported_mission_count, qgc_bind).await?;
+    let (_length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("unsupported-field upload mission request timeout")??;
+    assert_eq!(buffer[7], 51, "bridge should request the mission item");
+    let mut unsupported_waypoint_payload = mission_item[10..mission_item.len() - 2].to_vec();
+    unsupported_waypoint_payload[0..4].copy_from_slice(&1.0_f32.to_le_bytes());
+    let unsupported_waypoint = v2_frame(73, 41, 255, &unsupported_waypoint_payload, 38);
+    gcs.send_to(&unsupported_waypoint, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("unsupported mission parameter ACK timeout")??;
+    assert_eq!(
+        buffer[7], 47,
+        "unsupported waypoint semantics must be rejected"
+    );
+    let (_, unsupported_response) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+        &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+    )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(unsupported_ack) = unsupported_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for unsupported waypoint semantics");
+    };
+    assert_eq!(
+        unsupported_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
+    assert!(
+        timeout(Duration::from_millis(100), reply_rx.recv())
+            .await
+            .is_err(),
+        "waypoint fields unsupported by the NATS contract must not be published"
+    );
+
     let mut partial_upload_count = mission_count_payload.clone();
     partial_upload_count[0..2].copy_from_slice(&2_u16.to_le_bytes());
     let partial_upload = v2_frame(44, 30, 255, &partial_upload_count, 221);
