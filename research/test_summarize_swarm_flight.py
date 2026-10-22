@@ -807,7 +807,10 @@ class SummaryTests(unittest.TestCase):
         self.assertFalse(result["baselineGates"]["gazeboAttitudeWithinEnvelope"])
         self.assertTrue(result["vehicles"]["drone-2"]["attitudeQuality"]["passed"])
         self.assertEqual(result["behaviorStatus"], "passed")
-        self.assertEqual(result["status"], "inconclusive")
+        self.assertEqual(result["baselineStatus"], "failed")
+        self.assertEqual(result["baselineFailedReasons"], ["gazeboAttitudeWithinEnvelope"])
+        self.assertNotIn("gazeboAttitudeWithinEnvelope", result["baselineInconclusiveReasons"])
+        self.assertEqual(result["status"], "failed")
 
     def test_missing_gazebo_quaternion_makes_attitude_evidence_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -825,6 +828,8 @@ class SummaryTests(unittest.TestCase):
         self.assertFalse(attitude["measured"])
         self.assertFalse(attitude["passed"])
         self.assertFalse(result["baselineGates"]["gazeboAttitudeWithinEnvelope"])
+        self.assertEqual(result["baselineStatus"], "inconclusive")
+        self.assertEqual(result["status"], "inconclusive")
 
     def test_missing_final_waypoint_time_keeps_behavior_inconclusive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

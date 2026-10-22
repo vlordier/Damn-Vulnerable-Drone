@@ -20,7 +20,7 @@ DEFAULT_VEHICLES = [
     {"callsign": "drone-2", "model": "fpv-a"},
 ]
 DEFAULT_SPACING_M = 8.0
-SWARM_REPORT_VERSION = "1.12.0"
+SWARM_REPORT_VERSION = "1.13.0"
 POSE_PAIR_TOLERANCE_SECONDS = 0.05
 MINIMUM_SEPARATION_METERS = 1.0
 MINIMUM_POSE_SAMPLES_PER_VEHICLE = 20
@@ -1500,7 +1500,7 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
         or report["status"] not in {"passed", "failed", "inconclusive"}
         or report["behaviorStatus"] not in {"passed", "failed", "inconclusive"}
         or report["probeStatus"] not in {"passed", "failed", "inconclusive", "not_requested"}
-        or report["baselineStatus"] not in {"qualified_baseline", "inconclusive"}
+        or report["baselineStatus"] not in {"qualified_baseline", "failed", "inconclusive"}
     ):
         raise ValueError("generated swarm report has invalid contract identity or status")
     vehicles = report["vehicles"]
@@ -1557,6 +1557,17 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
         report["baselineGates"].values()
     ):
         raise ValueError("generated swarm report qualified a baseline with a failed gate")
+    measured_attitude_failure = any(
+        vehicle["attitudeQuality"].get("measured") is True
+        and vehicle["attitudeQuality"].get("passed") is False
+        for vehicle in vehicles.values()
+    )
+    if report["baselineStatus"] == "failed" and not measured_attitude_failure:
+        raise ValueError("generated swarm report failed without a measured attitude violation")
+    if measured_attitude_failure and (
+        report["baselineStatus"] != "failed" or report["status"] != "failed"
+    ):
+        raise ValueError("generated swarm report hid a measured attitude violation")
     if report["status"] == "passed" and (
         report["baselineStatus"] != "qualified_baseline"
         or report["behaviorStatus"] != "passed"
@@ -1972,6 +1983,9 @@ def main() -> int:
         for item in vehicle_results.values()
     )
     all_attitudes_qualified = all(item["passed"] for item in attitude_quality.values())
+    measured_attitude_failure = any(
+        item["measured"] and not item["passed"] for item in attitude_quality.values()
+    )
     all_transition_safe_stops_qualified = all(
         item["safeStopEvidence"].get("status") == "measured" for item in vehicle_results.values()
     )
@@ -2093,9 +2107,22 @@ def main() -> int:
         "runOwnedSourceBuildInputsPresent": run_owned_source_build_inputs_present,
     }
     baseline_qualified = all(baseline_gates.values())
+    baseline_status = (
+        "failed"
+        if measured_attitude_failure
+        else "qualified_baseline"
+        if baseline_qualified
+        else "inconclusive"
+    )
+    baseline_failed_reasons = ["gazeboAttitudeWithinEnvelope"] if measured_attitude_failure else []
+    baseline_inconclusive_reasons = [
+        name
+        for name, passed in baseline_gates.items()
+        if not passed and name not in baseline_failed_reasons
+    ]
     aggregate_status = (
         "failed"
-        if behavior_status == "failed" or probe_status == "failed"
+        if measured_attitude_failure or behavior_status == "failed" or probe_status == "failed"
         else "inconclusive"
         if not baseline_qualified
         or behavior_status == "inconclusive"
@@ -2113,11 +2140,10 @@ def main() -> int:
         "status": aggregate_status,
         "behaviorStatus": behavior_status,
         "probeStatus": probe_status,
-        "baselineStatus": "qualified_baseline" if baseline_qualified else "inconclusive",
+        "baselineStatus": baseline_status,
         "baselineGates": baseline_gates,
-        "baselineInconclusiveReasons": [
-            name for name, passed in baseline_gates.items() if not passed
-        ],
+        "baselineFailedReasons": baseline_failed_reasons,
+        "baselineInconclusiveReasons": baseline_inconclusive_reasons,
         "provenance": provenance_summary,
         "evidenceArtifacts": evidence_artifacts,
         "vehicleCount": len(vehicles),
