@@ -13,6 +13,7 @@ from pathlib import Path
 
 from dvd_research.run_files import read_run_text, write_run_json
 from dvd_research.strict_json import raw_decode as strict_json_raw_decode
+from dvd_research.strict_json import skip_json_object as strict_json_skip_object
 
 
 def validate_camera_scope(run_dir: Path, env: dict[str, str]) -> str:
@@ -26,32 +27,6 @@ def validate_camera_scope(run_dir: Path, env: dict[str, str]) -> str:
     if profile.get("GZ_IP") != "127.0.0.1" or env.get("GZ_IP") != "127.0.0.1":
         raise ValueError("camera probe requires the run's loopback Gazebo discovery address")
     return partition
-
-
-def _skip_json_object(output: str, start: int) -> int:
-    """Skip one balanced object after strict decoding rejects it."""
-    depth = 0
-    in_string = False
-    escaped = False
-    for index in range(start, len(output)):
-        char = output[index]
-        if in_string:
-            if escaped:
-                escaped = False
-            elif char == "\\":
-                escaped = True
-            elif char == '"':
-                in_string = False
-            continue
-        if char == '"':
-            in_string = True
-        elif char == "{":
-            depth += 1
-        elif char == "}":
-            depth -= 1
-            if depth == 0:
-                return index + 1
-    return len(output)
 
 
 def parse_camera_messages(output: str) -> tuple[int, int, int, set[tuple[int, int]], set[int]]:
@@ -69,7 +44,7 @@ def parse_camera_messages(output: str) -> tuple[int, int, int, set[tuple[int, in
         try:
             item, end = strict_json_raw_decode(output, start)
         except json.JSONDecodeError:
-            cursor = _skip_json_object(output, start)
+            cursor = strict_json_skip_object(output, start)
             continue
         cursor = end
         if not isinstance(item, dict):

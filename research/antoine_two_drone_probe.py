@@ -15,6 +15,7 @@ from dvd_research.run_files import read_run_text, write_run_json, write_run_text
 from dvd_research.run_nats import validate_run_nats_endpoint
 from dvd_research.strict_json import loads as strict_json_loads
 from dvd_research.strict_json import raw_decode as strict_json_raw_decode
+from dvd_research.strict_json import skip_json_object as strict_json_skip_object
 
 POSE_TOPIC = "/world/antoine_gz_flight_proof/pose/info"
 POSE_MODELS = {"drone-1": "isr", "drone-2": "fpv-a"}
@@ -31,7 +32,7 @@ def gazebo_pose_samples(payload: str) -> list[dict]:
         try:
             message, end = strict_json_raw_decode(payload, start)
         except json.JSONDecodeError:
-            cursor = start + 1
+            cursor = strict_json_skip_object(payload, start)
             continue
         cursor = end
         if not isinstance(message, dict):

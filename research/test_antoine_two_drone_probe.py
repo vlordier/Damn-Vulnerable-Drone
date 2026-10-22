@@ -74,6 +74,19 @@ class TwoDroneProbeTests(unittest.TestCase):
             self.assertEqual(observation["status"], "inconclusive")
             self.assertTrue((run_dir / "gazebo-pose-info.jsonl").is_file())
 
+    def test_gazebo_pose_parser_does_not_promote_nested_duplicate_json(self) -> None:
+        valid_frame = {
+            "header": {"stamp": {"sec": 1, "nsec": 0}},
+            "pose": [
+                {"name": "isr", "position": {"x": 0, "y": 0, "z": 0}},
+                {"name": "fpv-a", "position": {"x": 8, "y": 0, "z": 0}},
+            ],
+        }
+        nested = json.dumps(valid_frame, separators=(",", ":"))
+        ambiguous = f'{{"nested":{nested},"nested":{{}}}}'
+
+        self.assertEqual(antoine_two_drone_probe.gazebo_pose_samples(ambiguous), [])
+
     def test_gazebo_truth_rejects_duplicate_nested_json_keys(self) -> None:
         frame = (
             '{"header":{"stamp":{"sec":1,"nsec":0}},'
