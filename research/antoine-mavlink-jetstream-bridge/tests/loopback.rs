@@ -1063,7 +1063,10 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         .context("rejected mission upload was not received")?;
 
     let mut unsupported_payload = arm_payload.clone();
+    unsupported_payload[..28].fill(0);
     unsupported_payload[28..30].copy_from_slice(&22_u16.to_le_bytes());
+    unsupported_payload[30] = 1;
+    unsupported_payload[31] = 1;
     unsupported_payload[24..28].copy_from_slice(&1.0_f32.to_le_bytes());
     let takeoff = v2_frame(76, 12, 255, &unsupported_payload[..32], 152);
     gcs.send_to(&takeoff, qgc_bind).await?;

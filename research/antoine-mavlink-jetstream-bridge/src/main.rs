@@ -656,9 +656,6 @@ fn control_command(frame: &FrameInfo, vehicle_system_id: u8) -> Result<Option<se
     let params: [f64; 7] = std::array::from_fn(|index| {
         f32::from_le_bytes(frame.payload[index * 4..index * 4 + 4].try_into().unwrap()) as f64
     });
-    if params.iter().any(|value| !value.is_finite()) {
-        bail!("COMMAND_LONG parameters must be finite");
-    }
     let p = |index: usize| params[index];
     let target = frame.payload[30];
     let component = frame.payload[31];
@@ -669,15 +666,32 @@ fn control_command(frame: &FrameInfo, vehicle_system_id: u8) -> Result<Option<se
         bail!("COMMAND_LONG component mismatch");
     }
     let command = u16::from_le_bytes([frame.payload[28], frame.payload[29]]);
+    if command != 21 && command != 22 && params.iter().any(|value| !value.is_finite()) {
+        bail!("COMMAND_LONG parameters must be finite");
+    }
+    let empty_or_nan = |value: &f64| *value == 0.0 || value.is_nan();
     let value = match command {
         400 if p(0) == 1.0 && p(1) == 0.0 => serde_json::json!({"type":"arm"}),
         400 if p(0) == 0.0 && p(1) == 0.0 => serde_json::json!({"type":"disarm"}),
-        22 => serde_json::json!({"type":"takeoff","payload":{"altitude_m":p(6)}}),
+        22 => {
+            if params[..6].iter().any(|value| !empty_or_nan(value)) {
+                bail!("MAV_CMD_NAV_TAKEOFF supports altitude only; pitch, options, yaw, and coordinates must be zero or NaN sentinels");
+            }
+            if !p(6).is_finite() || p(6) <= 0.0 {
+                bail!("MAV_CMD_NAV_TAKEOFF altitude must be positive");
+            }
+            serde_json::json!({"type":"takeoff","payload":{"altitude_m":p(6)}})
+        }
         20 if params.iter().all(|value| *value == 0.0) => {
             serde_json::json!({"type":"rtl"})
         }
         20 => bail!("NAV_RETURN_TO_LAUNCH does not accept caller-supplied parameters"),
-        21 => serde_json::json!({"type":"land"}),
+        21 if params.iter().all(empty_or_nan) => {
+            serde_json::json!({"type":"land"})
+        }
+        21 => bail!(
+            "MAV_CMD_NAV_LAND supports current-position landing only; all parameters must be zero"
+        ),
         176 => {
             if p(0) != 1.0 {
                 bail!("MAV_CMD_DO_SET_MODE requires custom mode enabled");
@@ -2116,6 +2130,81 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("target mismatch"));
+    }
+
+    #[test]
+    fn takeoff_and_land_reject_parameters_the_bridge_would_drop() {
+        let mut payload = vec![0_u8; 32];
+        payload[28..30].copy_from_slice(&22_u16.to_le_bytes());
+        payload[30] = 1;
+        payload[31] = 1;
+        payload[24..28].copy_from_slice(&3.0_f32.to_le_bytes());
+        let frame = |payload| FrameInfo {
+            system_id: 255,
+            component_id: 190,
+            message_id: 76,
+            sequence: 1,
+            payload,
+        };
+
+        let takeoff = control_command(&frame(payload.clone()), 1)
+            .unwrap()
+            .unwrap();
+        assert_eq!(takeoff["type"], "takeoff");
+        assert_eq!(takeoff["payload"]["altitude_m"], 3.0);
+
+        for index in 0..6 {
+            payload[index * 4..index * 4 + 4].copy_from_slice(&f32::NAN.to_le_bytes());
+        }
+        assert_eq!(
+            control_command(&frame(payload.clone()), 1)
+                .unwrap()
+                .unwrap()["payload"]["altitude_m"],
+            3.0
+        );
+
+        payload[0..4].copy_from_slice(&0.0_f32.to_le_bytes());
+        payload[16..20].copy_from_slice(&1.0_f32.to_le_bytes());
+        assert!(control_command(&frame(payload.clone()), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("supports altitude only"));
+
+        payload[16..20].copy_from_slice(&0.0_f32.to_le_bytes());
+        payload[24..28].copy_from_slice(&0.0_f32.to_le_bytes());
+        assert!(control_command(&frame(payload.clone()), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("altitude must be positive"));
+
+        payload.fill(0);
+        payload[28..30].copy_from_slice(&21_u16.to_le_bytes());
+        payload[30] = 1;
+        payload[31] = 1;
+        assert_eq!(
+            control_command(&frame(payload.clone()), 1)
+                .unwrap()
+                .unwrap()["type"],
+            "land"
+        );
+        for index in 0..7 {
+            payload[index * 4..index * 4 + 4].copy_from_slice(&f32::NAN.to_le_bytes());
+        }
+        assert_eq!(
+            control_command(&frame(payload.clone()), 1)
+                .unwrap()
+                .unwrap()["type"],
+            "land"
+        );
+        payload.fill(0);
+        payload[28..30].copy_from_slice(&21_u16.to_le_bytes());
+        payload[30] = 1;
+        payload[31] = 1;
+        payload[4..8].copy_from_slice(&1.0_f32.to_le_bytes());
+        assert!(control_command(&frame(payload), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("current-position landing only"));
     }
 
     #[test]
