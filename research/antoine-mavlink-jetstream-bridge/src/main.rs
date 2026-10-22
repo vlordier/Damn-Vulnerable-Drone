@@ -1206,20 +1206,6 @@ async fn qgc_to_antoine_nats(
             &frame,
         )
         .await?;
-        if frame.message_id == 84
-            && !position_setpoint_timestamp_is_fresh(
-                &frame.payload,
-                &mut qgc_clock_anchor,
-                Instant::now(),
-            )
-        {
-            tracing::warn!(
-                source_system = frame.system_id,
-                sequence = frame.sequence,
-                "stale or future QGC position setpoint dropped"
-            );
-            continue;
-        }
         tracing::debug!(
             source_system = frame.system_id,
             source_component = frame.component_id,
@@ -1910,6 +1896,20 @@ async fn qgc_to_antoine_nats(
                 continue;
             }
         };
+        if frame.message_id == 84
+            && !position_setpoint_timestamp_is_fresh(
+                &frame.payload,
+                &mut qgc_clock_anchor,
+                Instant::now(),
+            )
+        {
+            tracing::warn!(
+                source_system = frame.system_id,
+                sequence = frame.sequence,
+                "stale or future QGC position setpoint dropped"
+            );
+            continue;
+        }
         // The frame was durably audited above, before publishing the
         // non-replayable control request to Core NATS.
         let payload = serde_json::json!({"schema":"furia.mavlink.control","version":"1.0.0","identity":config.callsign,"request_id":request_id,"command":command});
