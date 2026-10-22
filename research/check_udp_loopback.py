@@ -32,8 +32,6 @@ def _application_firewall_blocks_python() -> bool:
 
 
 def local_udp_loopback_available(timeout_seconds: float = 0.5) -> bool:
-    if _application_firewall_blocks_python():
-        return False
     receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -54,9 +52,14 @@ def main() -> int:
     if local_udp_loopback_available():
         print(f"Local UDP receive is available to {sys.executable}")
         return 0
+    firewall_detail = (
+        " macOS firewall status also reports the interpreter as blocked."
+        if _application_firewall_blocks_python()
+        else ""
+    )
     print(
         "Local UDP receive is unavailable to "
-        f"{sys.executable}; check the host firewall and network policy.",
+        f"{sys.executable}; check the host firewall and network policy.{firewall_detail}",
         file=sys.stderr,
     )
     return 1

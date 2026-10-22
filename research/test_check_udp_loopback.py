@@ -57,11 +57,18 @@ class MacFirewallPreflightTests(unittest.TestCase):
         ):
             self.assertFalse(_application_firewall_blocks_python())
 
-    def test_blocked_rule_stops_before_opening_udp_sockets(self) -> None:
+    def test_successful_loopback_probe_is_authoritative_over_firewall_status(self) -> None:
+        receiver = mock.Mock()
+        sender = mock.Mock()
+        receiver.getsockname.return_value = ("127.0.0.1", 12345)
+        receiver.recvfrom.return_value = (b"dvd-udp-loopback-check", ("127.0.0.1", 45678))
         with (
             mock.patch("check_udp_loopback._application_firewall_blocks_python", return_value=True),
-            mock.patch("check_udp_loopback.socket.socket") as socket_factory,
+            mock.patch(
+                "check_udp_loopback.socket.socket", side_effect=[receiver, sender]
+            ) as socket_factory,
         ):
-            self.assertFalse(local_udp_loopback_available())
+            self.assertTrue(local_udp_loopback_available())
 
-        socket_factory.assert_not_called()
+        self.assertEqual(socket_factory.call_count, 2)
+        sender.sendto.assert_called_once_with(b"dvd-udp-loopback-check", ("127.0.0.1", 12345))
