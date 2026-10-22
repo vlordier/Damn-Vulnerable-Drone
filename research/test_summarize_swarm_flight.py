@@ -831,6 +831,16 @@ class SummaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "inconsistent baseline failure reasons"):
             validate_swarm_report(result, run_dir.name)
 
+    def test_report_validation_rejects_malformed_attitude_measurement_state(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-test"
+            build_run(run_dir, "lanes")
+            result = run_summary(run_dir)
+
+        result["vehicles"]["drone-1"]["attitudeQuality"]["measured"] = "true"
+        with self.assertRaisesRegex(ValueError, "invalid vehicle evidence"):
+            validate_swarm_report(result, run_dir.name)
+
     def test_missing_gazebo_quaternion_makes_attitude_evidence_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "antoine-swarm-flight-test"

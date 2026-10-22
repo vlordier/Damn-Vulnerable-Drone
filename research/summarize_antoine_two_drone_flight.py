@@ -1525,7 +1525,22 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
             or vehicle.get("controllerStateCadence", {}).get("status")
             not in {"passed", "failed", "unavailable", "invalid"}
             or not isinstance(vehicle.get("attitudeQuality"), dict)
+            or type(vehicle["attitudeQuality"].get("measured")) is not bool
             or type(vehicle["attitudeQuality"].get("passed")) is not bool
+            or (
+                vehicle["attitudeQuality"].get("maximumTiltRadians") is not None
+                and (
+                    not isinstance(vehicle["attitudeQuality"]["maximumTiltRadians"], (int, float))
+                    or isinstance(vehicle["attitudeQuality"]["maximumTiltRadians"], bool)
+                    or not math.isfinite(vehicle["attitudeQuality"]["maximumTiltRadians"])
+                    or vehicle["attitudeQuality"]["maximumTiltRadians"] < 0
+                )
+            )
+            or (
+                vehicle["attitudeQuality"]["measured"]
+                and vehicle["attitudeQuality"].get("maximumTiltRadians") is None
+            )
+            or (not vehicle["attitudeQuality"]["measured"] and vehicle["attitudeQuality"]["passed"])
             or vehicle["actuatorEvidence"].get("finalDisarmed", {}).get("status")
             not in {"measured", "unavailable"}
         ):
@@ -1546,6 +1561,10 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
         or not isinstance(report["evidenceArtifacts"], dict)
     ):
         raise ValueError("generated swarm report has invalid baseline or artifact gates")
+    if report["baselineGates"].get("gazeboAttitudeWithinEnvelope") is not all(
+        vehicle["attitudeQuality"]["passed"] for vehicle in vehicles.values()
+    ):
+        raise ValueError("generated swarm report has inconsistent Gazebo attitude gate")
     for name, artifact in report["evidenceArtifacts"].items():
         if not isinstance(artifact, dict) or type(artifact.get("available")) is not bool:
             raise ValueError(f"generated swarm report has invalid artifact state: {name}")
