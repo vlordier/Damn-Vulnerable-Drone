@@ -330,11 +330,8 @@ mavlink-full-check: ## Run isolated flight scenario plus local bench MAVLink/NAT
 
 qgc-antoine-patch: ## Apply the Antoine Fly view controls to the QGC checkout
 	@test -d "$(ANTOINE_QGC_DIR)/.git" || { echo "Missing QGC source at $(ANTOINE_QGC_DIR)" >&2; exit 1; }
-	@if git -C "$(ANTOINE_QGC_DIR)" apply --reverse --check "$(CURDIR)/$(QGC_ANTOINE_PATCH)" >/dev/null 2>&1; then \
-	  echo 'Antoine QGC patch is already applied'; \
-	else \
-	  git -C "$(ANTOINE_QGC_DIR)" apply "$(CURDIR)/$(QGC_ANTOINE_PATCH)"; \
-	fi
+	$(UV) run --project research python research/apply_qgroundcontrol_patch.py \
+	  --root "$(ANTOINE_QGC_DIR)" --patch "$(CURDIR)/$(QGC_ANTOINE_PATCH)"
 
 qgc-antoine-build: qgc-antoine-patch ## Build QGC with Antoine SITL Fly view controls
 	@test -f "$(ANTOINE_QGC_DIR)/build/CMakeCache.txt" || { echo "Configure QGC first; see research/qgroundcontrol-antoine.md" >&2; exit 1; }

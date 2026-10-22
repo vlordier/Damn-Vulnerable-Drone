@@ -9,6 +9,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from time import sleep
 
+from apply_qgroundcontrol_patch import apply_patch_safely
 from check_qgroundcontrol_patch import verify_applied_patch, verify_binary_in_checkout
 
 PATCH = Path(__file__).resolve().parent / "patches" / "qgroundcontrol-antoine.patch"
@@ -128,6 +129,10 @@ class QGroundControlPatchContractTests(unittest.TestCase):
         self.assertIn('--binary "${QGC_APP}"', qgc_launcher)
         self.assertIn('QGC_SETTINGS_FILE="${QGC_SETTINGS_FILE:-', qgc_launcher)
         self.assertIn('QGC_SETTINGS_FILE="${QGC_SETTINGS_FILE}"', profile_runner)
+        self.assertIn("apply_qgroundcontrol_patch.py", makefile)
+        self.assertNotIn(
+            'git -C "$(ANTOINE_QGC_DIR)" apply "$(CURDIR)/$(QGC_ANTOINE_PATCH)"', makefile
+        )
         self.assertIn(
             'QGC_SETTINGS_DIR="${QGC_SETTINGS_DIR:-${RUN_DIR}/qgc-settings}"', profile_runner
         )
@@ -206,6 +211,77 @@ class QGroundControlPatchContractTests(unittest.TestCase):
             source.write_text("int limit = 2;\n", encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "not fully applied"):
                 verify_applied_patch(root, patch)
+
+    def test_patch_application_requires_clean_checkout_and_is_idempotent(self) -> None:
+        with TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            patch = base / "antoine.patch"
+
+            def create_checkout(name: str) -> tuple[Path, Path]:
+                root = base / name
+                root.mkdir()
+                subprocess.run(["git", "init", "-q", str(root)], check=True)
+                source = root / "sample.cc"
+                source.write_text("int limit = 4;\n", encoding="utf-8")
+                subprocess.run(["git", "-C", str(root), "add", "sample.cc"], check=True)
+                subprocess.run(
+                    [
+                        "git",
+                        "-C",
+                        str(root),
+                        "-c",
+                        "user.name=Test",
+                        "-c",
+                        "user.email=test@example.invalid",
+                        "commit",
+                        "-qm",
+                        "baseline",
+                    ],
+                    check=True,
+                )
+                source.write_text("int limit = 3;\n", encoding="utf-8")
+                patch.write_bytes(
+                    subprocess.run(
+                        ["git", "-C", str(root), "diff", "--", "sample.cc"],
+                        check=True,
+                        capture_output=True,
+                    ).stdout
+                )
+                source.write_text("int limit = 4;\n", encoding="utf-8")
+                return root, source
+
+            clean_root, clean_source = create_checkout("clean")
+            self.assertEqual(apply_patch_safely(clean_root, patch), "applied")
+            self.assertEqual(clean_source.read_text(encoding="utf-8"), "int limit = 3;\n")
+            self.assertEqual(apply_patch_safely(clean_root, patch), "already-applied")
+
+            dirty_root, dirty_source = create_checkout("dirty")
+            dirty_source.write_text("int limit = 5;\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "tracked changes"):
+                apply_patch_safely(dirty_root, patch)
+            self.assertEqual(dirty_source.read_text(encoding="utf-8"), "int limit = 5;\n")
+
+            stale_root, stale_source = create_checkout("stale")
+            stale_source.write_text("int limit = 5;\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(stale_root), "add", "sample.cc"], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(stale_root),
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "-qm",
+                    "new baseline",
+                ],
+                check=True,
+            )
+            with self.assertRaisesRegex(RuntimeError, "does not apply cleanly"):
+                apply_patch_safely(stale_root, patch)
+            self.assertEqual(stale_source.read_text(encoding="utf-8"), "int limit = 5;\n")
 
     def test_qgc_binary_override_must_remain_inside_its_checkout(self) -> None:
         with TemporaryDirectory() as temporary:
