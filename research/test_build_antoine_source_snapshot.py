@@ -149,6 +149,10 @@ class AntoineSnapshotBuildTests(unittest.TestCase):
                 snapshot / "antoine/.cargo-target/antoine-sitl-build-receipt"
             ).resolve()
             self.assertTrue(commands)
+            test_command = commands[0][0]
+            self.assertEqual(test_command[0:2], ["cargo", "test"])
+            self.assertEqual(test_command[-2:], ["--bin", "antoine_sitl_nats"])
+            self.assertNotIn("gazebo_plant_honors_configured_battery_drain_rate", test_command)
             self.assertTrue(
                 all(Path(command_target) == expected_target for _, _, command_target, _ in commands)
             )

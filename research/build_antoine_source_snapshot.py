@@ -86,7 +86,6 @@ def build_snapshot(snapshot_dir: Path, target_dir: Path, rustup_toolchain: str) 
             "nats",
             "--bin",
             "antoine_sitl_nats",
-            "gazebo_plant_honors_configured_battery_drain_rate",
         ],
         cwd=root,
         environment=environment,
