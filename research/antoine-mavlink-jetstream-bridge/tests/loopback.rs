@@ -1096,3 +1096,132 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     assert_eq!(audit["message_id"], 76);
     Ok(())
 }
+
+#[tokio::test]
+async fn gazebo_nats_mode_routes_gcs_arm_through_local_authority() -> Result<()> {
+    let _serial = NATS_INTEGRATION_LOCK.lock().await;
+    let nats_listener = TcpListener::bind("127.0.0.1:0")?;
+    let nats_port = nats_listener.local_addr()?.port();
+    drop(nats_listener);
+    let nats_url = format!("nats://127.0.0.1:{nats_port}");
+    let store = tempfile::tempdir()?;
+    let nats_child = Command::new("nats-server")
+        .args([
+            "-js",
+            "-a",
+            "127.0.0.1",
+            "-p",
+            &nats_port.to_string(),
+            "-sd",
+        ])
+        .arg(store.path())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .context("nats-server must be installed to run the Gazebo bridge test")?;
+    let mut _nats_guard = ChildGuard(nats_child);
+    let client = timeout(Duration::from_secs(5), async {
+        loop {
+            if let Ok(client) = async_nats::connect(&nats_url).await {
+                break client;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    })
+    .await
+    .context("local NATS server did not start")?;
+    let js = jetstream::new(client.clone());
+    wait_for_jetstream(&js).await?;
+
+    let callsign = "gazebo-authority-test";
+    let mut controls = client
+        .subscribe(format!("furia.mavlink.control.{callsign}"))
+        .await?;
+    client.flush().await?;
+    let gcs = UdpSocket::bind("127.0.0.1:0").await?;
+    let qgc_peer = gcs.local_addr()?;
+    let qgc_bind = free_udp_addr()?;
+    let bridge = Command::new(env!("CARGO_BIN_EXE_antoine-mavlink-jetstream-bridge"))
+        .args([
+            "--mode",
+            "gazebo-nats",
+            "--nats-url",
+            &nats_url,
+            "--callsign",
+            callsign,
+            "--qgc-bind",
+            &qgc_bind.to_string(),
+            "--qgc-peer",
+            &qgc_peer.to_string(),
+            "--system-id",
+            "1",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+    let _bridge_guard = ChildGuard(bridge);
+    wait_for_udp_bind(qgc_bind).await?;
+
+    let mut arm_payload = vec![0_u8; 33];
+    arm_payload[0..4].copy_from_slice(&1.0_f32.to_le_bytes());
+    arm_payload[28..30].copy_from_slice(&400_u16.to_le_bytes());
+    arm_payload[30] = 1;
+    arm_payload[31] = 1;
+    let arm = v2_frame(76, 10, 10, &arm_payload[..32], 152);
+    gcs.send_to(&arm, qgc_bind).await?;
+
+    let request = timeout(Duration::from_secs(2), controls.next())
+        .await
+        .context("local authority did not receive the GCS arm request")?
+        .context("local authority subscription ended")?;
+    assert_eq!(
+        request.subject.as_str(),
+        format!("furia.mavlink.control.{callsign}")
+    );
+    let envelope: serde_json::Value = serde_json::from_slice(&request.payload)?;
+    assert_eq!(envelope["schema"], "furia.mavlink.control");
+    assert_eq!(envelope["identity"], callsign);
+    assert_eq!(envelope["command"]["type"], "arm");
+    let request_id = envelope["request_id"]
+        .as_str()
+        .context("Gazebo authority request omitted its correlation ID")?;
+    let reply = request
+        .reply
+        .context("Gazebo authority request omitted its reply subject")?;
+    client
+        .publish(
+            reply,
+            serde_json::json!({
+                "requestId": request_id,
+                "accepted": true,
+                "armed": true,
+                "mode": "GUIDED"
+            })
+            .to_string()
+            .into(),
+        )
+        .await?;
+    client.flush().await?;
+
+    let mut buffer = [0_u8; 512];
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("GCS did not receive the authority decision")??;
+    let (_, message) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+        &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+    )?;
+    let mavlink::dialects::common::MavMessage::COMMAND_ACK(ack) = message else {
+        anyhow::bail!("expected MAVLink COMMAND_ACK from the Gazebo authority decision");
+    };
+    assert_eq!(
+        ack.result,
+        mavlink::dialects::common::MavResult::MAV_RESULT_ACCEPTED
+    );
+
+    let stream = js.get_stream(STREAM).await?;
+    let audit = wait_for_raw_subject(&stream, &format!("furia.mavlink.command.{callsign}")).await?;
+    let audit: serde_json::Value = serde_json::from_slice(&audit.payload)?;
+    assert_eq!(audit["direction"], "gcs_to_antoine");
+    assert_eq!(audit["message_id"], 76);
+    Ok(())
+}
