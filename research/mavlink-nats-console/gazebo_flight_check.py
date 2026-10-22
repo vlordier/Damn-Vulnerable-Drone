@@ -100,10 +100,12 @@ class GazeboFlightCheck(FlightCheck):
         super().__init__(url, bind_port, bridge_port, callsign)
         self.pose_file = pose_file
         self.run_directory = run_directory
-        self.run_id = run_directory.name
         expected_pose = run_directory / "flight-proof" / "gazebo-pose.jsonl"
         if pose_file.absolute() != expected_pose.absolute():
             raise ValueError("Gazebo pose file must be the selected run's flight-proof artifact")
+        # The Antoine launcher passes this child directory to gz_flight_proof.sh,
+        # which uses its basename as FURIA_SITL_RUN_ID and the authority grant run ID.
+        self.run_id = pose_file.parent.name
         self.agent = agent
         self.raw_telemetry: dict = {}
         self.telemetry_rejection: str | None = None

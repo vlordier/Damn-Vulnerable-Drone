@@ -84,20 +84,43 @@ help: ## Show common commands
 	  '  make lint              Run Ruff, ShellCheck, and shell syntax checks' \
 	  '  make validate          Run lint and validate the scenario catalog'
 
-antoine-gz-battery-patch: ## Apply the versioned Gazebo battery-drain fix to the Antoine checkout
+antoine-gz-battery-patch: ## Apply versioned Antoine Gazebo battery and world-binding fixes
 	@antoine_root="$${ANTOINE_ROOT:-$(HOME)/Work/antoine}"; \
 	source="$$antoine_root/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs"; \
 	patch_file="$(CURDIR)/research/patches/antoine-gazebo-battery-drain.patch"; \
 	test -d "$$antoine_root/.git" || { echo "Missing Antoine Git checkout: $$antoine_root" >&2; exit 1; }; \
+	battery_present=0; \
 	if rg -q 'fn battery_after_drain\(' "$$source" \
 	  && rg -q 'battery_pct = battery_after_drain\(battery_pct, battery_drain_pct_per_s, dt\)' "$$source" \
 	  && rg -q 'fn gazebo_plant_honors_configured_battery_drain_rate\(' "$$source"; then \
-	  echo 'Antoine Gazebo battery-drain implementation and regression test are present'; \
-	elif git -C "$$antoine_root" apply --check "$$patch_file" >/dev/null 2>&1; then \
-	  git -C "$$antoine_root" apply "$$patch_file"; \
-	  echo 'Applied Antoine Gazebo battery-drain fix'; \
+	  battery_present=1; \
+	fi; \
+	world_present=0; \
+	if rg -Fq -- '--world-digest "sha256:$$WORLD_SHA256"' "$$antoine_root/scripts/gz_flight_proof.sh"; then \
+	  world_present=1; \
+	fi; \
+	if [[ "$$battery_present" == 1 && "$$world_present" == 1 ]]; then \
+	  echo 'Antoine Gazebo battery and runtime world-binding fixes are present'; \
 	else \
-	  echo 'Patch does not apply cleanly; inspect the Antoine SITL source before proceeding.' >&2; exit 1; \
+	  patch_dir="$$(mktemp -d "$${TMPDIR:-/tmp}/dvd-antoine-profile-patch.XXXXXX")"; \
+	  trap 'rm -rf "$$patch_dir"' EXIT; \
+	  if [[ "$$battery_present" == 0 ]]; then \
+	    sed '/^diff --git a\/scripts\/gz_flight_proof.sh/,$$d' "$$patch_file" > "$$patch_dir/battery.patch"; \
+	    if git -C "$$antoine_root" apply --check "$$patch_dir/battery.patch" >/dev/null 2>&1; then \
+	      git -C "$$antoine_root" apply "$$patch_dir/battery.patch" || exit 1; \
+	    else \
+	      echo 'Battery patch does not apply cleanly; inspect the Antoine SITL source.' >&2; exit 1; \
+	    fi; \
+	  fi; \
+	  if [[ "$$world_present" == 0 ]]; then \
+	    sed -n '/^diff --git a\/scripts\/gz_flight_proof.sh/,$$p' "$$patch_file" > "$$patch_dir/world.patch"; \
+	    if git -C "$$antoine_root" apply --check "$$patch_dir/world.patch" >/dev/null 2>&1; then \
+	      git -C "$$antoine_root" apply "$$patch_dir/world.patch" || exit 1; \
+	    else \
+	      echo 'Runtime world-binding patch does not apply cleanly; inspect the Antoine launcher.' >&2; exit 1; \
+	    fi; \
+	  fi; \
+	  echo 'Applied missing Antoine Gazebo battery and runtime world-binding fixes'; \
 	fi
 
 antoine-gz-battery-test: antoine-gz-battery-patch ## Test, build and record the Antoine Gazebo battery fix

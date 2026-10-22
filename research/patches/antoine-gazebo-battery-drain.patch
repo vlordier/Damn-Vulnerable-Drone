@@ -51,4 +51,13 @@ index 743e306c9a..246a9ce04d 100644
 +
      #[path = "../tests/vigie_replay_process.rs"]
      mod vigie_replay_process;
+
+diff --git a/scripts/gz_flight_proof.sh b/scripts/gz_flight_proof.sh
+--- a/scripts/gz_flight_proof.sh
++++ b/scripts/gz_flight_proof.sh
+@@ -723,3 +723,4 @@
+   start_owned "$BIN_DIR/antoine_gz_local_authority" \
+     --callsign "$callsign" --nats-url "$NATS_URL" --world-frame-id "$FRAME_ID" \
++    --world-digest "sha256:$WORLD_SHA256" \
+     --waypoints "$waypoints" --arrival-radius-m "$ARRIVAL_RADIUS_M" \
  

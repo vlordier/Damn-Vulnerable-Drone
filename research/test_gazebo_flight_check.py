@@ -6,6 +6,7 @@ import asyncio
 import importlib.util
 import json
 import math
+import subprocess
 import sys
 import tempfile
 import time
@@ -33,6 +34,45 @@ class GazeboFailureReportTests(unittest.TestCase):
         self.assertIn('ANTOINE_GZ_RUN_DIR="$$run_dir"', content)
         runner = SCRIPT.parents[1] / "run-antoine-gazebo-mavlink.sh"
         self.assertIn('ANTOINE_GZ_RUN_DIR="${RUN_DIR}"', runner.read_text(encoding="utf-8"))
+
+    def test_antoine_local_authority_patch_binds_runtime_world_digest(self) -> None:
+        patch = SCRIPT.parents[1] / "patches/antoine-gazebo-battery-drain.patch"
+        self.assertIn(
+            '+    --world-digest "sha256:$WORLD_SHA256"',
+            patch.read_text(encoding="utf-8"),
+        )
+
+    def test_make_patch_target_applies_missing_world_binding_idempotently(self) -> None:
+        repo = SCRIPT.parents[2]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "antoine"
+            (root / ".git").mkdir(parents=True)
+            rust = root / "sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs"
+            rust.parent.mkdir(parents=True)
+            rust.write_text(
+                "fn battery_after_drain() {}\n"
+                "battery_pct = battery_after_drain(battery_pct, battery_drain_pct_per_s, dt)\n"
+                "fn gazebo_plant_honors_configured_battery_drain_rate() {}\n",
+                encoding="utf-8",
+            )
+            script = root / "scripts/gz_flight_proof.sh"
+            script.parent.mkdir(parents=True)
+            script.write_text(
+                '  start_owned "$BIN_DIR/antoine_gz_local_authority" \\\n'
+                '    --callsign "$callsign" --nats-url "$NATS_URL" --world-frame-id "$FRAME_ID" \\\n'
+                '    --waypoints "$waypoints" --arrival-radius-m "$ARRIVAL_RADIUS_M" \\\n',
+                encoding="utf-8",
+            )
+            subprocess.run(["git", "init", "--quiet", str(root)], check=True)
+
+            command = ["make", "antoine-gz-battery-patch", f"ANTOINE_ROOT={root}"]
+            first = subprocess.run(command, cwd=repo, capture_output=True, text=True, check=False)
+            self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
+            self.assertIn('--world-digest "sha256:$WORLD_SHA256"', script.read_text())
+
+            second = subprocess.run(command, cwd=repo, capture_output=True, text=True, check=False)
+            self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
+            self.assertIn("runtime world-binding fixes are present", second.stdout)
 
     def test_gazebo_timestamp_rejects_out_of_range_and_unbounded_values(self) -> None:
         timestamp = CHECKER.gazebo_timestamp_seconds
@@ -231,7 +271,7 @@ class GazeboFailureReportTests(unittest.TestCase):
                     {
                         "contract": CHECKER.ACTUATOR_OUTPUT_CONTRACT,
                         "version": CHECKER.ACTUATOR_OUTPUT_VERSION,
-                        "runId": run_directory.name,
+                        "runId": audit_directory.parent.name,
                         "vehicleId": "drone-1",
                         "actuatorKind": "motors",
                         "sequence": 99,
@@ -249,7 +289,7 @@ class GazeboFailureReportTests(unittest.TestCase):
             audit_path.write_text(outside.read_text(encoding="utf-8"), encoding="utf-8")
             checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
             checker.run_directory = run_directory
-            checker.run_id = run_directory.name
+            checker.run_id = audit_directory.parent.name
             checker.callsign = "drone-1"
             self.assertEqual(checker.actuator_audit()[0]["sequence"], 99)
 
@@ -265,11 +305,11 @@ class GazeboFailureReportTests(unittest.TestCase):
     def test_authorized_motor_output_requires_run_bound_measured_audit(self) -> None:
         checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
         checker.callsign = "drone-1"
-        checker.run_id = "run-1"
+        checker.run_id = "flight-proof"
         valid = {
             "contract": CHECKER.ACTUATOR_OUTPUT_CONTRACT,
             "version": CHECKER.ACTUATOR_OUTPUT_VERSION,
-            "runId": "run-1",
+            "runId": "flight-proof",
             "vehicleId": "drone-1",
             "actuatorKind": "motors",
             "sequence": 12,
@@ -282,7 +322,7 @@ class GazeboFailureReportTests(unittest.TestCase):
             "executionGrant": {
                 "contract": "furia.prime.execution-grant",
                 "vehicleId": "drone-1",
-                "runId": "run-1",
+                "runId": "flight-proof",
                 "worldDigest": "sha256:" + "a" * 64,
                 "worldFrameId": "enu-test",
                 "targetEnuMm": [1000, 2000, 3000],

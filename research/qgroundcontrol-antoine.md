@@ -373,8 +373,10 @@ test, builds the Antoine SITL controller, local authority, and boundary service,
 and writes a source/patch/binary SHA-256 receipt beside the Cargo target. The
 patch makes the Gazebo plant honor
 `--battery-drain-pct-per-s`; a configured zero drain therefore stays at 100%
-during an interactive session. Run `make antoine-gz-battery-test` to repeat
-that verification independently. `make doctor` checks that the selected
+during an interactive session. It also forwards the generated runtime world's
+SHA-256 into the local authority so signed grants and actuator records bind to
+the same world. Run `make antoine-gz-battery-test` to repeat the battery
+verification independently. `make doctor` checks that the selected
 Antoine checkout contains the patch; on a changed checkout, review and apply
 it with `make antoine-gz-battery-patch`.
 
