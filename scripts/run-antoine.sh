@@ -420,11 +420,17 @@ if [[ -n "$REQUESTED_RUN_DIR" ]]; then
         --root "$RUNTIME_ANTOINE_ROOT" \
         --snapshot-root "$(dirname "$RUNTIME_ANTOINE_ROOT")" \
         --receipt "$ANTOINE_SITL_BUILD_RECEIPT" \
+        --write-shell-environment "$PROVENANCE_SNAPSHOT_DIR/native-build-environment.sh" \
         >>"$ANTOINE_BUILD_LOG" 2>&1; then
       echo "Antoine native source-bound build failed; see $ANTOINE_BUILD_LOG." >&2
       tail -40 "$ANTOINE_BUILD_LOG" >&2
       exit 1
     fi
+    # The proof launcher independently verifies the same native receipt. Restore
+    # the exact recorded flags so both verification boundaries see the build's
+    # path remaps and caller-provided Rust options.
+    # shellcheck source=/dev/null
+    source "$PROVENANCE_SNAPSHOT_DIR/native-build-environment.sh"
     mkdir -p "$RUN_CARGO_TARGET_DIR/debug"
     for binary in antoine_sitl_nats antoine_gz_local_authority antoine-boundary-service; do
       cp -p "$RUNTIME_ANTOINE_ROOT/.cargo-target/antoine-sitl-build-receipt/debug/$binary" \
