@@ -486,6 +486,27 @@ fn telemetry_run_id_matches(
     })
 }
 
+fn telemetry_envelope_matches(
+    mode: &str,
+    callsign: &str,
+    configured_run_id: Option<&str>,
+    value: &serde_json::Value,
+) -> bool {
+    value.get("schema").and_then(serde_json::Value::as_str) == Some("furia.telemetry")
+        && value.get("version").and_then(serde_json::Value::as_str) == Some("1.0.0")
+        && value.get("identity").and_then(serde_json::Value::as_str) == Some(callsign)
+        && match mode {
+            "antoine-nats" => {
+                value.get("protocol").and_then(serde_json::Value::as_str) == Some("antoine")
+            }
+            "gazebo-nats" => {
+                value.get("protocol").and_then(serde_json::Value::as_str) == Some("antoine-gz")
+                    && telemetry_run_id_matches(mode, configured_run_id, value)
+            }
+            _ => false,
+        }
+}
+
 fn telemetry_armed(value: &serde_json::Value, fallback: bool) -> Result<bool> {
     match value.get("armed") {
         None => Ok(fallback),
@@ -1169,11 +1190,13 @@ async fn antoine_nats_telemetry_to_gcs(
                 continue;
             }
         };
-        if value.get("identity").and_then(serde_json::Value::as_str) != Some(&config.callsign) {
-            continue;
-        }
-        if !telemetry_run_id_matches(&config.mode, config.run_id.as_deref(), &value) {
-            tracing::warn!("Gazebo telemetry run ID does not match the selected profile");
+        if !telemetry_envelope_matches(
+            &config.mode,
+            &config.callsign,
+            config.run_id.as_deref(),
+            &value,
+        ) {
+            tracing::warn!("Antoine telemetry envelope does not match the selected profile");
             continue;
         }
         let native_time_s = match native_telemetry_time_s(&config.mode, &value, last_native_time_s)
@@ -2565,6 +2588,51 @@ mod tests {
             None,
             &serde_json::json!({})
         ));
+    }
+
+    #[test]
+    fn telemetry_envelope_must_match_schema_protocol_callsign_and_run() {
+        let gazebo = serde_json::json!({
+            "schema":"furia.telemetry", "version":"1.0.0", "protocol":"antoine-gz",
+            "identity":"drone-1", "runId":"selected-run"
+        });
+        assert!(telemetry_envelope_matches(
+            "gazebo-nats",
+            "drone-1",
+            Some("selected-run"),
+            &gazebo
+        ));
+        for (key, wrong) in [
+            ("schema", serde_json::json!("unknown.schema")),
+            ("version", serde_json::json!("2.0.0")),
+            ("protocol", serde_json::json!("antoine")),
+            ("identity", serde_json::json!("other-drone")),
+            ("runId", serde_json::json!("other-run")),
+        ] {
+            let mut sample = gazebo.clone();
+            sample[key] = wrong;
+            assert!(
+                !telemetry_envelope_matches(
+                    "gazebo-nats",
+                    "drone-1",
+                    Some("selected-run"),
+                    &sample
+                ),
+                "accepted wrong {key}"
+            );
+        }
+
+        let native = serde_json::json!({
+            "schema":"furia.telemetry", "version":"1.0.0", "protocol":"antoine",
+            "identity":"drone-1"
+        });
+        assert!(telemetry_envelope_matches(
+            "antoine-nats",
+            "drone-1",
+            None,
+            &native
+        ));
+        assert!(!telemetry_envelope_matches("udp", "drone-1", None, &native));
     }
 
     #[test]
