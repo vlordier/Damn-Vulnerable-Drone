@@ -171,7 +171,7 @@ def manifest_digest(files: list[dict[str, Any]]) -> str:
 
 
 def patch_changes_present(hunks: list[bytes], source_root: Path) -> bool:
-    """Verify patch changes despite shifted upstream context, without editing source."""
+    """Verify contiguous patch additions despite shifted upstream context."""
     for hunk in hunks:
         lines = hunk.decode("utf-8").splitlines()
         target_line = next((line for line in lines if line.startswith("+++ b/")), None)
@@ -182,21 +182,42 @@ def patch_changes_present(hunks: list[bytes], source_root: Path) -> bool:
             current_lines = set(target.read_text(encoding="utf-8").splitlines())
         except OSError:
             return False
-        additions = [
-            line[1:] for line in lines if line.startswith("+") and not line.startswith("+++")
-        ]
+        addition_groups: list[list[str]] = []
+        current_group: list[str] | None = None
+        for line in lines:
+            if line.startswith("+") and not line.startswith("+++"):
+                if current_group is None:
+                    current_group = []
+                    addition_groups.append(current_group)
+                current_group.append(line[1:])
+            else:
+                current_group = None
         removals = [
             line[1:] for line in lines if line.startswith("-") and not line.startswith("---")
         ]
-        if not additions or any(line not in current_lines for line in additions):
+        if not addition_groups:
             return False
         if any(line in current_lines for line in removals):
             return False
+        source_lines = target.read_text(encoding="utf-8").splitlines()
+        next_line = 0
+        for group in addition_groups:
+            match = next(
+                (
+                    index
+                    for index in range(next_line, len(source_lines) - len(group) + 1)
+                    if source_lines[index : index + len(group)] == group
+                ),
+                None,
+            )
+            if match is None:
+                return False
+            next_line = match + len(group)
     return True
 
 
 def patch_hunk_superseded_by_upstream(hunk: bytes, source_root: Path) -> bool:
-    """Accept the newer buffered grant gate that replaces receive-time checks."""
+    """Accept narrowly recognized upstream implementations replacing old hunks."""
     lines = hunk.decode("utf-8", errors="replace").splitlines()
     target_line = next((line for line in lines if line.startswith("+++ b/")), None)
     if target_line != "+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs":
@@ -211,13 +232,40 @@ def patch_hunk_superseded_by_upstream(hunk: bytes, source_root: Path) -> bool:
         line.strip() == "let core_grant = Arc::new(core_lease::CoreLease::new());"
         for line in removals
     )
-    if not receiver_gate_hunk and not moved_grant_hunk:
-        return False
     source = source_root / target_line[6:]
     try:
         current = source.read_text(encoding="utf-8")
     except OSError:
         return False
+    authorization_hunk = any(
+        line.strip() == "fn mission_setpoint_matches_live_authorization(" for line in additions
+    )
+    if authorization_hunk:
+        marker = "fn mission_setpoint_matches_live_authorization("
+        start = current.find(marker)
+        if start < 0:
+            return False
+        end = current.find("\n}\n", start)
+        if end < 0:
+            return False
+        implementation = current[start : end + 3]
+        return all(
+            required in implementation
+            for required in (
+                "setpoint.vehicle_id == callsign",
+                "setpoint.command_lease.is_live_at",
+                'setpoint.graph_id == grant["graphId"]',
+                'setpoint.source_revision == grant["sourceRevision"]',
+                "admissions.admits_for_grant(setpoint, now_ms, grant)",
+                "issued <= now_ms",
+                "now_ms < expires",
+                'grant["targetEnuMm"]',
+            )
+        )
+
+    if not receiver_gate_hunk and not moved_grant_hunk:
+        return False
+
     # Newer Antoine revisions hold a candidate separately, then admit it only
     # through current grant and Vigie validation in the flight-control loop.
     # This subsumes the older patch's receive-time authorization and declaration

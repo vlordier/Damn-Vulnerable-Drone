@@ -249,6 +249,77 @@ class AntoineSourceSnapshotTests(unittest.TestCase):
             self.assertEqual(receipt["sourcePatch"]["status"], "already-present")
             self.assertEqual(receipt["sourceManifestSha256"], receipt["snapshotManifestSha256"])
 
+    def test_patch_semantics_do_not_match_scattered_additions(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "sitl/antoine-sitl/src/lib.rs"
+            target.parent.mkdir(parents=True)
+            target.write_text(
+                "pub fn unrelated() { first(); }\n"
+                "pub fn another() { intervening(); }\n"
+                "pub fn third() { second(); }\n",
+                encoding="utf-8",
+            )
+            hunk = (
+                b"--- a/sitl/antoine-sitl/src/lib.rs\n"
+                b"+++ b/sitl/antoine-sitl/src/lib.rs\n"
+                b"@@ -1,3 +1,3 @@\n"
+                b" fn expected() {\n"
+                b"-old_behavior();\n"
+                b"+first();\n"
+                b"+second();\n"
+                b" }\n"
+            )
+
+            self.assertFalse(snapshot.patch_changes_present([hunk], root))
+
+    def test_authorization_hunk_accepts_only_the_stronger_upstream_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs"
+            target.parent.mkdir(parents=True)
+            implementation = """fn mission_setpoint_matches_live_authorization(
+    setpoint: &MissionSetpoint,
+    grant: &serde_json::Value,
+    admissions: &VigieAdmissions,
+    callsign: &str,
+    frame_id: &str,
+    now_ms: u64,
+) -> bool {
+    let issued = grant[\"issuedAtUnixMs\"].as_u64().unwrap_or(0);
+    let expires = grant[\"expiresAtUnixMs\"].as_u64().unwrap_or(0);
+    setpoint.vehicle_id == callsign
+        && setpoint.command_lease.is_live_at(std::time::Instant::now())
+        && setpoint.graph_id == grant[\"graphId\"].as_str().unwrap_or_default()
+        && setpoint.source_revision == grant[\"sourceRevision\"].as_str().unwrap_or_default()
+        && admissions.admits_for_grant(setpoint, now_ms, grant)
+        && issued <= now_ms
+        && now_ms < expires
+        && grant[\"targetEnuMm\"].is_array()
+}
+"""
+            target.write_text(implementation, encoding="utf-8")
+            hunk = (
+                b"--- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs\n"
+                b"+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs\n"
+                b"@@ -1,2 +1,3 @@\n"
+                b"-fn old_authorization() {}\n"
+                b"+fn mission_setpoint_matches_live_authorization(\n"
+                b"+    setpoint: &MissionSetpoint,\n"
+                b"+    grant: &serde_json::Value,\n"
+                b"+    admissions: &VigieAdmissions,\n"
+                b"+    callsign: &str,\n"
+                b"+    frame_id: &str,\n"
+                b"+    now_ms: u64,\n"
+                b"+) -> bool {\n"
+                b"+    // older authorization body\n"
+                b"+}\n"
+            )
+
+            self.assertTrue(snapshot.patch_hunk_superseded_by_upstream(hunk, root))
+            target.write_text(implementation.replace("&& now_ms < expires\n", ""))
+            self.assertFalse(snapshot.patch_hunk_superseded_by_upstream(hunk, root))
+
     def test_newer_buffered_grant_gate_supersedes_old_receive_time_hunks(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
