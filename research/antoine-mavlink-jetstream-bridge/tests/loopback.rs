@@ -558,11 +558,22 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
             .is_err(),
         "nonzero RTL parameters must not reach the NATS control subject"
     );
-    assert!(
-        timeout(Duration::from_millis(150), gcs.recv_from(&mut buffer))
-            .await
-            .is_err(),
-        "rejected RTL parameters must not receive a success ACK"
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("rejected RTL COMMAND_ACK timeout")??;
+    let (_, response) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+        &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+    )?;
+    let mavlink::dialects::common::MavMessage::COMMAND_ACK(ack) = response else {
+        anyhow::bail!("expected COMMAND_ACK for rejected RTL parameters");
+    };
+    assert_eq!(
+        ack.command,
+        mavlink::dialects::common::MavCmd::MAV_CMD_NAV_RETURN_TO_LAUNCH
+    );
+    assert_eq!(
+        ack.result,
+        mavlink::dialects::common::MavResult::MAV_RESULT_DENIED
     );
 
     rtl_payload[0..4].copy_from_slice(&0.0_f32.to_le_bytes());
@@ -574,6 +585,23 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
             .await
             .is_err(),
         "wrong-vehicle RTL must not reach the NATS control subject"
+    );
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("wrong-vehicle RTL COMMAND_ACK timeout")??;
+    let (_, response) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+        &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+    )?;
+    let mavlink::dialects::common::MavMessage::COMMAND_ACK(ack) = response else {
+        anyhow::bail!("expected COMMAND_ACK for wrong-vehicle RTL");
+    };
+    assert_eq!(
+        ack.command,
+        mavlink::dialects::common::MavCmd::MAV_CMD_NAV_RETURN_TO_LAUNCH
+    );
+    assert_eq!(
+        ack.result,
+        mavlink::dialects::common::MavResult::MAV_RESULT_DENIED
     );
 
     // A different loopback client must not issue control commands or redirect telemetry.
@@ -1103,7 +1131,68 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     unsupported_payload[30] = 1;
     unsupported_payload[31] = 1;
     unsupported_payload[24..28].copy_from_slice(&1.0_f32.to_le_bytes());
-    let takeoff = v2_frame(76, 12, 255, &unsupported_payload[..32], 152);
+    unsupported_payload[0..4].copy_from_slice(&1.0_f32.to_le_bytes());
+    let denied_takeoff = v2_frame(76, 12, 255, &unsupported_payload[..32], 152);
+    gcs.send_to(&denied_takeoff, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("denied TAKEOFF COMMAND_ACK timeout")??;
+    assert_eq!(buffer[7], 77, "invalid TAKEOFF should receive COMMAND_ACK");
+    let (_, denied_response) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+        &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+    )?;
+    let mavlink::dialects::common::MavMessage::COMMAND_ACK(denied_ack) = denied_response else {
+        anyhow::bail!("expected COMMAND_ACK for invalid TAKEOFF");
+    };
+    assert_eq!(
+        denied_ack.command,
+        mavlink::dialects::common::MavCmd::MAV_CMD_NAV_TAKEOFF
+    );
+    assert_eq!(
+        denied_ack.result,
+        mavlink::dialects::common::MavResult::MAV_RESULT_DENIED
+    );
+    assert!(
+        timeout(Duration::from_millis(100), reply_rx.recv())
+            .await
+            .is_err(),
+        "invalid TAKEOFF must not be published to NATS"
+    );
+
+    unsupported_payload.fill(0);
+    unsupported_payload[28..30].copy_from_slice(&9999_u16.to_le_bytes());
+    unsupported_payload[30] = 1;
+    unsupported_payload[31] = 1;
+    let unsupported_command = v2_frame(76, 13, 255, &unsupported_payload[..32], 152);
+    gcs.send_to(&unsupported_command, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("unsupported COMMAND_LONG ACK timeout")??;
+    assert_eq!(buffer[0], 0xfd);
+    assert_eq!(buffer[1], 3);
+    assert_eq!(length, 15);
+    assert_eq!(buffer[7], 77);
+    assert_eq!(u16::from_le_bytes([buffer[10], buffer[11]]), 9999);
+    assert_eq!(
+        buffer[12],
+        mavlink::dialects::common::MavResult::MAV_RESULT_UNSUPPORTED as u8
+    );
+    let expected_crc = crc_x25(&[&buffer[1..13], &[143]].concat());
+    assert_eq!(u16::from_le_bytes([buffer[13], buffer[14]]), expected_crc);
+    assert!(
+        timeout(Duration::from_millis(100), reply_rx.recv())
+            .await
+            .is_err(),
+        "unsupported COMMAND_LONG must not be published to NATS"
+    );
+
+    unsupported_payload.fill(0);
+    unsupported_payload[28..30].copy_from_slice(&22_u16.to_le_bytes());
+    unsupported_payload[30] = 1;
+    unsupported_payload[31] = 1;
+    unsupported_payload[24..28].copy_from_slice(&1.0_f32.to_le_bytes());
+    unsupported_payload[0..4].fill(0);
+    let takeoff = v2_frame(76, 14, 255, &unsupported_payload[..32], 152);
     gcs.send_to(&takeoff, qgc_bind).await?;
     let command = timeout(Duration::from_secs(2), reply_rx.recv())
         .await
@@ -1114,7 +1203,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
 
     let mut disarm_payload = arm_payload;
     disarm_payload[0..4].copy_from_slice(&0.0_f32.to_le_bytes());
-    let disarm = v2_frame(76, 13, 255, &disarm_payload[..32], 152);
+    let disarm = v2_frame(76, 15, 255, &disarm_payload[..32], 152);
     gcs.send_to(&disarm, qgc_bind).await?;
     let command = timeout(Duration::from_secs(2), reply_rx.recv())
         .await

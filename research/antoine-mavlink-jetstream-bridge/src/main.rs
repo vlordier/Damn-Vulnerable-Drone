@@ -61,6 +61,18 @@ struct FrameInfo {
     payload: Vec<u8>,
 }
 
+fn x25_checksum(bytes: &[u8], crc_extra: u8) -> u16 {
+    bytes
+        .iter()
+        .copied()
+        .chain(std::iter::once(crc_extra))
+        .fold(0xffff_u16, |crc, byte| {
+            let mut tmp = byte ^ crc as u8;
+            tmp ^= tmp.wrapping_shl(4);
+            (crc >> 8) ^ (u16::from(tmp) << 8) ^ (u16::from(tmp) << 3) ^ (u16::from(tmp) >> 4)
+        })
+}
+
 fn outgoing_heartbeat_audit_subject(
     direction: &str,
     frame: &FrameInfo,
@@ -89,6 +101,37 @@ fn validate_frame(raw: &[u8]) -> Result<FrameInfo> {
     };
     if raw.len() != expected_len {
         bail!("MAVLink UDP datagram has an invalid frame length");
+    }
+    let (message_id, sequence, system_id, component_id, payload_start) = match raw[0] {
+        0xfe => (u32::from(raw[5]), raw[2], raw[3], raw[4], 6),
+        0xfd => {
+            if raw[2] != 0 {
+                bail!("signed or unsupported MAVLink 2 incompatibility flags are unsupported");
+            }
+            (
+                u32::from_le_bytes([raw[7], raw[8], raw[9], 0]),
+                raw[4],
+                raw[5],
+                raw[6],
+                10,
+            )
+        }
+        _ => unreachable!(),
+    };
+    if message_id == 76 {
+        let crc_offset = raw.len() - 2;
+        let expected_crc = x25_checksum(&raw[1..crc_offset], 152);
+        let actual_crc = u16::from_le_bytes([raw[crc_offset], raw[crc_offset + 1]]);
+        if actual_crc != expected_crc {
+            bail!("COMMAND_LONG MAVLink checksum mismatch");
+        }
+        return Ok(FrameInfo {
+            system_id,
+            component_id,
+            message_id,
+            sequence,
+            payload: raw[payload_start..crc_offset].to_vec(),
+        });
     }
     let mut reader = PeekReader::new(Cursor::new(raw));
     let (header, message) = match raw[0] {
@@ -199,12 +242,7 @@ fn mavlink_v2_frame(
     let mut body = vec![payload.len() as u8, 0, 0, sequence, system_id, component_id];
     body.extend_from_slice(&message_id.to_le_bytes()[..3]);
     body.extend_from_slice(payload);
-    let mut crc = 0xffff_u16;
-    for byte in body.iter().copied().chain(std::iter::once(crc_extra)) {
-        let mut tmp = byte ^ crc as u8;
-        tmp ^= tmp.wrapping_shl(4);
-        crc = (crc >> 8) ^ (u16::from(tmp) << 8) ^ (u16::from(tmp) << 3) ^ (u16::from(tmp) >> 4);
-    }
+    let crc = x25_checksum(&body, crc_extra);
     let mut frame = vec![0xfd];
     frame.extend_from_slice(&body);
     frame.extend_from_slice(&crc.to_le_bytes());
@@ -506,6 +544,15 @@ fn command_ack(
             },
         }),
     )
+}
+
+fn unsupported_command_ack(sequence: u8, system_id: u8, command: u16) -> Vec<u8> {
+    let payload = [
+        command as u8,
+        (command >> 8) as u8,
+        MavResult::MAV_RESULT_UNSUPPORTED as u8,
+    ];
+    mavlink_v2_frame(77, sequence, system_id, 1, &payload, 143)
 }
 
 fn mission_query_envelope(config: &Config, request_id: String) -> serde_json::Value {
@@ -1443,6 +1490,26 @@ async fn qgc_to_antoine_nats(
             Ok(None) => continue,
             Err(error) => {
                 tracing::debug!(%error, message_id=frame.message_id, "unsupported MAVLink command rejected");
+                if let Some(id) = command_id(&frame) {
+                    if matches!(id, 400 | 22 | 20 | 21 | 176 | 300 | 193) {
+                        let ack = command_ack(
+                            frame.sequence.wrapping_add(1),
+                            config.system_id,
+                            frame.system_id,
+                            frame.component_id,
+                            id,
+                            false,
+                        );
+                        gcs.send_to(&ack, source).await?;
+                    } else {
+                        let ack = unsupported_command_ack(
+                            frame.sequence.wrapping_add(1),
+                            config.system_id,
+                            id,
+                        );
+                        gcs.send_to(&ack, source).await?;
+                    }
+                }
                 continue;
             }
         };
@@ -2462,5 +2529,30 @@ mod tests {
         let final_byte = heartbeat.len() - 1;
         heartbeat[final_byte] ^= 0x80;
         assert!(validate_frame(&heartbeat).is_err());
+    }
+
+    #[test]
+    fn command_long_preserves_unknown_command_ids_after_crc_validation() {
+        let mut payload = vec![0_u8; 32];
+        payload[28..30].copy_from_slice(&9999_u16.to_le_bytes());
+        let frame = parsed(&mavlink_v2_frame(76, 4, 255, 190, &payload, 152));
+        assert_eq!(frame.message_id, 76);
+        assert_eq!(
+            u16::from_le_bytes([frame.payload[28], frame.payload[29]]),
+            9999
+        );
+
+        payload.push(0);
+        let v1 = parsed(&v1_frame(76, 6, 255, &payload, 152));
+        assert_eq!(v1.payload.len(), 33);
+        assert_eq!(u16::from_le_bytes([v1.payload[28], v1.payload[29]]), 9999);
+
+        let mut corrupted = mavlink_v2_frame(76, 5, 255, 190, &payload, 152);
+        let last_byte = corrupted.len() - 1;
+        corrupted[last_byte] ^= 0x80;
+        assert!(validate_frame(&corrupted)
+            .unwrap_err()
+            .to_string()
+            .contains("COMMAND_LONG MAVLink checksum mismatch"));
     }
 }
