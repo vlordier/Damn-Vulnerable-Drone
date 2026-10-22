@@ -45,6 +45,52 @@ class EvidenceManifestSymlinkTests(unittest.TestCase):
 
         self.assertIs(manifest["measurements"]["applierSessionAuditComplete"], True)
 
+    def test_incomplete_applier_audit_downgrades_otherwise_qualified_swarm_run(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            run_dir.mkdir()
+            (run_dir / "research-swarm-flight.json").write_text(
+                json.dumps(
+                    {
+                        "runId": run_dir.name,
+                        "status": "passed",
+                        "allVehicleRunIdentityMatches": True,
+                        "allFlightsPassed": True,
+                        "baselineStatus": "qualified_baseline",
+                        "baselineGates": {"gazeboAttitudeWithinEnvelope": True},
+                        "poseStreamQualityPassed": True,
+                        "allPairwiseSeparationsMeasured": True,
+                        "allPairwiseSeparationsAtLeast1m": True,
+                        "behaviorPassed": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            (run_dir / "research-provenance-comparison.json").write_text(
+                json.dumps(
+                    {
+                        "runId": run_dir.name,
+                        "prePhaseValid": True,
+                        "postPhaseValid": True,
+                        "profileMatches": True,
+                        "stable": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            audit_dir = run_dir / "applier-neutral"
+            audit_dir.mkdir()
+            (audit_dir / "applier-session.jsonl").write_text(
+                '{"event":"session-start"}\n'
+                '{"event":"publisher-inventory"}\n',
+                encoding="utf-8",
+            )
+
+            manifest = build(run_dir)
+
+        self.assertEqual(manifest["measurementClassification"], "inconclusive")
+        self.assertIn("applier session audit is incomplete", manifest["qualification"])
+
     def test_builder_includes_two_drone_smoke_and_gazebo_truth_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run-a"

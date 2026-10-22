@@ -442,11 +442,15 @@ def build(run_dir: Path) -> dict[str, Any]:
             )
 
     measurement_classification = classify_measurements(measurements)
+    if measurements.get("applierSessionAuditComplete") is False:
+        measurement_classification = "inconclusive"
     qualification = source.get("qualification", source.get("qualificationNote"))
     if measurement_classification == "failed_swarm_flight":
         qualification = f"Measured swarm failure. {qualification or ''}".strip()
     elif measurement_classification == "inconclusive":
-        if measurements.get("provenanceStable") is not True:
+        if measurements.get("applierSessionAuditComplete") is False:
+            reason = "applier session audit is incomplete"
+        elif measurements.get("provenanceStable") is not True:
             reason = "pre/post provenance is missing or unstable"
         elif measurements.get("runIdentityMatches") is not True:
             reason = "run identity does not match"
