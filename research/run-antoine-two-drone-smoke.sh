@@ -165,7 +165,7 @@ dvd_run_owned_child "$PROJECT_ROOT" "$BRIDGE_ID" uv run --no-project \
 BRIDGE_PID=$!
 set +e
 uv run --no-project python "$PROJECT_ROOT/research/antoine_two_drone_probe.py" \
-  --server "$SERVER" --run-dir "$RUN_DIR" --applier-log "$RUN_DIR/applier.log"
+  --gz "$GZ_BIN" --server "$SERVER" --run-dir "$RUN_DIR" --applier-log "$RUN_DIR/applier.log"
 PROBE_STATUS=$?
 set -e
 cleanup
