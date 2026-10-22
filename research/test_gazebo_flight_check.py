@@ -283,6 +283,8 @@ class GazeboFailureReportTests(unittest.TestCase):
                 "contract": "furia.prime.execution-grant",
                 "vehicleId": "drone-1",
                 "runId": "run-1",
+                "worldDigest": "sha256:" + "a" * 64,
+                "worldFrameId": "enu-test",
                 "targetEnuMm": [1000, 2000, 3000],
             },
         }
@@ -296,7 +298,16 @@ class GazeboFailureReportTests(unittest.TestCase):
             {**valid, "runId": "another-run"},
             {**valid, "authority": "safe-stop"},
             {**valid, "values": {"velocity": [0, 0, 0, 0]}},
+            {**valid, "worldSha256": "sha256:bad"},
             {**valid, "sequence": True},
+            {
+                **valid,
+                "executionGrant": {**valid["executionGrant"], "worldDigest": "sha256:" + "b" * 64},
+            },
+            {
+                **valid,
+                "executionGrant": {**valid["executionGrant"], "worldFrameId": "other-frame"},
+            },
             {
                 **valid,
                 "executionGrant": {**valid["executionGrant"], "targetEnuMm": [1000, True, 3000]},

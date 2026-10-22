@@ -7,6 +7,7 @@ import asyncio
 import json
 import math
 import os
+import re
 import sys
 import time
 from pathlib import Path
@@ -24,6 +25,7 @@ ACTUATOR_AUDIT_MAX_BYTES = 2_000_000
 ACTUATOR_OUTPUT_CONTRACT = "furia.gzsitl.actuator-output-audit"
 ACTUATOR_OUTPUT_VERSION = "1.0.0"
 AUTHORIZED_ACTUATOR_STAGES = {"authorized-command", "startup-neutral"}
+SHA256_WORLD_DIGEST = re.compile(r"sha256:[0-9a-fA-F]{64}")
 
 
 def gazebo_timestamp_seconds(value: dict) -> float | None:
@@ -479,9 +481,11 @@ class GazeboFlightCheck(FlightCheck):
                     and grant.get("vehicleId") == self.callsign
                     and grant.get("runId") == self.run_id
                     and isinstance(record.get("worldSha256"), str)
-                    and record["worldSha256"].startswith("sha256:")
+                    and SHA256_WORLD_DIGEST.fullmatch(record["worldSha256"])
                     and isinstance(record.get("frameId"), str)
                     and bool(record["frameId"])
+                    and grant.get("worldDigest") == record["worldSha256"]
+                    and grant.get("worldFrameId") == record["frameId"]
                     and isinstance(velocities, list)
                     and len(velocities) == 4
                     and all(finite_json_number(value) for value in velocities)
