@@ -341,6 +341,11 @@ qgc-gazebo-preflight: ## Check large interactive-profile prerequisites before st
 	gz_binary="$${GZ_BIN:-$(HOME)/Work/gz-macOS/ws/install/bin/gz}"; \
 	if [[ ! -x "$$qgc_binary" ]]; then \
 	  echo "Missing configured Antoine-patched QGroundControl executable: $$qgc_binary" >&2; \
+	  qgc_pids="$$(pgrep -x QGroundControl || true)"; \
+	  if [[ -n "$$qgc_pids" ]]; then \
+	    echo 'QGroundControl process(es) are still running; leaving them untouched:' >&2; \
+	    printf '%s\n' "$$qgc_pids" >&2; \
+	  fi; \
 	  echo "The profile requires the patched source-checkout build; a separately installed QGroundControl app is not used." >&2; \
 	  echo "Build the configured checkout with 'make qgc-antoine-build' before starting the Gazebo profile." >&2; \
 	  exit 1; \
