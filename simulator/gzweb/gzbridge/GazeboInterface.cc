@@ -129,7 +129,7 @@ GazeboInterface::GazeboInterface()
   this->responseSub = this->node->Subscribe("~/response",
       &GazeboInterface::OnResponse, this);
 
-  this->materialParser = new OgreMaterialParser();
+  this->materialParser.reset(new OgreMaterialParser());
 
   this->lastPausedState = true;
 

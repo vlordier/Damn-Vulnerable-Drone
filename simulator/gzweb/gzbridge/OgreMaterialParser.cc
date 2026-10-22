@@ -9,13 +9,12 @@ using namespace gzweb;
 /////////////////////////////////////////////////
 OgreMaterialParser::OgreMaterialParser()
 {
-  this->configLoader = new ConfigLoader(".material");
+  this->configLoader.reset(new ConfigLoader(".material"));
 }
 
 /////////////////////////////////////////////////
 OgreMaterialParser::~OgreMaterialParser()
 {
-  delete this->configLoader;
 }
 
 /////////////////////////////////////////////////

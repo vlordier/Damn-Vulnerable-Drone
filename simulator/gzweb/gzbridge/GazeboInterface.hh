@@ -43,6 +43,10 @@ namespace gzweb
     /// \brief Destructor.
     public: virtual ~GazeboInterface();
 
+    public: GazeboInterface(const GazeboInterface &) = delete;
+
+    public: GazeboInterface &operator=(const GazeboInterface &) = delete;
+
     /// \brief Initialize gazebo interface.
     public: void Init();
 
@@ -429,7 +433,7 @@ namespace gzweb
     private: std::string playbackControlTopic;
 
     /// \brief Ogre material parser.
-    private: OgreMaterialParser *materialParser = nullptr;
+    private: std::unique_ptr<OgreMaterialParser> materialParser;
 
     /// \brief Last world stats msg received
     private: boost::shared_ptr<gazebo::msgs::WorldStatistics const>
