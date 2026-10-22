@@ -332,6 +332,11 @@ def main() -> int:
         action="store_true",
         help="Do not bind QGC source or binary inputs for profiles that do not run QGC.",
     )
+    parser.add_argument(
+        "--exclude-antoine",
+        action="store_true",
+        help="Omit Antoine controller sources and binaries for simulator-only profiles.",
+    )
     parser.add_argument("--require-input", action="append", default=[], metavar="NAME")
     parser.add_argument("--profile-launcher", type=Path)
     parser.add_argument("--expected-env", type=Path)
@@ -427,69 +432,74 @@ def main() -> int:
         # The C2 repository creates short-lived Python cache files while its
         # bridge runs. Hash its exact executed entrypoint below instead of
         # treating those unrelated generated files as source changes.
-        tree_roots.append(("antoine", antoine_context))
-        antoine_target = Path(
-            os.environ.get("ANTOINE_GZ_CARGO_TARGET_DIR", antoine / ".cargo-target")
-        )
-        antoine_binary_dir = Path(
-            os.environ.get("ANTOINE_GZ_PREBUILT_BIN_DIR", antoine_target / "debug")
-        )
+        if not args.exclude_antoine:
+            tree_roots.append(("antoine", antoine_context))
+            antoine_target = Path(
+                os.environ.get("ANTOINE_GZ_CARGO_TARGET_DIR", antoine / ".cargo-target")
+            )
+            antoine_binary_dir = Path(
+                os.environ.get("ANTOINE_GZ_PREBUILT_BIN_DIR", antoine_target / "debug")
+            )
+            input_paths.extend(
+                [
+                    ("antoine_flight_proof_launcher", antoine / "scripts" / "gz_flight_proof.sh"),
+                    (
+                        "antoine_nats_controller",
+                        antoine / "sitl" / "antoine-sitl" / "src" / "bin" / "antoine_sitl_nats.rs",
+                    ),
+                    (
+                        "antoine_local_authority",
+                        antoine
+                        / "sitl"
+                        / "antoine-sitl"
+                        / "src"
+                        / "bin"
+                        / "antoine_gz_local_authority.rs",
+                    ),
+                    ("antoine_sitl_manifest", antoine / "sitl" / "antoine-sitl" / "Cargo.toml"),
+                    ("antoine_sitl_lockfile", antoine / "sitl" / "antoine-sitl" / "Cargo.lock"),
+                    (
+                        "antoine_boundary_manifest",
+                        antoine / "runtime" / "antoine-boundary" / "Cargo.toml",
+                    ),
+                    (
+                        "antoine_boundary_lockfile",
+                        antoine / "runtime" / "antoine-boundary" / "Cargo.lock",
+                    ),
+                    ("antoine_sitl_binary", antoine_binary_dir / "antoine_sitl_nats"),
+                    (
+                        "antoine_local_authority_binary",
+                        antoine_binary_dir / "antoine_gz_local_authority",
+                    ),
+                    ("antoine_boundary_binary", antoine_binary_dir / "antoine-boundary-service"),
+                ]
+            )
+            if not args.exclude_qgroundcontrol:
+                input_paths.append(
+                    (
+                        "qgroundcontrol_binary",
+                        args.qgc_binary
+                        or qgc_root
+                        / "build"
+                        / os.environ.get("QGC_CONFIG", "Debug")
+                        / "QGroundControl.app"
+                        / "Contents"
+                        / "MacOS"
+                        / "QGroundControl",
+                    )
+                )
+            if args.input_bridge:
+                input_paths.append(("mavlink_nats_bridge_binary", args.input_bridge))
+            if args.input_build_receipt:
+                input_paths.append(("antoine_build_receipt", args.input_build_receipt))
+            if args.antoine_patch:
+                input_paths.append(("antoine_battery_patch", args.antoine_patch))
         input_paths.extend(
             [
-                ("antoine_flight_proof_launcher", antoine / "scripts" / "gz_flight_proof.sh"),
-                (
-                    "antoine_nats_controller",
-                    antoine / "sitl" / "antoine-sitl" / "src" / "bin" / "antoine_sitl_nats.rs",
-                ),
-                (
-                    "antoine_local_authority",
-                    antoine
-                    / "sitl"
-                    / "antoine-sitl"
-                    / "src"
-                    / "bin"
-                    / "antoine_gz_local_authority.rs",
-                ),
-                ("antoine_sitl_manifest", antoine / "sitl" / "antoine-sitl" / "Cargo.toml"),
-                ("antoine_sitl_lockfile", antoine / "sitl" / "antoine-sitl" / "Cargo.lock"),
-                (
-                    "antoine_boundary_manifest",
-                    antoine / "runtime" / "antoine-boundary" / "Cargo.toml",
-                ),
-                (
-                    "antoine_boundary_lockfile",
-                    antoine / "runtime" / "antoine-boundary" / "Cargo.lock",
-                ),
-                ("antoine_sitl_binary", antoine_binary_dir / "antoine_sitl_nats"),
-                (
-                    "antoine_local_authority_binary",
-                    antoine_binary_dir / "antoine_gz_local_authority",
-                ),
-                ("antoine_boundary_binary", antoine_binary_dir / "antoine-boundary-service"),
                 ("c2_gazebo_bridge", c2_scripts / "c2-gz-sitl-bridge.py"),
                 ("c2_python_requirements", c2_scripts.parent / "requirements-gz-sitl.txt"),
             ]
         )
-        if not args.exclude_qgroundcontrol:
-            input_paths.append(
-                (
-                    "qgroundcontrol_binary",
-                    args.qgc_binary
-                    or qgc_root
-                    / "build"
-                    / os.environ.get("QGC_CONFIG", "Debug")
-                    / "QGroundControl.app"
-                    / "Contents"
-                    / "MacOS"
-                    / "QGroundControl",
-                )
-            )
-        if args.input_bridge:
-            input_paths.append(("mavlink_nats_bridge_binary", args.input_bridge))
-        if args.input_build_receipt:
-            input_paths.append(("antoine_build_receipt", args.input_build_receipt))
-        if args.antoine_patch:
-            input_paths.append(("antoine_battery_patch", args.antoine_patch))
         applier = args.input_applier or sim / "tools" / "gz-sitl-applier" / "gz-sitl-applier"
         input_paths.append(("gazebo_applier", applier))
     sensor_overlay = (
@@ -508,7 +518,7 @@ def main() -> int:
     if args.profile_receipt:
         input_paths.append(("interactive_profile_receipt", args.profile_receipt))
 
-    for name in ("cargo", "rustc", "nats-server"):
+    for name in ("cargo", "rustc", "nats", "nats-server"):
         executable = shutil.which(name)
         if executable:
             input_paths.append((f"{name}_executable", Path(executable).resolve()))
@@ -633,6 +643,7 @@ def main() -> int:
             "rustupToolchain": os.environ.get("RUSTUP_TOOLCHAIN"),
             "cargo": command_version("cargo", ["--version"]),
             "rustc": command_version("rustc", ["--version", "--verbose"]),
+            "natsCli": command_version("nats", ["--version"]),
             "uv": command_version("uv", ["--version"]),
             "natsServer": command_version("nats-server", ["--version"]),
             "gazebo": gazebo_version(gz_bin),

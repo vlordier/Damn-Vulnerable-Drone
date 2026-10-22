@@ -12,6 +12,10 @@ REPORT_ROOT="${ANTOINE_REPORT_DIR:-$PROJECT_ROOT/build_logs/research/antoine-sce
 RUN_ID="antoine-two-drone-smoke-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$REPORT_ROOT/$RUN_ID"
 SERVER_PORT="${ANTOINE_TWO_DRONE_NATS_PORT:-$(uv run --no-project python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')}"
+[[ "$SERVER_PORT" =~ ^[0-9]+$ ]] && ((SERVER_PORT >= 1 && SERVER_PORT <= 65535)) || {
+  echo "Invalid run-local NATS port: $SERVER_PORT" >&2
+  exit 2
+}
 SERVER="nats://127.0.0.1:$SERVER_PORT"
 PARTITION="antoine-two-drone-$$"
 NATS_PID=""
@@ -30,6 +34,12 @@ done
 for input in "$SIM_SOURCE/worlds/antoine-gz-flight-proof.sdf" "$SIM_SOURCE/models/x500/model.sdf" "$C2_SCRIPTS/c2-gz-sitl-bridge.py"; do
   [[ -f "$input" ]] || { echo "Missing required input: $input" >&2; exit 1; }
 done
+APPLIER_BIN="$SIM_SOURCE/tools/gz-sitl-applier/gz-sitl-applier"
+[[ -x "$APPLIER_BIN" ]] || { echo "Gazebo actuator applier not found: $APPLIER_BIN" >&2; exit 1; }
+export AGR_SIM="$SIM_SOURCE"
+export AGR_C2_SCRIPTS="$C2_SCRIPTS"
+export GZ_BIN
+export ANTOINE_GZ_FLIGHT_NATS_PORT="$SERVER_PORT"
 mkdir -p "$REPORT_ROOT"
 mkdir "$RUN_DIR"
 uv run --no-project python "$PROJECT_ROOT/research/prepare_antoine_two_drone_world.py" \
@@ -45,7 +55,28 @@ export GZ_CLI="$GZ_BIN"
 export GZ_INSTALL
 export GZ_SIM_RESOURCE_PATH="$SIM_SOURCE/models${GZ_SIM_RESOURCE_PATH:+:$GZ_SIM_RESOURCE_PATH}"
 export DYLD_LIBRARY_PATH="$GZ_INSTALL/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
-printf 'GZ_PARTITION=%s\nGZ_SIM_RESOURCE_PATH=%s\n' "$GZ_PARTITION" "$GZ_SIM_RESOURCE_PATH" >"$RUN_DIR/research-profile.env"
+{
+  printf 'GZ_IP=%s\n' "$GZ_IP"
+  printf 'GZ_PARTITION=%s\n' "$GZ_PARTITION"
+  printf 'GZ_CLI=%s\n' "$GZ_CLI"
+  printf 'GZ_INSTALL=%s\n' "$GZ_INSTALL"
+  printf 'GZ_SIM_RESOURCE_PATH=%s\n' "$GZ_SIM_RESOURCE_PATH"
+  printf 'ANTOINE_GZ_FLIGHT_NATS_PORT=%s\n' "$ANTOINE_GZ_FLIGHT_NATS_PORT"
+} >"$RUN_DIR/research-profile.env"
+PROVENANCE_ARGS=(
+  "$RUN_DIR" --run-id "$RUN_ID" --source-sim "$SIM_SOURCE"
+  --runtime-world "$RUN_DIR/two-drone-world.sdf"
+  --input-world "$SIM_SOURCE/worlds/antoine-gz-flight-proof.sdf"
+  --input-models-dir "$SIM_SOURCE/models" --input-applier "$APPLIER_BIN"
+  --exclude-antoine --exclude-qgroundcontrol --expected-env "$RUN_DIR/research-profile.env"
+  --require-input gazebo_binary --require-input source_world
+  --require-input runtime_world_overlay --require-input x500_model
+  --require-input gazebo_model_assets --require-input gazebo_applier
+  --require-input c2_gazebo_bridge --require-input c2_python_requirements
+  --require-input nats_executable --require-input nats-server_executable --require-input uv_executable
+)
+uv run --no-project python "$PROJECT_ROOT/research/capture_antoine_provenance.py" \
+  "${PROVENANCE_ARGS[@]}" --phase pre --output "$RUN_DIR/research-provenance-pre.json" >/dev/null
 
 cleanup() {
   local status=$?
@@ -90,8 +121,6 @@ done
 
 # Verify the actuator layer can address both model-specific Gazebo command
 # topics. No Antoine controller or non-neutral actuator command is started.
-APPLIER_BIN="$SIM_SOURCE/tools/gz-sitl-applier/gz-sitl-applier"
-[[ -x "$APPLIER_BIN" ]] || { echo "Gazebo actuator applier not found: $APPLIER_BIN" >&2; exit 1; }
 mkdir -p "$RUN_DIR/applier-neutral" "$RUN_DIR/applier-authorized"
 export NATS_URL="$SERVER"
 export DVD_APPLIER_BIN="$APPLIER_BIN"
@@ -141,6 +170,8 @@ PROBE_STATUS=$?
 set -e
 cleanup
 trap - EXIT INT TERM
+uv run --no-project python "$PROJECT_ROOT/research/capture_antoine_provenance.py" \
+  "${PROVENANCE_ARGS[@]}" --phase post --output "$RUN_DIR/research-provenance.json" >/dev/null
 uv run --no-project python "$PROJECT_ROOT/research/build_evidence_manifest.py" "$RUN_DIR" >/dev/null
 printf 'two-drone smoke run: %s\n' "$RUN_DIR"
 cat "$RUN_DIR/research-two-drone-smoke.json"
