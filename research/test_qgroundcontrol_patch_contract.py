@@ -12,6 +12,15 @@ PATCH = Path(__file__).resolve().parent / "patches" / "qgroundcontrol-antoine.pa
 
 
 class QGroundControlPatchContractTests(unittest.TestCase):
+    def test_antoine_arm_ui_is_scoped_to_supported_vehicle_identity(self) -> None:
+        patch = PATCH.read_text(encoding="utf-8")
+        self.assertIn(
+            "_activeVehicle.vehicleType === MAVLinkEnums.MAV_TYPE_QUADROTOR &&",
+            patch,
+        )
+        self.assertIn("_activeVehicle.id === 1", patch)
+        self.assertIn("vehicle->id() == 1", patch)
+
     def test_guided_position_target_uses_radial_three_meter_limit(self) -> None:
         patch = PATCH.read_text(encoding="utf-8")
         match = re.search(r"^\+\s*if \((distance[^\n]+)\) \{$", patch, re.MULTILINE)

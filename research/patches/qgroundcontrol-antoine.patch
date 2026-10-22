@@ -248,7 +248,7 @@ diff --git a/src/Toolbar/MainStatusIndicator.qml b/src/Toolbar/MainStatusIndicat
 index ce7f8610..0f7c6cb1 100644
 --- a/src/Toolbar/MainStatusIndicator.qml
 +++ b/src/Toolbar/MainStatusIndicator.qml
-@@ -9,6 +9,11 @@ RowLayout {
+@@ -9,6 +9,12 @@ RowLayout {
      spacing:    ScreenTools.defaultFontPixelWidth
  
      property var    _activeVehicle:     QGroundControl.multiVehicleManager.activeVehicle
@@ -256,7 +256,8 @@ index ce7f8610..0f7c6cb1 100644
 +    // deliberately has no QGC parameter store. Keep its basic arm control
 +    // available without claiming support for generic aircraft in general.
 +    property bool   _antoineGenericQuad: _activeVehicle && _activeVehicle.genericFirmware &&
-+                                         _activeVehicle.vehicleType === MAVLinkEnums.MAV_TYPE_QUADROTOR
++                                         _activeVehicle.vehicleType === MAVLinkEnums.MAV_TYPE_QUADROTOR &&
++                                         _activeVehicle.id === 1
      property var    _guidedController:  globals.guidedControllerFlyView
      property bool   _armed:             _activeVehicle ? _activeVehicle.armed : false
      property real   _margins:           ScreenTools.defaultFontPixelWidth
