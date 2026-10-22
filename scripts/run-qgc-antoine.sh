@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANTOINE_QGC_DIR="${ANTOINE_QGC_DIR:-${HOME}/Work/antoine-qgroundcontrol}"
 QGC_CONFIG="${QGC_CONFIG:-Debug}"
 QGC_UDP_LISTEN_PORT="${QGC_UDP_LISTEN_PORT:-14550}"
@@ -13,6 +14,11 @@ QGC_SETTINGS_FILE="${QGC_SETTINGS_FILE:-${QGC_SETTINGS_DIR}/qgroundcontrol.com/Q
   echo "Missing executable local QGC build: ${QGC_APP}" >&2
   exit 1
 }
+uv run --project "${PROJECT_ROOT}/research" python \
+  "${PROJECT_ROOT}/research/check_qgroundcontrol_patch.py" \
+  --root "${ANTOINE_QGC_DIR}" \
+  --patch "${PROJECT_ROOT}/research/patches/qgroundcontrol-antoine.patch" \
+  --binary "${QGC_APP}"
 if lsof -nP -iUDP:"${QGC_UDP_LISTEN_PORT}" | rg -q 'QGroundCo'; then
   echo "QGC already owns UDP ${QGC_UDP_LISTEN_PORT}; close that instance before launching this profile." >&2
   exit 1
