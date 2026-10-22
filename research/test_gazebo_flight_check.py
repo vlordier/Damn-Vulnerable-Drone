@@ -59,7 +59,7 @@ class GazeboFailureReportTests(unittest.TestCase):
         self.assertIn("^[0-9]{1,5}$", runner[validation:build])
         self.assertIn("through 65535", runner[validation:build])
         self.assertIn("UDP ports must be distinct", runner[validation:build])
-        self.assertNotIn('while [[ "${QGC_BIND_PORT}" ==', runner[validation:build])
+        self.assertIn("10#${bridge} == 10#${listen}", runner[validation:build])
 
         function_end = runner.index("\n}", validation) + 2
         validate_port = runner[validation:function_end]
@@ -81,6 +81,41 @@ class GazeboFailureReportTests(unittest.TestCase):
                     check=False,
                 )
                 self.assertEqual(result.returncode, 2)
+
+        distinct = runner.index("validate_distinct_udp_ports() {")
+        distinct_end = runner.index("\n}", distinct) + 2
+        validate_distinct = runner[distinct:distinct_end]
+        for ports in (("14551", "14552", "14553"), ("01455", "1456", "1457")):
+            with self.subTest(distinct_ports=ports):
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        f'{validate_distinct}\nvalidate_distinct_udp_ports "$@"',
+                        "bash",
+                        *ports,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+        for ports in (("14551", "14551", "14553"), ("01455", "1455", "1457")):
+            with self.subTest(duplicate_udp_ports=ports):
+                result = subprocess.run(
+                    [
+                        "bash",
+                        "-c",
+                        f'{validate_distinct}\nvalidate_distinct_udp_ports "$@"',
+                        "bash",
+                        *ports,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                )
+                self.assertEqual(result.returncode, 1)
+                self.assertIn("UDP ports must be distinct", result.stderr)
 
     def test_launcher_exits_on_interrupt_and_runs_cleanup_once(self) -> None:
         runner = SCRIPT.parents[1] / "run-antoine-gazebo-mavlink.sh"

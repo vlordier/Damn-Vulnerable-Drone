@@ -59,12 +59,16 @@ validate_port "ANTOINE_GZ_MAVLINK_NATS_PORT" "${NATS_PORT}"
 validate_port "QGC_BRIDGE_PORT" "${QGC_BIND_PORT}"
 validate_port "QGC_UDP_LISTEN_PORT" "${QGC_LISTEN_PORT}"
 validate_port "MAVLINK_GAZEBO_CHECK_PORT" "${GAZEBO_CHECK_PORT}"
-if [[ "${QGC_BIND_PORT}" == "${QGC_LISTEN_PORT}" \
-  || "${QGC_BIND_PORT}" == "${GAZEBO_CHECK_PORT}" \
-  || "${QGC_LISTEN_PORT}" == "${GAZEBO_CHECK_PORT}" ]]; then
-  echo "QGC bridge, QGC listen, and Gazebo check UDP ports must be distinct." >&2
-  exit 2
-fi
+validate_distinct_udp_ports() {
+  local bridge="$1" listen="$2" gazebo_check="$3"
+  if (( 10#${bridge} == 10#${listen} \
+    || 10#${bridge} == 10#${gazebo_check} \
+    || 10#${listen} == 10#${gazebo_check} )); then
+    echo "QGC bridge, QGC listen, and Gazebo check UDP ports must be distinct." >&2
+    return 1
+  fi
+}
+validate_distinct_udp_ports "${QGC_BIND_PORT}" "${QGC_LISTEN_PORT}" "${GAZEBO_CHECK_PORT}" || exit 2
 PROFILE_PID=""
 BRIDGE_PID=""
 GUI_PID=""
