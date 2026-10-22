@@ -10,6 +10,24 @@ import antoine_nats_observation
 
 
 class AntoineNatsObservationTests(unittest.TestCase):
+    def test_capture_counts_duplicate_key_payload_as_malformed(self) -> None:
+        completed = type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": '{"identity":"spoofed","identity":"drone-1"}\n',
+                "stderr": "",
+            },
+        )()
+        with patch.object(antoine_nats_observation.subprocess, "run", return_value=completed):
+            result = antoine_nats_observation.capture(
+                "nats://127.0.0.1:4222", "telemetry", "furia.telemetry.drone-1"
+            )
+
+        self.assertEqual(result["capturedMessages"], 0)
+        self.assertEqual(result["malformedOutputLines"], 1)
+
     def test_subscriber_cli_start_failure_is_recorded_as_incomplete_evidence(self) -> None:
         ready = type("Completed", (), {"returncode": 0, "stdout": "", "stderr": ""})()
         with tempfile.TemporaryDirectory() as directory:

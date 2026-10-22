@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 
 from dvd_research.run_files import write_run_json
 from dvd_research.run_nats import validate_run_nats_endpoint
+from dvd_research.strict_json import loads as strict_json_loads
 
 SUBJECTS = {
     "mission_setpoint": "furia.gzsitl.setpoint.drone-1",
@@ -86,7 +87,7 @@ def capture(server: str, name: str, subject: str) -> dict[str, Any]:
         if not line.strip():
             continue
         try:
-            messages.append(sanitize(json.loads(line)))
+            messages.append(sanitize(strict_json_loads(line)))
         except json.JSONDecodeError:
             malformed += 1
 
