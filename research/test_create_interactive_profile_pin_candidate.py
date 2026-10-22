@@ -81,14 +81,14 @@ class InteractiveProfilePinCandidateTests(unittest.TestCase):
         self.receipt["sourceSnapshots"] = {
             "antoine": {
                 "path": "antoine-source-snapshot",
-                "receiptSha256": "receipt-a",
-                "snapshotManifestSha256": "manifest-a",
+                "receiptSha256": "a" * 64,
+                "snapshotManifestSha256": "b" * 64,
                 "fileCount": 142,
             },
             "gazebo": {
                 "path": "gazebo-source-snapshot",
-                "receiptSha256": "receipt-g",
-                "snapshotManifestSha256": "manifest-g",
+                "receiptSha256": "c" * 64,
+                "snapshotManifestSha256": "d" * 64,
                 "fileCount": 279,
             },
         }
@@ -104,6 +104,30 @@ class InteractiveProfilePinCandidateTests(unittest.TestCase):
             "reviewedAtUtc": "2026-10-21T12:00:00Z",
         }
         self.assertEqual(verify(self.receipt, candidate)["status"], "verified")
+
+    def test_candidate_rejects_malformed_snapshot_record(self) -> None:
+        self.receipt["source"]["gazeboAssets"] = {
+            "name": "gazeboAssets",
+            "classification": "unavailable",
+            "revision": None,
+            "reason": "source path is missing or is not a Git checkout",
+        }
+        self.receipt["sourceSnapshots"] = {
+            "antoine": {
+                "path": "../antoine-source-snapshot",
+                "receiptSha256": "a" * 64,
+                "snapshotManifestSha256": "b" * 64,
+                "fileCount": 142,
+            },
+            "gazebo": {
+                "path": "gazebo-source-snapshot",
+                "receiptSha256": "c" * 64,
+                "snapshotManifestSha256": "d" * 64,
+                "fileCount": 279,
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "canonical relative POSIX path"):
+            create_candidate(self.receipt, self.comparison)
 
     def test_candidate_rejects_unavailable_checkout_without_snapshot(self) -> None:
         self.receipt["source"]["gazeboAssets"] = {

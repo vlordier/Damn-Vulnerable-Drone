@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from create_interactive_profile_receipt import snapshot_record
+from interactive_profile_snapshot import snapshot_record_error
 
 PIN_CONTRACT = "damn-vulnerable-drone.interactive-profile-pins"
 COMPARISON_CONTRACT = "damn-vulnerable-drone.antoine-provenance-comparison"
@@ -41,18 +42,9 @@ def _validate_source_snapshots(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict) or not value:
         raise ValueError("receipt source snapshots are missing")
     for name, record in value.items():
-        if (
-            not isinstance(record, dict)
-            or not isinstance(record.get("path"), str)
-            or not record["path"]
-            or not isinstance(record.get("receiptSha256"), str)
-            or not record["receiptSha256"]
-            or not isinstance(record.get("snapshotManifestSha256"), str)
-            or not record["snapshotManifestSha256"]
-            or type(record.get("fileCount")) is not int
-            or record["fileCount"] <= 0
-        ):
-            raise ValueError(f"receipt source snapshot is incomplete: {name}")
+        error = snapshot_record_error(record)
+        if error is not None:
+            raise ValueError(f"receipt source snapshot is invalid: {name}: {error}")
     return value
 
 

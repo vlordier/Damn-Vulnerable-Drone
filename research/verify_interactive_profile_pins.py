@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from interactive_profile_snapshot import SNAPSHOT_RECORD_FIELDS, snapshot_record_error
+
 PIN_CONTRACT = "damn-vulnerable-drone.interactive-profile-pins"
 PIN_VERSION = "1.0.0"
 DIRTY_SOURCE_FIELDS = (
@@ -17,7 +19,6 @@ DIRTY_SOURCE_FIELDS = (
     "dirtyFilesSha256",
 )
 SOURCE_SNAPSHOT_FOR = {"antoine": "antoine", "gazeboAssets": "gazebo"}
-SNAPSHOT_FIELDS = ("path", "receiptSha256", "snapshotManifestSha256", "fileCount")
 HEADLESS_PROFILE = "headless-antoine-gazebo-mavlink"
 HEADLESS_OPTIONAL_ARTIFACTS = {"qgroundcontrolBinarySha256", "qgcSettingsSha256"}
 
@@ -121,7 +122,12 @@ def _compare_source_snapshots(
             missing.append(f"sourceSnapshots.{name} record is malformed")
             matches = False
             continue
-        for field in SNAPSHOT_FIELDS:
+        for record_label, record in (("receipt", actual_record), ("reviewed pin", expected_record)):
+            error = snapshot_record_error(record)
+            if error is not None:
+                missing.append(f"sourceSnapshots.{name} {record_label}: {error}")
+                matches = False
+        for field in sorted(SNAPSHOT_RECORD_FIELDS):
             actual_value = actual_record.get(field)
             expected_value = expected_record.get(field)
             if actual_value is None or expected_value is None:

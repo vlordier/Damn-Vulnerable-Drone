@@ -99,14 +99,14 @@ class InteractiveProfilePinTests(unittest.TestCase):
         snapshots = {
             "antoine": {
                 "path": "antoine-source-snapshot",
-                "receiptSha256": "receipt-a",
-                "snapshotManifestSha256": "manifest-a",
+                "receiptSha256": "a" * 64,
+                "snapshotManifestSha256": "b" * 64,
                 "fileCount": 142,
             },
             "gazebo": {
                 "path": "gazebo-source-snapshot",
-                "receiptSha256": "receipt-g",
-                "snapshotManifestSha256": "manifest-g",
+                "receiptSha256": "c" * 64,
+                "snapshotManifestSha256": "d" * 64,
                 "fileCount": 279,
             },
         }
@@ -128,8 +128,8 @@ class InteractiveProfilePinTests(unittest.TestCase):
         snapshots = {
             "gazebo": {
                 "path": "gazebo-source-snapshot",
-                "receiptSha256": "receipt-g",
-                "snapshotManifestSha256": "manifest-g",
+                "receiptSha256": "c" * 64,
+                "snapshotManifestSha256": "d" * 64,
                 "fileCount": 279,
             }
         }
@@ -137,7 +137,10 @@ class InteractiveProfilePinTests(unittest.TestCase):
         self.receipt["sourceSnapshots"] = snapshots
         self.pins["source"]["gazeboAssets"] = dict(unavailable)
         self.pins["sourceSnapshots"] = {
-            "gazebo": {**snapshots["gazebo"], "snapshotManifestSha256": "other"}
+            "gazebo": {
+                **snapshots["gazebo"],
+                "snapshotManifestSha256": "e" * 64,
+            }
         }
 
         result = verify(self.receipt, self.pins)
@@ -146,6 +149,26 @@ class InteractiveProfilePinTests(unittest.TestCase):
             "sourceSnapshots.gazebo.snapshotManifestSha256 differs from reviewed pin",
             result["incompatible"],
         )
+
+    def test_matching_malformed_snapshot_records_are_missing(self) -> None:
+        record = {
+            "path": "antoine-source-snapshot",
+            "receiptSha256": "a" * 64,
+            "snapshotManifestSha256": "b" * 64,
+            "fileCount": 142,
+        }
+        for field, malformed in (
+            ("path", "../antoine-source-snapshot"),
+            ("receiptSha256", "not-a-digest"),
+            ("fileCount", True),
+        ):
+            with self.subTest(field=field):
+                invalid = {**record, field: malformed}
+                self.receipt["sourceSnapshots"] = {"antoine": invalid}
+                self.pins["sourceSnapshots"] = {"antoine": invalid}
+                result = verify(self.receipt, self.pins)
+                self.assertEqual(result["status"], "missing")
+                self.assertFalse(result["verified"])
 
     def test_unreviewed_pins_are_not_accepted(self) -> None:
         self.pins["review"]["status"] = "unreviewed"
