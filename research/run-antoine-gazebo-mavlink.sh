@@ -159,6 +159,7 @@ supervised_child_pid() {
 
 cleanup() {
   local status=$?
+  trap '' INT TERM
   [[ -z "${GUI_PID}" ]] || dvd_signal_owned_child "${PROJECT_ROOT}" "${GUI_PID}" "${GUI_IDENTITY}" TERM || true
   [[ -z "${BRIDGE_PID}" ]] || dvd_signal_owned_child "${PROJECT_ROOT}" "${BRIDGE_PID}" "${BRIDGE_IDENTITY}" TERM || true
   [[ -z "${PROFILE_PID}" ]] || dvd_signal_owned_child "${PROJECT_ROOT}" "${PROFILE_PID}" "${PROFILE_IDENTITY}" TERM || true
@@ -179,7 +180,9 @@ cleanup() {
   echo "Gazebo run files: ${RUN_DIR}"
   return "${status}"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 [[ -x "${ANTOINE_ROOT}/scripts/gz_flight_proof.sh" ]] || {
   echo "Missing Antoine Gazebo launcher: ${ANTOINE_ROOT}/scripts/gz_flight_proof.sh" >&2

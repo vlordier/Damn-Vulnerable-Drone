@@ -27,6 +27,16 @@ with mock.patch.dict(sys.modules, {"flight_check": STUB_FLIGHT_CHECK}):
 
 
 class GazeboFailureReportTests(unittest.TestCase):
+    def test_launcher_exits_on_interrupt_and_runs_cleanup_once(self) -> None:
+        runner = SCRIPT.parents[1] / "run-antoine-gazebo-mavlink.sh"
+        content = runner.read_text(encoding="utf-8")
+
+        self.assertIn("trap cleanup EXIT\n", content)
+        self.assertIn("trap 'exit 130' INT\n", content)
+        self.assertIn("trap 'exit 143' TERM\n", content)
+        self.assertIn("  trap '' INT TERM\n", content)
+        self.assertNotIn("trap cleanup EXIT INT TERM", content)
+
     def test_standalone_target_selects_run_owned_flight_proof_paths(self) -> None:
         makefile = SCRIPT.parents[2] / "Makefile"
         content = makefile.read_text(encoding="utf-8")
