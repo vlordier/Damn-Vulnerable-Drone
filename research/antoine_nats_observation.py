@@ -47,6 +47,7 @@ def capture(server: str, name: str, subject: str) -> dict[str, Any]:
     code = None
     timed_out = False
     stderr = ""
+    start_error = None
     command = [
         "nats",
         "--no-context",
@@ -72,6 +73,11 @@ def capture(server: str, name: str, subject: str) -> dict[str, Any]:
         )
         code = None
         timed_out = True
+    except OSError as error:
+        stdout = ""
+        code = None
+        timed_out = False
+        start_error = f"{type(error).__name__}: {error}"[:500]
     else:
         stdout, stderr, code = completed.stdout, completed.stderr, completed.returncode
         timed_out = False
@@ -95,6 +101,7 @@ def capture(server: str, name: str, subject: str) -> dict[str, Any]:
         "malformedOutputLines": malformed,
         "subscriberExitCode": code,
         "subscriberTimedOut": timed_out,
+        "subscriberStartError": start_error,
         "stderr": stderr.strip()[:500],
         "captureStartedAtUnixMs": started,
     }
