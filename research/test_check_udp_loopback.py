@@ -33,6 +33,30 @@ class MacFirewallPreflightTests(unittest.TestCase):
         ):
             self.assertFalse(_application_firewall_blocks_python())
 
+    def test_explicit_not_blocked_status_does_not_block_the_udp_probe(self) -> None:
+        result = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="Incoming connection is not blocked.\n", stderr=""
+        )
+        with (
+            mock.patch("check_udp_loopback.sys.platform", "darwin"),
+            mock.patch("check_udp_loopback.Path.exists", return_value=True),
+            mock.patch("check_udp_loopback.Path.resolve", return_value="/resolved/python"),
+            mock.patch("check_udp_loopback.subprocess.run", return_value=result),
+        ):
+            self.assertFalse(_application_firewall_blocks_python())
+
+    def test_firewall_query_failure_does_not_override_the_udp_probe(self) -> None:
+        result = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="Incoming connection is blocked.\n", stderr="error"
+        )
+        with (
+            mock.patch("check_udp_loopback.sys.platform", "darwin"),
+            mock.patch("check_udp_loopback.Path.exists", return_value=True),
+            mock.patch("check_udp_loopback.Path.resolve", return_value="/resolved/python"),
+            mock.patch("check_udp_loopback.subprocess.run", return_value=result),
+        ):
+            self.assertFalse(_application_firewall_blocks_python())
+
     def test_blocked_rule_stops_before_opening_udp_sockets(self) -> None:
         with (
             mock.patch("check_udp_loopback._application_firewall_blocks_python", return_value=True),

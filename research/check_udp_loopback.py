@@ -23,7 +23,12 @@ def _application_firewall_blocks_python() -> bool:
         )
     except (OSError, subprocess.TimeoutExpired):
         return False
-    return "blocked" in result.stdout.lower()
+    if result.returncode != 0:
+        return False
+    status = result.stdout.lower()
+    if "permitted" in status or "not blocked" in status or "unblocked" in status:
+        return False
+    return "blocked" in status
 
 
 def local_udp_loopback_available(timeout_seconds: float = 0.5) -> bool:
