@@ -946,7 +946,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         }
         let malformed_item = v2_frame(73, sequence, 255, &malformed_item_payload, 38);
         gcs.send_to(&malformed_item, qgc_bind).await?;
-        let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        let (_length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
             .await
             .context("malformed mission-item ACK timeout")??;
         assert_eq!(buffer[7], 47, "malformed mission item should be rejected");
@@ -1071,6 +1071,47 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     )?;
     let matching_component_item =
         v2_frame(73, 15, 255, &mission_item[10..mission_item.len() - 2], 38);
+    tokio::time::sleep(Duration::from_secs(10) + Duration::from_millis(100)).await;
+    gcs.send_to(&mission_item, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("expired mission-upload ACK timeout")??;
+    let (_, expired_upload_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(expired_upload_ack) =
+        expired_upload_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for expired mission upload");
+    };
+    assert_eq!(
+        expired_upload_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
+    assert!(
+        timeout(Duration::from_millis(100), reply_rx.recv())
+            .await
+            .is_err(),
+        "expired mission upload must not reach Antoine"
+    );
+
+    let restarted_mission_count = v2_frame(44, 17, 255, &mission_count_payload, 221);
+    gcs.send_to(&restarted_mission_count, qgc_bind).await?;
+    let mut restarted_request_seen = false;
+    for _ in 0..4 {
+        let (_length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+            .await
+            .context("restarted mission upload request timeout")??;
+        if buffer[7] == 51 {
+            restarted_request_seen = true;
+            break;
+        }
+    }
+    assert!(
+        restarted_request_seen,
+        "a fresh mission upload should start after expiry"
+    );
     gcs.send_to(&mission_item, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
