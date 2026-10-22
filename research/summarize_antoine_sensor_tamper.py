@@ -8,13 +8,14 @@ import json
 from pathlib import Path
 
 from build_evidence_manifest import build, write_manifest
+from dvd_research.strict_json import loads as strict_json_loads
 from evidence_contracts import exact_count, run_identity_matches
 
 
 def read(path: Path) -> dict:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        value = strict_json_loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
 
@@ -26,8 +27,8 @@ def read_sensor_profile(path: Path) -> dict:
             (index for index, line in enumerate(lines) if line.startswith("GZ_PARTITION=")),
             len(lines),
         )
-        value = json.loads("\n".join(lines[:boundary]))
-    except (OSError, json.JSONDecodeError):
+        value = strict_json_loads("\n".join(lines[:boundary]))
+    except (OSError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
 
