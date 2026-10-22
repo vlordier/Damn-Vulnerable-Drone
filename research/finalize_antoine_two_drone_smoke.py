@@ -8,13 +8,14 @@ import json
 from pathlib import Path
 
 from dvd_research.run_files import read_run_text, write_run_json
+from dvd_research.strict_json import loads as strict_json_loads
 
 
 def finalize(run_dir: Path, capture_exit_code: int) -> tuple[dict, int]:
     report_text = read_run_text(run_dir, Path("research-two-drone-smoke.json"))
     if report_text is None:
         raise ValueError("two-drone smoke report is unavailable")
-    report = json.loads(report_text)
+    report = strict_json_loads(report_text)
     if not isinstance(report, dict):
         raise ValueError("two-drone smoke report must be a JSON object")
 
@@ -23,7 +24,7 @@ def finalize(run_dir: Path, capture_exit_code: int) -> tuple[dict, int]:
     except (OSError, ValueError):
         comparison_text = None
     try:
-        comparison = json.loads(comparison_text) if comparison_text else {}
+        comparison = strict_json_loads(comparison_text) if comparison_text else {}
     except json.JSONDecodeError:
         comparison = {}
     if not isinstance(comparison, dict):

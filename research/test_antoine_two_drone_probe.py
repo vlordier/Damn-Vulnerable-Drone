@@ -74,6 +74,15 @@ class TwoDroneProbeTests(unittest.TestCase):
             self.assertEqual(observation["status"], "inconclusive")
             self.assertTrue((run_dir / "gazebo-pose-info.jsonl").is_file())
 
+    def test_gazebo_truth_rejects_duplicate_nested_json_keys(self) -> None:
+        frame = (
+            '{"header":{"stamp":{"sec":1,"nsec":0}},'
+            '"pose":[{"name":"isr","position":{"x":0,"y":0,"z":0}},'
+            '{"name":"fpv-a","position":{"x":8,"y":0,"z":0}}],'
+            '"header":{"stamp":{"sec":2,"nsec":0}}}'
+        )
+        self.assertEqual(antoine_two_drone_probe.gazebo_pose_samples(frame), [])
+
     def test_pass_requires_correlated_separation_in_nats_and_gazebo(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run"

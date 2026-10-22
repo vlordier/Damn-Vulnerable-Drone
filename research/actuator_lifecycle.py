@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from dvd_research.evidence_contract import contains_symlink_component
+from dvd_research.strict_json import loads as strict_json_loads
 
 
 def _integer(value: Any) -> bool:
@@ -54,11 +55,13 @@ def disarmed_status(
             relative = path.relative_to(run_dir)
             if contains_symlink_component(run_dir, relative) or path.stat().st_size > 1_048_576:
                 return unavailable("Unsafe or oversized actuator-lifecycle artifact.")
-        rows = [json.loads(line) for line in audit_path.read_text().splitlines() if line.strip()]
+        rows = [
+            strict_json_loads(line) for line in audit_path.read_text().splitlines() if line.strip()
+        ]
         if any(not isinstance(row, dict) for row in rows):
             return unavailable("Malformed actuator-lifecycle audit.")
         rows = [row for row in rows if row.get("vehicleId") == callsign]
-        latest = json.loads(latest_path.read_text())
+        latest = strict_json_loads(latest_path.read_text())
         final = evidence["finalActuatorState"]
         initial = evidence.get("initialActuatorState")
         requests = evidence.get("actuatorLifecycleRequests")

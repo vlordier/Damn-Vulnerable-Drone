@@ -22,3 +22,9 @@ def _reject_constant(value: str) -> None:
 def loads(data: str | bytes | bytearray) -> Any:
     """Decode JSON while rejecting duplicate keys and NaN/Infinity tokens."""
     return json.loads(data, object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+
+
+def raw_decode(data: str, idx: int = 0) -> tuple[Any, int]:
+    """Decode one JSON value from a larger stream with the same strict rules."""
+    decoder = json.JSONDecoder(object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+    return decoder.raw_decode(data, idx)

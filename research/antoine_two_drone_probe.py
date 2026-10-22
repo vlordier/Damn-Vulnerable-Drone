@@ -13,6 +13,8 @@ from pathlib import Path
 
 from dvd_research.run_files import read_run_text, write_run_json, write_run_text
 from dvd_research.run_nats import validate_run_nats_endpoint
+from dvd_research.strict_json import loads as strict_json_loads
+from dvd_research.strict_json import raw_decode as strict_json_raw_decode
 
 POSE_TOPIC = "/world/antoine_gz_flight_proof/pose/info"
 POSE_MODELS = {"drone-1": "isr", "drone-2": "fpv-a"}
@@ -20,7 +22,6 @@ POSE_MODELS = {"drone-1": "isr", "drone-2": "fpv-a"}
 
 def gazebo_pose_samples(payload: str) -> list[dict]:
     """Extract complete, finite two-model poses from Gazebo JSON output."""
-    decoder = json.JSONDecoder()
     samples = []
     cursor = 0
     while cursor < len(payload):
@@ -28,7 +29,7 @@ def gazebo_pose_samples(payload: str) -> list[dict]:
         if start < 0:
             break
         try:
-            message, end = decoder.raw_decode(payload, start)
+            message, end = strict_json_raw_decode(payload, start)
         except json.JSONDecodeError:
             cursor = start + 1
             continue
@@ -279,7 +280,9 @@ def main() -> int:
             }
             continue
         try:
-            state = json.loads(next(line for line in completed.stdout.splitlines() if line.strip()))
+            state = strict_json_loads(
+                next(line for line in completed.stdout.splitlines() if line.strip())
+            )
         except (StopIteration, json.JSONDecodeError):
             states[callsign] = {"model": model, "received": False, "reason": "invalid JSON state"}
             continue

@@ -15,6 +15,7 @@ from urllib.parse import urlsplit
 
 from dvd_research.run_files import read_run_text, write_run_json
 from dvd_research.run_nats import validate_run_nats_endpoint
+from dvd_research.strict_json import loads as strict_json_loads
 from swarm_cross_vehicle_probe import (
     pose_window_at_target,
     read_one_json,
@@ -153,7 +154,7 @@ async def run(args: argparse.Namespace) -> dict:
     config_text = read_run_text(run_dir, Path("research-swarm-config.json"))
     if config_text is None:
         raise ValueError("run-owned swarm config is unavailable")
-    config = json.loads(config_text)
+    config = strict_json_loads(config_text)
     models = {
         item["callsign"]: item["model"]
         for item in config.get("vehicles", [])

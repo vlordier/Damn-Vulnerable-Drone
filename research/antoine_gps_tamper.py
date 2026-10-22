@@ -15,6 +15,7 @@ from typing import Any
 from dvd_research.run_files import read_run_text, write_run_json
 from dvd_research.run_nats import validate_run_nats_endpoint
 from dvd_research.sensor_fixture import build_case
+from dvd_research.strict_json import loads as strict_json_loads
 
 SUBJECT = "brenta.sensor.gps.drone-1"
 ACCEPTED_MARKER = "ANTOINE_GZ_GPS_FIX callsign=drone-1"
@@ -39,7 +40,7 @@ def capture_messages(server: str, count: int) -> list[dict[str, Any]]:
     messages = []
     for line in completed.stdout.splitlines():
         try:
-            value = json.loads(line)
+            value = strict_json_loads(line)
         except json.JSONDecodeError:
             continue
         if isinstance(value, dict):
