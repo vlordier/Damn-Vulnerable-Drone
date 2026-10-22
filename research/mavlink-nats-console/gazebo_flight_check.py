@@ -860,7 +860,13 @@ async def run_check() -> dict:
                 )
                 cleanup["landConfirmed"] = True
                 await check.disarm_after_settle(home)
-                cleanup["disarmConfirmed"] = check.telemetry.get("armed") is False
+                disarmed_state = await check.wait_state(
+                    lambda state: state.get("armed") is False,
+                    5,
+                    "failure cleanup disarmed heartbeat",
+                    fresh_fields=("armed",),
+                )
+                cleanup["disarmConfirmed"] = disarmed_state.get("armed") is False
             except Exception as cleanup_error:
                 cleanup["error"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
                 print(

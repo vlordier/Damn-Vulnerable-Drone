@@ -296,8 +296,15 @@ class GazeboFailureReportTests(unittest.TestCase):
             async def start(self) -> None:
                 self.valid_telemetry_received.set()
 
-            async def wait_state(self, *_args, **_kwargs) -> dict:
+            async def wait_state(self, _predicate, _timeout, description, **kwargs) -> dict:
+                if description == "failure cleanup disarmed heartbeat":
+                    self.assert_fresh_disarm_wait(kwargs)
                 return dict(self.telemetry)
+
+            @staticmethod
+            def assert_fresh_disarm_wait(kwargs) -> None:
+                if kwargs.get("fresh_fields") != ("armed",):
+                    raise AssertionError("cleanup must require a fresh armed heartbeat")
 
             async def wait_pose(self, *_args, **_kwargs) -> tuple[float, float, float]:
                 return (0.0, 0.0, 0.0)
