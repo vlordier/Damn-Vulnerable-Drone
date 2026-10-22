@@ -108,6 +108,7 @@ class GazeboFlightCheck(FlightCheck):
         self.raw_telemetry: dict = {}
         self.telemetry_rejection: str | None = None
         self.valid_telemetry_received = asyncio.Event()
+        self.last_observed_at_ms: int | None = None
         self.phase = "connecting"
         self.home_pose: tuple[float, float, float] | None = None
         self.keepalive_task: asyncio.Task | None = None
@@ -145,7 +146,11 @@ class GazeboFlightCheck(FlightCheck):
         ):
             self.telemetry_rejection = "Gazebo telemetry observation timestamp is stale or invalid"
             return
+        if self.last_observed_at_ms is not None and observed_at_ms <= self.last_observed_at_ms:
+            self.telemetry_rejection = "Gazebo telemetry observation timestamp did not advance"
+            return
         self.raw_telemetry = value
+        self.last_observed_at_ms = observed_at_ms
         self.telemetry_rejection = None
         self.valid_telemetry_received.set()
 

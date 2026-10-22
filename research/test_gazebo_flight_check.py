@@ -207,6 +207,7 @@ class GazeboFailureReportTests(unittest.TestCase):
         checker.raw_telemetry = {"identity": "drone-1", "protocol": "antoine-gz"}
         checker.telemetry_rejection = None
         checker.valid_telemetry_received = asyncio.Event()
+        checker.last_observed_at_ms = None
 
         async def deliver(payload: bytes) -> None:
             await checker.on_telemetry(types.SimpleNamespace(data=payload))
@@ -244,8 +245,35 @@ class GazeboFailureReportTests(unittest.TestCase):
             self.assertEqual(checker.raw_telemetry, valid)
             self.assertIsNotNone(checker.telemetry_rejection)
 
+        for replayed_ms in (
+            valid["observedAtUnixMs"],
+            valid["observedAtUnixMs"] - 1,
+        ):
+            replayed = {**valid, "observedAtUnixMs": replayed_ms}
+            with mock.patch.object(
+                CHECKER.time,
+                "time_ns",
+                return_value=valid["observedAtUnixMs"] * 1_000_000,
+            ):
+                asyncio.run(deliver(json.dumps(replayed).encode()))
+            self.assertEqual(checker.raw_telemetry, valid)
+            self.assertEqual(
+                checker.telemetry_rejection,
+                "Gazebo telemetry observation timestamp did not advance",
+            )
+
+        advanced = {**valid, "observedAtUnixMs": valid["observedAtUnixMs"] + 1}
+        with mock.patch.object(
+            CHECKER.time,
+            "time_ns",
+            return_value=valid["observedAtUnixMs"] * 1_000_000,
+        ):
+            asyncio.run(deliver(json.dumps(advanced).encode()))
+        self.assertEqual(checker.raw_telemetry, advanced)
+        self.assertIsNone(checker.telemetry_rejection)
+
         asyncio.run(deliver(b"not-json"))
-        self.assertEqual(checker.raw_telemetry, valid)
+        self.assertEqual(checker.raw_telemetry, advanced)
         self.assertEqual(checker.telemetry_rejection, "telemetry is not valid JSON")
 
     def test_pose_observation_requires_fresh_finite_timestamped_vehicle_pose(self) -> None:
