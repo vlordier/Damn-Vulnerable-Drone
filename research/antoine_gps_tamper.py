@@ -11,24 +11,21 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
-from dvd_research.run_nats import read_run_nats_log
+from dvd_research.run_files import read_run_text, write_run_json
+from dvd_research.run_nats import validate_run_nats_endpoint
 from dvd_research.sensor_fixture import build_case
 
 SUBJECT = "brenta.sensor.gps.drone-1"
 ACCEPTED_MARKER = "ANTOINE_GZ_GPS_FIX callsign=drone-1"
 
 
-def read_log(path: Path) -> str:
-    try:
-        return path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return ""
+def read_log(run_dir: Path, relative_path: Path) -> str:
+    return read_run_text(run_dir, relative_path, errors="replace") or ""
 
 
-def count_accepted(log_path: Path) -> int:
-    return read_log(log_path).count(ACCEPTED_MARKER)
+def count_accepted(run_dir: Path) -> int:
+    return read_log(run_dir, Path("logs/antoine-controller.log")).count(ACCEPTED_MARKER)
 
 
 def capture_messages(server: str, count: int) -> list[dict[str, Any]]:
@@ -53,13 +50,12 @@ def capture_messages(server: str, count: int) -> list[dict[str, Any]]:
 
 
 def stop_forwarder(run_dir: Path, server: str) -> int:
-    pid_path = run_dir / "sensor-forwarder.pid"
-    pid_text = pid_path.read_text(encoding="utf-8").strip()
+    pid_text = (read_run_text(run_dir, Path("sensor-forwarder.pid")) or "").strip()
     if not pid_text.isdigit():
         raise ValueError("run did not record a valid sensor-forwarder PID")
     pid = int(pid_text)
-    identity_path_file = run_dir / "sensor-forwarder.identity-path"
-    identity_file = Path(identity_path_file.read_text(encoding="utf-8").strip())
+    identity_path_text = read_run_text(run_dir, Path("sensor-forwarder.identity-path")) or ""
+    identity_file = Path(identity_path_text.strip())
     expected_binary = os.environ.get("FURIA_GZ_SENSOR_FORWARDER_BIN", "")
     command = subprocess.run(
         ["ps", "-ww", "-p", str(pid), "-o", "command="], text=True, capture_output=True, check=False
@@ -125,22 +121,7 @@ def main() -> int:
         default="signature-mutation",
     )
     args = parser.parse_args()
-    parsed = urlsplit(args.server)
-    if (
-        parsed.scheme != "nats"
-        or parsed.hostname != "127.0.0.1"
-        or parsed.port is None
-        or parsed.username is not None
-        or parsed.password is not None
-        or parsed.path not in ("", "/")
-        or parsed.query
-        or parsed.fragment
-    ):
-        raise SystemExit("refusing any endpoint except an explicit IPv4 loopback NATS URL")
-
     run_dir = args.run_dir
-    log_path = run_dir / "logs" / "antoine-controller.log"
-    forwarder_log = run_dir / "logs" / "gz-nav-sensor-forwarder.log"
     report: dict[str, Any] = {
         "contract": "damn-vulnerable-drone.antoine-gps-tampering-result",
         "version": "1.0.0",
@@ -165,30 +146,25 @@ def main() -> int:
     }
     try:
         deadline = time.monotonic() + 100
-        ready_line = f"Listening for client connections on 127.0.0.1:{parsed.port}"
+        validate_run_nats_endpoint(args.server, run_dir, deadline)
         while time.monotonic() < deadline:
-            broker_log = read_run_nats_log(run_dir) or ""
-            if ready_line in broker_log and "Server is ready" in broker_log:
-                break
-            time.sleep(0.1)
-        else:
-            raise TimeoutError(
-                "run-owned NATS broker did not confirm the requested loopback endpoint"
+            controller_ready = ACCEPTED_MARKER in read_log(
+                run_dir, Path("logs/antoine-controller.log")
             )
-        while time.monotonic() < deadline:
-            controller_ready = ACCEPTED_MARKER in read_log(log_path)
             forwarder_ready = "streams ready; sensor-only forwarding enabled" in read_log(
-                forwarder_log
+                run_dir, Path("logs/gz-nav-sensor-forwarder.log")
             )
-            identity_path_marker = run_dir / "sensor-forwarder.identity-path"
+            identity_path_marker = Path("sensor-forwarder.identity-path")
+            pid_text = read_run_text(run_dir, Path("sensor-forwarder.pid"))
+            identity_path_text = read_run_text(run_dir, identity_path_marker)
             if (
                 controller_ready
                 and forwarder_ready
-                and (run_dir / "sensor-forwarder.pid").is_file()
-                and identity_path_marker.is_file()
+                and pid_text is not None
+                and identity_path_text is not None
             ):
-                pid = int((run_dir / "sensor-forwarder.pid").read_text(encoding="utf-8").strip())
-                identity_path = Path(identity_path_marker.read_text(encoding="utf-8").strip())
+                pid = int(pid_text.strip())
+                identity_path = Path(identity_path_text.strip())
                 if not identity_path.is_file():
                     time.sleep(0.1)
                     continue
@@ -225,7 +201,7 @@ def main() -> int:
             raise ValueError("captured GPS sample has no bounded freshness timestamps")
 
         stopped_pid = stop_forwarder(run_dir, args.server)
-        baseline_count = count_accepted(log_path)
+        baseline_count = count_accepted(run_dir)
         now_ms = int(time.time() * 1000)
         original_latitude = payload.get("lat_deg")
         injected = payload
@@ -280,7 +256,7 @@ def main() -> int:
         observation_deadline = time.monotonic() + 1.0
         while time.monotonic() < observation_deadline:
             time.sleep(0.05)
-        final_count = count_accepted(log_path)
+        final_count = count_accepted(run_dir)
         accepted_delta = final_count - baseline_count
         case_observation = {
             "signature-mutation": "altered-signature-rejected"
@@ -354,8 +330,7 @@ def main() -> int:
                 ),
             }
         )
-        output = run_dir / "research-gps-tampering.json"
-        output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_run_json(run_dir, Path("research-gps-tampering.json"), report)
         print(json.dumps(report, indent=2))
         expected_delta = 0 if args.case in {"signature-mutation", "future-sample"} else 1
         return 0 if accepted_delta == expected_delta else 2
@@ -367,8 +342,7 @@ def main() -> int:
                 "error": f"{type(error).__name__}: {error}",
             }
         )
-        output = run_dir / "research-gps-tampering.json"
-        output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        write_run_json(run_dir, Path("research-gps-tampering.json"), report)
         print(json.dumps(report, indent=2), file=sys.stderr)
         return 2
 
