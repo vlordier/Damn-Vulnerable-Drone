@@ -216,6 +216,9 @@ if [[ "${ANTOINE_GZ_FLIGHT_GUI}" != 0 && "${ANTOINE_GZ_FLIGHT_GUI}" != 1 ]]; the
   echo "ANTOINE_GZ_FLIGHT_GUI must be 0 or 1" >&2
   exit 2
 fi
+# Pin the swarm baseline to the control rate used by its last qualified run.
+# Callers can still override this when measuring another controller rate.
+export ANTOINE_GZ_FLIGHT_CONTROL_HZ="${ANTOINE_GZ_FLIGHT_CONTROL_HZ:-20}"
 export ANTOINE_GZ_TWO_DRONE=1
 export ANTOINE_GZ_FLIGHT_GUI
 export ANTOINE_SWARM_SIZE="${SWARM_SIZE}"
