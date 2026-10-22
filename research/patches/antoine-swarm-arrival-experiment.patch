@@ -1,15 +1,24 @@
 diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
 --- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
 +++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-@@ -1560,6 +1560,18 @@
+@@ -1560,6 +1560,27 @@
  }
  
 +fn swarm_arrival_radius(name: &str, default: f64) -> Result<f64, Box<dyn std::error::Error>> {
-+    let value = match std::env::var(name) {
-+        Ok(value) => value.parse::<f64>()?,
-+        Err(std::env::VarError::NotPresent) => default,
++    let raw = match std::env::var(name) {
++        Ok(value) => Some(value),
++        Err(std::env::VarError::NotPresent) => None,
 +        Err(error) => return Err(error.into()),
 +    };
++    parse_swarm_arrival_radius(name, raw.as_deref(), default)
++}
++
++fn parse_swarm_arrival_radius(
++    name: &str,
++    raw: Option<&str>,
++    default: f64,
++) -> Result<f64, Box<dyn std::error::Error>> {
++    let value = raw.map(str::parse).transpose()?.unwrap_or(default);
 +    if !value.is_finite() || !(0.05..=2.0).contains(&value) {
 +        return Err(format!("{name} must be finite and between 0.05 and 2.0 metres").into());
 +    }
@@ -32,7 +41,7 @@ diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/
 +            let braking_radius = swarm_arrival_radius("ANTOINE_GZ_TERMINAL_BRAKING_RADIUS_M", 0.15)?;
              // Keep the vertical capture band smaller than a normal takeoff
              // increment. A 0.5 m deadband caused a commanded 1 m takeoff to
-@@ -2933,7 +2949,7 @@
+@@ -2933,7 +2957,7 @@
                  dist_xy,
                  1.5,
                  0.6,
@@ -41,3 +50,24 @@ diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/
                  vmax_xy,
                  horizontal_amax,
              );
+@@ -3442,8 +3465,19 @@
+ #[cfg(test)]
+ mod tests {
+     use super::*;
+     use ed25519_dalek::Verifier;
+     use std::fs;
+-
++
++    #[test]
++    fn swarm_arrival_radius_parser_enforces_finite_bounded_values() {
++        assert_eq!(parse_swarm_arrival_radius("radius", None, 0.15).unwrap(), 0.15);
++        for value in ["0.05", "0.75", "2.0"] {
++            assert!(parse_swarm_arrival_radius("radius", Some(value), 0.15).is_ok());
++        }
++        for value in ["0", "2.01", "NaN", "inf", "invalid"] {
++            assert!(parse_swarm_arrival_radius("radius", Some(value), 0.15).is_err());
++        }
++    }
++
+     #[test]
+     fn health_only_mode_parser_accepts_only_explicit_boolean_values() {
