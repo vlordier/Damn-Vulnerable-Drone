@@ -483,6 +483,9 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
                 let empty_uploaded_mission = request_id
                     .as_str()
                     .is_some_and(|id| id.contains("-mission-query-16-"));
+                let contradictory_mission_state = request_id
+                    .as_str()
+                    .is_some_and(|id| id.contains("-mission-query-17-"));
                 let reject_mission_upload = command_type == "mission_upload"
                     && upload_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0;
                 if command_type == "mission_clear" {
@@ -494,6 +497,8 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
                     serde_json::json!({"requestId":request_id,"accepted":false,"armed":true,"mode":"GUIDED"})
                 } else if empty_uploaded_mission {
                     serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED","missionUploaded":true,"waypoints":[]})
+                } else if contradictory_mission_state {
+                    serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED","missionUploaded":false,"waypoints":[[0.0,0.0,-1.0]]})
                 } else if omit_mission_state {
                     serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED"})
                 } else if reject_mission_upload {
@@ -1104,6 +1109,27 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     let _ = timeout(Duration::from_secs(2), reply_rx.recv())
         .await
         .context("malformed SITL mission query was not received")?;
+    let contradictory_mission_list = v2_frame(43, 17, 255, &[1, 1, 0], 132);
+    gcs.send_to(&contradictory_mission_list, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("contradictory mission query response timeout")??;
+    let (_, contradictory_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(contradictory_ack) =
+        contradictory_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for contradictory mission state");
+    };
+    assert_eq!(
+        contradictory_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
+    let _ = timeout(Duration::from_secs(2), reply_rx.recv())
+        .await
+        .context("contradictory SITL mission query was not received")?;
     let empty_uploaded_mission_list = v2_frame(43, 16, 255, &[1, 1, 0], 132);
     gcs.send_to(&empty_uploaded_mission_list, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))

@@ -1395,8 +1395,16 @@ async fn qgc_to_antoine_nats(
                             None
                         }
                         Ok(value) if value["missionUploaded"] == false => {
-                            tracing::debug!(request_id, "controller reports no uploaded mission");
-                            Some(Vec::new())
+                            if value["waypoints"] == serde_json::json!([]) {
+                                tracing::debug!(
+                                    request_id,
+                                    "controller reports no uploaded mission"
+                                );
+                                Some(Vec::new())
+                            } else {
+                                tracing::warn!(request_id, "mission query reports no mission but includes waypoints; returning a mission error");
+                                None
+                            }
                         }
                         Ok(value) if value["missionUploaded"] == true => {
                             match serde_json::from_value::<Vec<[f64; 3]>>(
