@@ -21,7 +21,7 @@ compiler="$(command -v clang || command -v cc || true)"
 
 wait_for_file() {
   local path="$1"
-  for _ in $(seq 1 100); do
+  for _ in $(seq 1 500); do
     [[ -s "${path}" ]] && return 0
     sleep 0.02
   done
@@ -34,6 +34,13 @@ identity_fifo() {
 
 identity_fifo_exists() {
   compgen -G "$1.control.*" >/dev/null
+}
+
+process_is_running() {
+  local process_id="$1" process_state
+  # macOS can retain exited children as zombies briefly; they cannot run.
+  process_state="$(ps -o stat= -p "${process_id}" 2>/dev/null | awk '{$1=$1; print}')"
+  [[ -n "${process_state}" && "${process_state:0:1}" != "Z" ]]
 }
 
 # A child exit racing a stop request must leave no stale run-control files.
@@ -66,10 +73,10 @@ set -e
 if [[ -s "${child_pid_file}" ]]; then
   early_child_pid="$(cat "${child_pid_file}")"
   for _ in $(seq 1 100); do
-    kill -0 "${early_child_pid}" 2>/dev/null || break
+    process_is_running "${early_child_pid}" || break
     sleep 0.02
   done
-  if kill -0 "${early_child_pid}" 2>/dev/null; then
+  if process_is_running "${early_child_pid}"; then
     echo "child survived an early supervisor signal" >&2
     exit 1
   fi
@@ -94,7 +101,7 @@ if "${SUPERVISOR}" stop "${TEMP_ROOT}/linked.identity" >/dev/null 2>&1; then
   exit 1
 fi
 owned_child_pid="$(awk -F= '$1 == "child_pid" { print $2; exit }' "${identity}")"
-kill -0 "${owned_child_pid}"
+process_is_running "${owned_child_pid}"
 rm "${TEMP_ROOT}/linked.identity"
 mv "${owned_fifo}" "${TEMP_ROOT}/owned.control"
 mkfifo "${TEMP_ROOT}/foreign.control"
@@ -103,10 +110,10 @@ if "${SUPERVISOR}" stop "${identity}" >/dev/null 2>&1; then
   echo "supervisor accepted a symlinked control FIFO" >&2
   exit 1
 fi
-kill -0 "${owned_child_pid}"
+process_is_running "${owned_child_pid}"
 rm "${owned_fifo}" "${TEMP_ROOT}/foreign.control"
 mv "${TEMP_ROOT}/owned.control" "${owned_fifo}"
-kill -0 "${unrelated_pid}"
+process_is_running "${unrelated_pid}"
 "${SUPERVISOR}" stop "${identity}"
 wait "${owned_pid}" || true
 kill -TERM "${unrelated_pid}"
@@ -132,7 +139,7 @@ if "${SUPERVISOR}" stop "${TEMP_ROOT}/previous-run.identity" >/dev/null 2>&1; th
   exit 1
 fi
 restarted_child_pid="$(awk -F= '$1 == "child_pid" { print $2; exit }' "${identity}")"
-kill -0 "${restarted_child_pid}"
+process_is_running "${restarted_child_pid}"
 "${SUPERVISOR}" stop "${identity}"
 wait "${restarted_pid}" || true
 [[ ! -e "${identity}" && ! -e "${restarted_fifo}" ]]
@@ -151,7 +158,7 @@ wait "${escalation_pid}"
 escalation_status=$?
 set -e
 [[ "${escalation_status}" == 137 ]]
-if kill -0 "${ignored_pid}" 2>/dev/null; then
+if process_is_running "${ignored_pid}"; then
   echo "TERM-ignoring owned process survived escalation" >&2
   exit 1
 fi
@@ -183,10 +190,10 @@ descendant_pid="$(cat "${TEMP_ROOT}/descendant.pid")"
 "${SUPERVISOR}" stop "${identity}"
 wait "${tree_pid}" || true
 for _ in $(seq 1 100); do
-  kill -0 "${descendant_pid}" 2>/dev/null || break
+  process_is_running "${descendant_pid}" || break
   sleep 0.02
 done
-if kill -0 "${descendant_pid}" 2>/dev/null; then
+if process_is_running "${descendant_pid}"; then
   echo "owned descendant survived process-group cleanup" >&2
   exit 1
 fi
