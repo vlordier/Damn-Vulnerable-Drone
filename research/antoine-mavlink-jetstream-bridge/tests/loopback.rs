@@ -68,7 +68,18 @@ fn v2_frame(
     payload: &[u8],
     crc_extra: u8,
 ) -> Vec<u8> {
-    let mut body = vec![payload.len() as u8, 0, 0, sequence, system_id, 1];
+    v2_frame_with_component(message_id, sequence, system_id, 1, payload, crc_extra)
+}
+
+fn v2_frame_with_component(
+    message_id: u32,
+    sequence: u8,
+    system_id: u8,
+    component_id: u8,
+    payload: &[u8],
+    crc_extra: u8,
+) -> Vec<u8> {
+    let mut body = vec![payload.len() as u8, 0, 0, sequence, system_id, component_id];
     body.extend_from_slice(&message_id.to_le_bytes()[..3]);
     body.extend_from_slice(payload);
     let crc = crc_x25(&[body.as_slice(), &[crc_extra]].concat());
@@ -1112,7 +1123,12 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         restarted_request_seen,
         "a fresh mission upload should start after expiry"
     );
-    gcs.send_to(&mission_item, qgc_bind).await?;
+    let mut wrong_component_payload = mission_item[10..mission_item.len() - 2].to_vec();
+    wrong_component_payload.resize(38, 0);
+    wrong_component_payload[37] = 1;
+    let wrong_component_item =
+        v2_frame_with_component(73, 15, 255, 190, &wrong_component_payload, 38);
+    gcs.send_to(&wrong_component_item, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
         .context("wrong-component mission-item rejection timeout")??;
@@ -1131,7 +1147,7 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     };
     assert_eq!(
         wrong_component_ack.mavtype,
-        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_UNSUPPORTED
     );
     probe.send_to(&matching_component_item, qgc_bind).await?;
     assert!(

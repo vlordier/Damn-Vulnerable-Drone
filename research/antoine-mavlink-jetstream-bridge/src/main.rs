@@ -76,6 +76,21 @@ impl PendingMissionUpload {
     }
 }
 
+fn clear_pending_upload_from(
+    pending: &mut Option<PendingMissionUpload>,
+    source: SocketAddr,
+    system_id: u8,
+    component_id: u8,
+) {
+    if pending.as_ref().is_some_and(|upload| {
+        upload.source == source
+            && upload.system_id == system_id
+            && upload.component_id == component_id
+    }) {
+        *pending = None;
+    }
+}
+
 async fn reject_pending_mission_upload(
     gcs: &tokio::net::UdpSocket,
     pending: &mut Option<PendingMissionUpload>,
@@ -1492,7 +1507,12 @@ async fn qgc_to_antoine_nats(
                 || (component != 0 && component != 1)
                 || command_id != 16
             {
-                mission_upload = None;
+                clear_pending_upload_from(
+                    &mut mission_upload,
+                    source,
+                    frame.system_id,
+                    frame.component_id,
+                );
                 let ack = mission_ack(
                     frame.sequence.wrapping_add(1),
                     config.system_id,
@@ -1504,7 +1524,12 @@ async fn qgc_to_antoine_nats(
                 continue;
             }
             if !(37..=38).contains(&frame.payload.len()) {
-                mission_upload = None;
+                clear_pending_upload_from(
+                    &mut mission_upload,
+                    source,
+                    frame.system_id,
+                    frame.component_id,
+                );
                 let ack = mission_ack(
                     frame.sequence.wrapping_add(1),
                     config.system_id,
@@ -1517,7 +1542,12 @@ async fn qgc_to_antoine_nats(
             }
             let coord_frame = frame.payload[34];
             if !matches!(coord_frame, 1 | 3 | 6) {
-                mission_upload = None;
+                clear_pending_upload_from(
+                    &mut mission_upload,
+                    source,
+                    frame.system_id,
+                    frame.component_id,
+                );
                 let ack = mission_ack(
                     frame.sequence.wrapping_add(1),
                     config.system_id,
@@ -1529,7 +1559,12 @@ async fn qgc_to_antoine_nats(
                 continue;
             }
             if frame.payload.get(37).copied().unwrap_or(0) != 0 {
-                mission_upload = None;
+                clear_pending_upload_from(
+                    &mut mission_upload,
+                    source,
+                    frame.system_id,
+                    frame.component_id,
+                );
                 let ack = mission_ack(
                     frame.sequence.wrapping_add(1),
                     config.system_id,
@@ -1541,7 +1576,12 @@ async fn qgc_to_antoine_nats(
                 continue;
             }
             if !mission_waypoint_metadata_supported(&frame.payload, seq) {
-                mission_upload = None;
+                clear_pending_upload_from(
+                    &mut mission_upload,
+                    source,
+                    frame.system_id,
+                    frame.component_id,
+                );
                 let ack = mission_ack(
                     frame.sequence.wrapping_add(1),
                     config.system_id,
