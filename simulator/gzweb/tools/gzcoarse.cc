@@ -17,6 +17,8 @@
 
 #include <gts.h>
 #include <tinyxml.h>
+#include <exception>
+#include <iostream>
 #include <math.h>
 #include <gazebo/gazebo_config.h>
 #include <gazebo/common/Mesh.hh>
@@ -1308,7 +1310,16 @@ int main(int argc, char **argv)
 // ConvertGzToDae is equal to ColladaExporter, except for ExportTextureSource,
 // which uses Collada indexation for UV coordinates
   TiXmlDocument outDae;
-  outDae = ConvertGzToDae(inGz, outGz);
+  try
+  {
+    outDae = ConvertGzToDae(inGz, outGz);
+  }
+  catch (const std::exception &error)
+  {
+    std::cerr << "Could not convert the simplified mesh to COLLADA: "
+              << error.what() << std::endl;
+    return -1;
+  }
   outDae.SaveFile(filename+"_coarse.dae");
 //#else
 //  outGz doesn't have texture coordinates, so this is incomplete
