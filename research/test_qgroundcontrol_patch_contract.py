@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import os
 import re
+import signal
 import subprocess
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from time import sleep
 
 from check_qgroundcontrol_patch import verify_applied_patch, verify_binary_in_checkout
 
@@ -13,6 +16,108 @@ ROOT = PATCH.parent.parent.parent
 
 
 class QGroundControlPatchContractTests(unittest.TestCase):
+    def test_qgc_launcher_uses_profile_settings_and_runtime_paths(self) -> None:
+        with TemporaryDirectory() as temporary:
+            temp_root = Path(temporary)
+            qgc_root = temp_root / "qgc checkout"
+            app = (
+                qgc_root
+                / "build"
+                / "Debug"
+                / "QGroundControl.app"
+                / "Contents"
+                / "MacOS"
+                / "QGroundControl"
+            )
+            app.parent.mkdir(parents=True)
+            settings_dir = temp_root / "profile settings"
+            settings_file = temp_root / "receipts" / "QGC settings.ini"
+            runtime_dir = temp_root / "profile runtime"
+            marker = temp_root / "qgc-started"
+            observed_config = temp_root / "observed-xdg-config"
+            observed_args = temp_root / "observed-args"
+            app.write_text(
+                "#!/bin/sh\n"
+                'printf "%s\\n" "$XDG_CONFIG_HOME" > "$QGC_TEST_CONFIG_CAPTURE"\n'
+                'printf "%s\\n" "$*" > "$QGC_TEST_ARGS_CAPTURE"\n'
+                ': > "$QGC_TEST_MARKER"\n'
+                "exec /bin/sleep 10\n",
+                encoding="utf-8",
+            )
+            app.chmod(0o755)
+
+            fake_bin = temp_root / "bin"
+            fake_bin.mkdir()
+            uv_stub = fake_bin / "uv"
+            uv_stub.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            lsof_stub = fake_bin / "lsof"
+            lsof_stub.write_text(
+                "#!/bin/sh\n"
+                'case "$*" in\n'
+                '  *"-iUDP:${QGC_UDP_LISTEN_PORT}"*)\n'
+                '    if [ -e "$QGC_TEST_MARKER" ]; then printf "QGroundControl\\n"; exit 0; fi\n'
+                "    exit 1 ;;\n"
+                '  *"-iUDP:${QGC_BRIDGE_PORT}"*) printf "bridge\\n"; exit 0 ;;\n'
+                "esac\n"
+                "exit 1\n",
+                encoding="utf-8",
+            )
+            uv_stub.chmod(0o755)
+            lsof_stub.chmod(0o755)
+
+            env = os.environ.copy()
+            env.update(
+                {
+                    "PATH": f"{fake_bin}:{env['PATH']}",
+                    "ANTOINE_QGC_DIR": str(qgc_root),
+                    "ANTOINE_QGC_BINARY": str(app),
+                    "QGC_SETTINGS_DIR": str(settings_dir),
+                    "QGC_SETTINGS_FILE": str(settings_file),
+                    "QGC_RUNTIME_DIR": str(runtime_dir),
+                    "QGC_LOG": str(runtime_dir / "launcher.log"),
+                    "QGC_PID_FILE": str(runtime_dir / "launcher.pid"),
+                    "QGC_UDP_LISTEN_PORT": "18150",
+                    "QGC_BRIDGE_PORT": "18151",
+                    "QGC_TEST_MARKER": str(marker),
+                    "QGC_TEST_CONFIG_CAPTURE": str(observed_config),
+                    "QGC_TEST_ARGS_CAPTURE": str(observed_args),
+                }
+            )
+            result = subprocess.run(
+                ["bash", str(ROOT / "scripts/run-qgc-antoine.sh")],
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=10,
+                check=False,
+            )
+            pid = int((runtime_dir / "launcher.pid").read_text(encoding="utf-8"))
+            try:
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(
+                    observed_config.read_text(encoding="utf-8").strip(), str(settings_dir)
+                )
+                self.assertEqual(
+                    observed_args.read_text(encoding="utf-8").strip(), "--allow-multiple"
+                )
+                self.assertEqual(
+                    settings_file.read_text(encoding="utf-8"),
+                    "[AutoConnect]\nautoConnectUDP=true\nudpListenPort=18150\n"
+                    "udpTargetHostIP=127.0.0.1\nudpTargetHostPort=18151\n",
+                )
+                self.assertTrue((runtime_dir / "launcher.log").is_file())
+            finally:
+                try:
+                    os.kill(pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                for _ in range(50):
+                    try:
+                        os.kill(pid, 0)
+                    except ProcessLookupError:
+                        break
+                    sleep(0.01)
+
     def test_profile_preflight_receipt_and_launcher_share_qgc_binary_override(self) -> None:
         makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
         profile_runner = (ROOT / "research/run-antoine-gazebo-mavlink.sh").read_text(
