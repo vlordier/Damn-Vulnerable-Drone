@@ -139,6 +139,60 @@ class ResearchConsoleSmokeEvidenceTests(unittest.TestCase):
             self.assertIn("Evidence manifest failed verification", html)
             self.assertNotIn("Run failure details", html)
 
+    def test_camera_summary_uses_only_verified_manifest_measurements(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            evidence_root = Path(directory)
+            run_dir = evidence_root / "antoine-camera-observation-20261022T120003Z-126"
+            run_dir.mkdir()
+            camera = {
+                "runId": run_dir.name,
+                "scenario": "gazebo-camera-readable-topic-antoine",
+                "partition": "camera-run",
+                "topic": "/world/antoine_gz_flight_proof/model/isr/link/base_link/sensor/camera/image",
+                "topicListed": True,
+                "publisherPresentAtProbe": True,
+                "capturedMessages": 5,
+                "subscriberExitCode": 0,
+                "subscriberTimedOut": False,
+                "discoveryError": None,
+                "subscriberStartError": None,
+                "imagePayloadsStored": False,
+                "interpretation": "Camera metadata only; no image payload retained.",
+            }
+            camera_path = run_dir / "research-camera-observation.json"
+            camera_path.write_text(json.dumps(camera), encoding="utf-8")
+            (run_dir / "research-profile.env").write_text(
+                "GZ_IP=127.0.0.1\nGZ_PARTITION=camera-run\n", encoding="utf-8"
+            )
+            (run_dir / "research-provenance-comparison.json").write_text(
+                json.dumps(
+                    {
+                        "runId": run_dir.name,
+                        "prePhaseValid": True,
+                        "postPhaseValid": True,
+                        "profileMatches": True,
+                        "stable": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            write_manifest(run_dir, build(run_dir))
+            client = self.make_app(evidence_root).test_client()
+
+            verified = client.get("/attacks/research")
+            self.assertEqual(verified.status_code, 200)
+            verified_html = verified.get_data(as_text=True)
+            self.assertIn("5 valid frames", verified_html)
+            self.assertIn("run scope verified", verified_html)
+
+            camera["partition"] = "forged-partition"
+            camera_path.write_text(json.dumps(camera), encoding="utf-8")
+            tampered = client.get("/attacks/research")
+            self.assertEqual(tampered.status_code, 200)
+            tampered_html = tampered.get_data(as_text=True)
+            self.assertIn("Evidence manifest failed verification", tampered_html)
+            self.assertNotIn("5 valid frames", tampered_html)
+
 
 if __name__ == "__main__":
     unittest.main()

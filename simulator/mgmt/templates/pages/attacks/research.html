@@ -129,7 +129,7 @@
               {% if run.baseline_comparable is sameas true %}<span class="badge text-bg-info">Baseline matched</span>
               {% elif run.baseline_comparable is sameas false %}<span class="badge text-bg-warning">Baseline not comparable</span>{% endif %}
               {% if run.messages is not none %}<span class="badge text-bg-light">{{ run.messages }} messages</span>{% endif %}
-              {% if run.camera_frames is not none %}<span class="badge text-bg-light">{{ run.camera_frames }} valid frames · topic {% if run.camera_topic_listed is sameas true %}listed{% elif run.camera_topic_listed is sameas false %}not listed{% else %}unknown{% endif %} · publisher {% if run.camera_publisher_present is sameas true %}present{% elif run.camera_publisher_present is sameas false %}absent{% else %}unknown{% endif %}</span>{% endif %}
+              {% if run.camera_frames is not none %}<span class="badge text-bg-light">{{ run.camera_frames }} valid frames · topic {% if run.camera_topic_listed is sameas true %}listed{% elif run.camera_topic_listed is sameas false %}not listed{% else %}unknown{% endif %} · publisher {% if run.camera_publisher_present is sameas true %}present{% elif run.camera_publisher_present is sameas false %}absent{% else %}unknown{% endif %} · run scope {% if run.camera_run_scope_matches is sameas true %}verified{% elif run.camera_run_scope_matches is sameas false %}mismatch{% else %}unverified{% endif %}</span>{% endif %}
               {% if run.latency_ms is not none %}<span class="badge text-bg-light">{{ run.latency_ms }} ms to stop</span>{% endif %}
             </span>
           </div>

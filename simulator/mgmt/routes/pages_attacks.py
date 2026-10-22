@@ -367,14 +367,6 @@ def antoine_research_index():
                     )
                 except OSError:
                     failure_record = {}
-            camera_result = {}
-            if "research-camera-observation.json" in result_files:
-                try:
-                    camera_result = json.loads(result_files["research-camera-observation.json"].read_text(encoding="utf-8"))
-                except (OSError, json.JSONDecodeError):
-                    camera_result = {}
-                if not isinstance(camera_result, dict):
-                    camera_result = {}
             manifest_path = run_dir / "research-evidence-manifest.json"
             manifest_integrity_valid = False
             manifest_errors = ["manifest unavailable"]
@@ -574,9 +566,10 @@ def antoine_research_index():
                     "manifest_errors": manifest_errors[:3],
                     "interpretation": result.get("interpretation", result.get("qualificationNote", "")),
                     "messages": attack.get("publishedMessages", replay.get("publishedMessages", result.get("publishedMessages", observed_count or None))),
-                    "camera_topic_listed": result.get("topicListed", camera_result.get("topicListed")),
-                    "camera_publisher_present": result.get("publisherPresentAtProbe", camera_result.get("publisherPresentAtProbe")),
-                    "camera_frames": result.get("validImageFrames", result.get("capturedMessages", camera_result.get("validImageFrames", camera_result.get("capturedMessages")))),
+                    "camera_topic_listed": manifest_measurements.get("cameraTopicListed"),
+                    "camera_publisher_present": manifest_measurements.get("cameraPublisherPresent"),
+                    "camera_frames": manifest_measurements.get("cameraFramesCaptured"),
+                    "camera_run_scope_matches": manifest_measurements.get("cameraRunScopeMatches"),
                     "camera_world_url": url_for("main.antoine_research_evidence", run_id=run_dir.name, filename="camera-world.json") if _public_evidence_file(run_dir, "camera-world.json") else None,
                     "latency_ms": attack.get("publishToStopMs"),
                     "manifest_url": url_for("main.antoine_research_evidence", run_id=run_dir.name, filename="research-evidence-manifest.json") if _public_evidence_file(run_dir, "research-evidence-manifest.json") else None,
