@@ -141,6 +141,8 @@ def capture_gazebo_truth(gz: str, run_dir: Path, partition: str) -> dict:
             "status": "unavailable",
             "reason": (stderr.strip() or "Gazebo pose capture timed out")[:300],
         }
+    except OSError as error:
+        return {"status": "unavailable", "reason": str(error)[:300]}
     if completed.stdout:
         write_run_text(run_dir, Path("gazebo-pose-info.jsonl"), completed.stdout)
     if completed.returncode != 0:
@@ -261,6 +263,13 @@ def main() -> int:
             )
         except subprocess.TimeoutExpired:
             states[callsign] = {"model": model, "received": False, "reason": "timeout"}
+            continue
+        except OSError as error:
+            states[callsign] = {
+                "model": model,
+                "received": False,
+                "reason": f"NATS subscriber could not start: {error}"[:300],
+            }
             continue
         if completed.returncode != 0:
             states[callsign] = {

@@ -273,6 +273,58 @@ class TwoDroneProbeTests(unittest.TestCase):
             self.assertEqual(report["gazeboTruth"]["separationM"], 8.0)
             self.assertEqual(report["gazeboTruth"]["sampleCount"], 2)
 
+    def test_missing_nats_and_gazebo_binaries_write_inconclusive_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            applier = run_dir / "applier.log"
+            applier.write_text(
+                "startup-neutral-zero-published drone-1\nstartup-neutral-zero-published drone-2\n"
+            )
+            (run_dir / "research-profile.env").write_text(
+                "GZ_IP=127.0.0.1\nGZ_PARTITION=test-partition\n"
+            )
+            with (
+                patch(
+                    "sys.argv",
+                    [
+                        "probe",
+                        "--gz",
+                        "/missing/gz",
+                        "--server",
+                        "nats://127.0.0.1:4222",
+                        "--run-dir",
+                        str(run_dir),
+                        "--applier-log",
+                        str(applier),
+                    ],
+                ),
+                patch.object(
+                    antoine_two_drone_probe,
+                    "validate_run_nats_endpoint",
+                    return_value=4222,
+                ),
+                patch.object(
+                    antoine_two_drone_probe.subprocess,
+                    "run",
+                    side_effect=[
+                        FileNotFoundError("nats"),
+                        FileNotFoundError("nats"),
+                        FileNotFoundError("/missing/gz"),
+                    ],
+                ),
+                patch.dict(os.environ, {"GZ_IP": "127.0.0.1", "GZ_PARTITION": "test-partition"}),
+            ):
+                self.assertEqual(antoine_two_drone_probe.main(), 2)
+
+            report = json.loads((run_dir / "research-two-drone-smoke.json").read_text())
+            self.assertEqual(report["status"], "inconclusive")
+            self.assertEqual(report["gazeboTruth"]["status"], "unavailable")
+            self.assertIn("missing/gz", report["gazeboTruth"]["reason"])
+            for state in report["vehicles"].values():
+                self.assertFalse(state["received"])
+                self.assertIn("NATS subscriber could not start", state["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()
