@@ -43,6 +43,7 @@ def main() -> int:
     discovery_deadline = discovery_started + args.startup_timeout
     topic_listed = False
     publisher_present = False
+    discovery_error = None
     while True:
         try:
             topic_list = subprocess.run(
@@ -71,6 +72,9 @@ def main() -> int:
                     break
         except subprocess.TimeoutExpired:
             pass
+        except OSError as error:
+            discovery_error = type(error).__name__
+            break
         if time.monotonic() >= discovery_deadline:
             break
         time.sleep(min(0.25, max(0.0, discovery_deadline - time.monotonic())))
@@ -88,10 +92,17 @@ def main() -> int:
         )
         return_code = None
         timed_out = True
+        start_error = None
+    except OSError as error:
+        output = ""
+        return_code = None
+        timed_out = False
+        start_error = type(error).__name__
     else:
         output = completed.stdout
         return_code = completed.returncode
         timed_out = False
+        start_error = None
 
     message_count = 0
     valid_frame_count = 0
@@ -138,6 +149,7 @@ def main() -> int:
         "partition": partition,
         "topicListed": topic_listed,
         "publisherPresentAtProbe": publisher_present,
+        "discoveryError": discovery_error,
         "discoveryWaitSeconds": discovery_wait_seconds,
         "captureLimit": 5,
         "capturedMessages": min(message_count, 5),
@@ -148,6 +160,7 @@ def main() -> int:
         "captureDurationSeconds": round(time.time() - started, 3),
         "subscriberExitCode": return_code,
         "subscriberTimedOut": timed_out,
+        "subscriberStartError": start_error,
         "imagePayloadsStored": False,
         "interpretation": (
             "The local Gazebo Transport camera topic was readable by a same-host client without credentials. "
