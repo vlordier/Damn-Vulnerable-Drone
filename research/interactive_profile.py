@@ -32,6 +32,8 @@ SUPERVISOR_REQUEST_TIMEOUT_SECONDS = 2.0
 POSE_RECORDER_MAX_AGE_SECONDS = 1.5
 POSE_RECORDER_MAX_FUTURE_SECONDS = 0.25
 GAZEBO_SIMULATION_TIME_MAX_SKEW_SECONDS = 1.0
+GAZEBO_TELEMETRY_MAX_AGE_MS = 1_000
+GAZEBO_TELEMETRY_MAX_FUTURE_MS = 250
 MAVLINK_HEARTBEAT_MAX_AGE_SECONDS = 2.0
 PROFILE_CONTRACT = "damn-vulnerable-drone.interactive-profile"
 PROFILE_VERSION = "1.0.0"
@@ -171,6 +173,7 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
         return error
     if len(messages) < 2 or not all(isinstance(message, dict) for message in messages):
         return {"status": "invalid", "reason": "NATS did not return two JSON telemetry samples"}
+    now_ms = time.time_ns() // 1_000_000
     for message in messages:
         if (
             message.get("schema") != "furia.telemetry"
@@ -182,6 +185,17 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
             return {
                 "status": "invalid",
                 "reason": "telemetry schema, Gazebo protocol, callsign, or runId does not match this profile",
+            }
+        observed_at_ms = message.get("observedAtUnixMs")
+        if (
+            not isinstance(observed_at_ms, int)
+            or isinstance(observed_at_ms, bool)
+            or observed_at_ms < now_ms - GAZEBO_TELEMETRY_MAX_AGE_MS
+            or observed_at_ms > now_ms + GAZEBO_TELEMETRY_MAX_FUTURE_MS
+        ):
+            return {
+                "status": "stale",
+                "reason": "Gazebo telemetry observation timestamp is stale or invalid",
             }
     times = [message.get("time_s") for message in messages[-2:]]
     if all(

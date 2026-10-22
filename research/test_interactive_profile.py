@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -537,6 +538,7 @@ class InteractiveProfileTests(unittest.TestCase):
             "identity": "drone-1",
             "runId": Path(self.temp.name).name,
             "time_s": 4.0,
+            "observedAtUnixMs": time.time_ns() // 1_000_000,
             "armed": False,
         }
         with (
@@ -597,6 +599,7 @@ class InteractiveProfileTests(unittest.TestCase):
             "identity": "drone-1",
             "runId": Path(self.temp.name).name,
             "time_s": 12.5,
+            "observedAtUnixMs": time.time_ns() // 1_000_000,
             "armed": False,
             "mode": "SAFE-HOLD",
         }
@@ -983,6 +986,7 @@ class InteractiveProfileTests(unittest.TestCase):
             "identity": "drone-1",
             "runId": Path(self.temp.name).name,
             "armed": False,
+            "observedAtUnixMs": time.time_ns() // 1_000_000,
         }
         states = [
             {
@@ -1017,6 +1021,39 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertEqual(result["telemetry"]["timestampSubject"], "furia.gzsitl.state.drone-1")
         self.assertAlmostEqual(result["telemetry"]["simulationTimeSeconds"], 1.1)
         self.assertAlmostEqual(result["telemetry"]["simulationTimeAdvanceSeconds"], 0.1)
+
+    def test_sample_telemetry_requires_fresh_integer_gazebo_observation_time(self) -> None:
+        now_ms = 1_800_000_000_000
+        receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
+        valid = {
+            "schema": "furia.telemetry",
+            "version": "1.0.0",
+            "protocol": "antoine-gz",
+            "identity": "drone-1",
+            "runId": Path(self.temp.name).name,
+            "observedAtUnixMs": now_ms,
+            "time_s": 1.0,
+        }
+        malformed_timestamps = [
+            None,
+            True,
+            now_ms - interactive_profile.GAZEBO_TELEMETRY_MAX_AGE_MS - 1,
+            now_ms + interactive_profile.GAZEBO_TELEMETRY_MAX_FUTURE_MS + 1,
+        ]
+        with (
+            patch("interactive_profile.time.time_ns", return_value=now_ms * 1_000_000),
+            patch("interactive_profile.read_nats_messages") as read_messages,
+        ):
+            for timestamp in malformed_timestamps:
+                sample = {**valid}
+                if timestamp is None:
+                    sample.pop("observedAtUnixMs")
+                else:
+                    sample["observedAtUnixMs"] = timestamp
+                read_messages.return_value = ([sample, sample], None)
+                result = interactive_profile.sample_telemetry(receipt)
+                self.assertEqual(result["status"], "stale", timestamp)
+                self.assertIn("observation timestamp", result["reason"])
 
     @patch(
         "interactive_profile.process_identity",
