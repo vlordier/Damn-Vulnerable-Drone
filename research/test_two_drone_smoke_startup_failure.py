@@ -5,10 +5,12 @@ import os
 import shutil
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
 from dvd_research.evidence_contract import verify_manifest
+from dvd_research.run_nats import validate_run_nats_endpoint
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "research" / "run-antoine-two-drone-smoke.sh"
@@ -47,7 +49,7 @@ class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
         (gz_root / "setup.bash").write_text("")
         gz_bin = gz_root / "bin" / "gz"
         gz_bin.write_text(
-            '#!/bin/sh\nif [ "$1" = topic ]; then echo /other/topic; exit 0; fi\nsleep 30\n'
+            '#!/bin/sh\nif [ "$1" = topic ]; then if [ -n "${GZ_TOPIC_DELAY:-}" ]; then sleep "$GZ_TOPIC_DELAY"; fi; echo /other/topic; exit 0; fi\nsleep 30\n'
         )
         gz_bin.chmod(0o755)
 
@@ -95,6 +97,7 @@ class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
             environment.pop("GZ_CONFIG_PATH", None)
         if continue_to_gazebo:
             environment["ANTOINE_GZ_STARTUP_TIMEOUT_SECONDS"] = "1"
+            environment["GZ_TOPIC_DELAY"] = "2.2"
         result = subprocess.run(
             ["bash", str(RUNNER)],
             cwd=ROOT,
@@ -107,6 +110,11 @@ class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
         run_dirs = list(report_root.glob("antoine-two-drone-smoke-*"))
         self.assertEqual(len(run_dirs), 1)
         run_dir = run_dirs[0]
+        if continue_to_gazebo:
+            self.assertEqual(
+                validate_run_nats_endpoint("nats://127.0.0.1:14599", run_dir, time.monotonic() + 1),
+                14599,
+            )
         failure = (run_dir / "research-run-failure.txt").read_text(encoding="utf-8")
         self.assertIn(
             "stage=start-gazebo" if continue_to_gazebo else "stage=preflight-provenance",
@@ -137,11 +145,21 @@ class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
             diagnostics = (run_dir / "gazebo-startup-diagnostics.txt").read_text(encoding="utf-8")
             self.assertIn("expected_topic=/world/antoine_gz_flight_proof/pose/info", diagnostics)
             self.assertIn("/other/topic", diagnostics)
+            profile = (run_dir / "research-profile.env").read_text(encoding="utf-8")
+            self.assertIn("ANTOINE_GZ_TOPIC_QUERY_TIMEOUT_SECONDS=5\n", profile)
+            self.assertIn(
+                "/other/topic",
+                (run_dir / "gazebo-topic-list.txt").read_text(encoding="utf-8"),
+            )
             manifest = json.loads(
                 (run_dir / "research-evidence-manifest.json").read_text(encoding="utf-8")
             )
             self.assertIn(
                 "gazebo-startup-diagnostics.txt",
+                {item["name"] for item in manifest["publicEvidence"]},
+            )
+            self.assertIn(
+                "gazebo-topic-list.txt",
                 {item["name"] for item in manifest["publicEvidence"]},
             )
 

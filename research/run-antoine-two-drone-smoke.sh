@@ -13,6 +13,11 @@ GZ_STARTUP_TIMEOUT_SECONDS="${ANTOINE_GZ_STARTUP_TIMEOUT_SECONDS:-20}"
   echo "ANTOINE_GZ_STARTUP_TIMEOUT_SECONDS must be an integer from 1 to 180" >&2
   exit 2
 }
+GZ_TOPIC_QUERY_TIMEOUT_SECONDS="${ANTOINE_GZ_TOPIC_QUERY_TIMEOUT_SECONDS:-5}"
+[[ "$GZ_TOPIC_QUERY_TIMEOUT_SECONDS" =~ ^[1-9][0-9]*$ ]] && ((GZ_TOPIC_QUERY_TIMEOUT_SECONDS <= 15)) || {
+  echo "ANTOINE_GZ_TOPIC_QUERY_TIMEOUT_SECONDS must be an integer from 1 to 15" >&2
+  exit 2
+}
 REPORT_ROOT="${ANTOINE_REPORT_DIR:-$PROJECT_ROOT/build_logs/research/antoine-scenarios}"
 RUN_ID="antoine-two-drone-smoke-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$REPORT_ROOT/$RUN_ID"
@@ -33,7 +38,7 @@ BRIDGE_ID="$REPORT_ROOT/.$RUN_ID-bridge.identity"
 APPLIER_ID="$REPORT_ROOT/.$RUN_ID-applier.identity"
 RUN_STAGE="initializing"
 
-for tool in nats nats-server uv; do
+for tool in nats nats-server timeout uv; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Required command not found: $tool" >&2; exit 1; }
 done
 [[ -x "$GZ_BIN" ]] || { echo "Gazebo executable not found: $GZ_BIN" >&2; exit 1; }
@@ -48,6 +53,7 @@ export GZ_BIN
 export ANTOINE_GZ_FLIGHT_NATS_PORT="$SERVER_PORT"
 mkdir -p "$REPORT_ROOT"
 mkdir "$RUN_DIR"
+mkdir -p "$RUN_DIR/logs"
 cleanup_owned_children() {
   [[ -z "$BRIDGE_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$BRIDGE_PID" "$BRIDGE_ID" TERM || true
   [[ -z "$APPLIER_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$APPLIER_PID" "$APPLIER_ID" TERM || true
@@ -106,6 +112,7 @@ export DYLD_LIBRARY_PATH="$GZ_INSTALL/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PAT
   printf 'GZ_SIM_SYSTEM_PLUGIN_PATH=%s\n' "$GZ_SIM_SYSTEM_PLUGIN_PATH"
   printf 'GZ_SIM_RESOURCE_PATH=%s\n' "$GZ_SIM_RESOURCE_PATH"
   printf 'ANTOINE_GZ_STARTUP_TIMEOUT_SECONDS=%s\n' "$GZ_STARTUP_TIMEOUT_SECONDS"
+  printf 'ANTOINE_GZ_TOPIC_QUERY_TIMEOUT_SECONDS=%s\n' "$GZ_TOPIC_QUERY_TIMEOUT_SECONDS"
   printf 'ANTOINE_GZ_FLIGHT_NATS_PORT=%s\n' "$ANTOINE_GZ_FLIGHT_NATS_PORT"
 } >"$RUN_DIR/research-profile.env"
 PROVENANCE_ARGS=(
@@ -126,19 +133,19 @@ uv run --no-project python "$PROJECT_ROOT/research/capture_antoine_provenance.py
 
 RUN_STAGE="start-nats"
 dvd_run_owned_child "$PROJECT_ROOT" "$NATS_ID" nats-server -a 127.0.0.1 -p "$SERVER_PORT" \
-  -js -sd "$RUN_DIR/jetstream" >"$RUN_DIR/nats.log" 2>&1 &
+  -js -sd "$RUN_DIR/jetstream" >"$RUN_DIR/logs/nats.log" 2>&1 &
 NATS_PID=$!
 ready=0
 for _ in {1..80}; do
-  if grep -Fq "Listening for client connections on 127.0.0.1:$SERVER_PORT" "$RUN_DIR/nats.log" \
-    && grep -Fq 'Server is ready' "$RUN_DIR/nats.log" \
+  if grep -Fq "Listening for client connections on 127.0.0.1:$SERVER_PORT" "$RUN_DIR/logs/nats.log" \
+    && grep -Fq 'Server is ready' "$RUN_DIR/logs/nats.log" \
     && nats --no-context --server "$SERVER" rtt >/dev/null 2>&1; then
     ready=1
     break
   fi
   if ! kill -0 "$NATS_PID" 2>/dev/null; then
-    echo "run-owned NATS broker exited before becoming ready; see $RUN_DIR/nats.log" >&2
-    tail -30 "$RUN_DIR/nats.log" >&2
+    echo "run-owned NATS broker exited before becoming ready; see $RUN_DIR/logs/nats.log" >&2
+    tail -30 "$RUN_DIR/logs/nats.log" >&2
     exit 1
   fi
   sleep 0.25
@@ -157,14 +164,19 @@ capture_gazebo_startup_diagnostics() {
     printf 'expected_topic=/world/antoine_gz_flight_proof/pose/info\n'
     printf 'gazebo_pid=%s\n' "$SIM_PID"
     ps -p "$SIM_PID" -o pid=,stat=,etime=,command= 2>&1 || true
-    printf '\n--- visible Gazebo topics ---\n'
-    timeout 3 "$GZ_BIN" topic --list 2>&1 || true
+    printf '\n--- Gazebo topic query output ---\n'
+    cat "$RUN_DIR/gazebo-topic-list.txt" "$RUN_DIR/gazebo-topic-query.log" 2>&1 || true
     printf '\n--- Gazebo server log ---\n'
     tail -40 "$RUN_DIR/gazebo.log" 2>&1 || true
   } >"$RUN_DIR/gazebo-startup-diagnostics.txt"
 }
 while ((SECONDS < ready_deadline)); do
-  if timeout 2 "$GZ_BIN" topic --list 2>/dev/null | grep -q '^/world/antoine_gz_flight_proof/pose/info$'; then ready=1; break; fi
+  if timeout "$GZ_TOPIC_QUERY_TIMEOUT_SECONDS" "$GZ_BIN" topic --list \
+    >"$RUN_DIR/gazebo-topic-list.txt" 2>"$RUN_DIR/gazebo-topic-query.log" \
+    && grep -q '^/world/antoine_gz_flight_proof/pose/info$' "$RUN_DIR/gazebo-topic-list.txt"; then
+    ready=1
+    break
+  fi
   if ! kill -0 "$SIM_PID" 2>/dev/null; then
     capture_gazebo_startup_diagnostics
     echo "run-owned Gazebo exited before the two-drone world became ready; see $RUN_DIR/gazebo-startup-diagnostics.txt" >&2

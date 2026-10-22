@@ -33,6 +33,8 @@ PUBLIC_EVIDENCE = {
     "research-two-drone-smoke.json",
     "research-run-failure.txt",
     "gazebo-startup-diagnostics.txt",
+    "gazebo-topic-list.txt",
+    "gazebo-topic-query.log",
     "research-sequence-poisoning.json",
     "research-sequence-poisoning-summary.json",
     "research-swarm-flight.json",
