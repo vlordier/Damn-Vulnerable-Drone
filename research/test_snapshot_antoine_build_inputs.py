@@ -26,6 +26,34 @@ def populate(root: Path, ew_wire: Path) -> None:
 
 
 class AntoineSourceSnapshotTests(unittest.TestCase):
+    def test_upstream_moved_grant_declaration_accepts_only_the_known_buffered_gate(self) -> None:
+        hunk = (
+            b"--- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs\n"
+            b"+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs\n"
+            b"@@ -1824,7 +1876,6 @@\n"
+            b"         });\n"
+            b"     }\n"
+            b'     let grant_subject = format!("furia.prime.execution-grant.{callsign}");\n'
+            b"-    let core_grant = Arc::new(core_lease::CoreLease::new());\n"
+            b"     {\n"
+            b'         let revoke_subject = format!("furia.prime.execution-revoke.{callsign}");\n'
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text(
+                "struct MissionSetpointBuffer;\n"
+                "fn authorized_for() {}\n"
+                "fn mission_setpoint_matches_live_authorization() {}\n"
+                "buffer.authorized_for(&grants, &admissions, &callsign, &world_frame_id, now_ms)\n"
+                "state=pending-authorization\n"
+            )
+
+            self.assertTrue(snapshot.patch_hunk_superseded_by_upstream(hunk, root))
+            source.write_text(source.read_text().replace("struct MissionSetpointBuffer;\n", ""))
+            self.assertFalse(snapshot.patch_hunk_superseded_by_upstream(hunk, root))
+
     def test_swarm_coalescing_marker_uses_the_rate_trace_enabled_by_the_runner(self) -> None:
         repository = Path(__file__).resolve().parent.parent
         patch = (repository / "research/patches/antoine-swarm-state-partition.patch").read_text(

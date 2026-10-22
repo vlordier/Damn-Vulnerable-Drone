@@ -207,7 +207,10 @@ def patch_hunk_superseded_by_upstream(hunk: bytes, source_root: Path) -> bool:
         "core_grant.for_command().await" in line or "let core_grant = core_grant.clone();" in line
         for line in additions
     )
-    moved_grant_hunk = "let core_grant = Arc::new(core_lease::CoreLease::new());" in removals
+    moved_grant_hunk = any(
+        line.strip() == "let core_grant = Arc::new(core_lease::CoreLease::new());"
+        for line in removals
+    )
     if not receiver_gate_hunk and not moved_grant_hunk:
         return False
     source = source_root / target_line[6:]
