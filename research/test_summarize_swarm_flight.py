@@ -811,6 +811,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result["baselineFailedReasons"], ["gazeboAttitudeWithinEnvelope"])
         self.assertNotIn("gazeboAttitudeWithinEnvelope", result["baselineInconclusiveReasons"])
         self.assertEqual(result["status"], "failed")
+        self.assertEqual(result["exitCode"], 1)
 
     def test_missing_gazebo_quaternion_makes_attitude_evidence_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -843,7 +844,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result["status"], "inconclusive")
         self.assertIsNone(result["formationEvaluationTimeSeconds"])
 
-    def test_pose_deviation_makes_the_run_inconclusive(self) -> None:
+    def test_pose_deviation_makes_the_run_fail(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "antoine-swarm-flight-test"
             build_run(run_dir, "vee", offset_second_vehicle=5.0)
@@ -851,7 +852,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result["behaviorStatus"], "failed")
         self.assertEqual(result["status"], "failed")
         self.assertFalse(result["behaviorEvaluation"]["gates"]["allFinalSlotsWithinTolerance"])
-        self.assertEqual(result["exitCode"], 2)
+        self.assertEqual(result["exitCode"], 1)
 
     def test_pose_stream_quality_rejects_stale_gapped_and_regressed_samples(self) -> None:
         stale = [(float(index), 0.0, 0.0, 10.0) for index in range(21)]
@@ -1459,7 +1460,7 @@ class SummaryTests(unittest.TestCase):
             result = run_summary(run_dir)
         self.assertEqual(result["probeStatus"], "failed")
         self.assertEqual(result["status"], "failed")
-        self.assertEqual(result["exitCode"], 2)
+        self.assertEqual(result["exitCode"], 1)
 
     def test_command_rate_probe_status_is_bound_into_aggregate_report(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

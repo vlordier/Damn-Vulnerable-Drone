@@ -2211,7 +2211,7 @@ def main() -> int:
         )
     print(output)
     print(json.dumps(result, indent=2))
-    return 0 if aggregate_status == "passed" else 2
+    return {"passed": 0, "failed": 1, "inconclusive": 2}[aggregate_status]
 
 
 if __name__ == "__main__":
