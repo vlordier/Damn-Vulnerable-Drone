@@ -829,6 +829,31 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         "unsupported mission-count type must not start an upload"
     );
 
+    let unsupported_clear_all = v2_frame(45, 18, 255, &[1, 1, 1], 232);
+    gcs.send_to(&unsupported_clear_all, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("unsupported mission-clear ACK timeout")??;
+    let (_, unsupported_clear_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(unsupported_clear_ack) =
+        unsupported_clear_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for unsupported mission-clear type");
+    };
+    assert_eq!(
+        unsupported_clear_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_UNSUPPORTED
+    );
+    assert!(
+        timeout(Duration::from_millis(100), reply_rx.recv())
+            .await
+            .is_err(),
+        "unsupported mission-clear type must not clear Antoine's mission"
+    );
+
     let rejected_mission_list = v2_frame(43, 14, 255, &[1, 1, 0], 132);
     gcs.send_to(&rejected_mission_list, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))

@@ -1157,7 +1157,6 @@ async fn qgc_to_antoine_nats(
             if frame.payload.len() < 2
                 || (frame.payload[0] != 0 && frame.payload[0] != config.system_id)
                 || (frame.payload[1] != 0 && frame.payload[1] != 1)
-                || frame.payload.get(2).copied().unwrap_or(0) != 0
             {
                 let ack = mission_ack(
                     frame.sequence.wrapping_add(1),
@@ -1165,6 +1164,17 @@ async fn qgc_to_antoine_nats(
                     frame.system_id,
                     frame.component_id,
                     1,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
+            }
+            if frame.payload.get(2).copied().unwrap_or(0) != 0 {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    3,
                 );
                 gcs.send_to(&ack, source).await?;
                 continue;
