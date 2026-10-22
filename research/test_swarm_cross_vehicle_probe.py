@@ -33,8 +33,9 @@ from swarm_cross_vehicle_probe import (
 def valid_live_setpoint() -> dict:
     return {
         "contract": "furia.gzsitl.mission-setpoint",
-        "version": "2.1.0",
+        "version": "2.2.0",
         "vehicleId": "drone-2",
+        "runId": "run-1",
         "frameId": "enu-test",
         "missionId": "mission-drone-2",
         "graphId": "graph-drone-2",
@@ -67,6 +68,16 @@ def valid_live_setpoint() -> dict:
 
 class MutationTests(unittest.TestCase):
     PROBE_HASH = "a" * 64
+
+    def test_run_owned_launcher_applies_run_identity_source_patch(self) -> None:
+        root = Path(__file__).resolve().parents[1]
+        launcher = (root / "scripts/run-antoine.sh").read_text(encoding="utf-8")
+        patch = (root / "research/patches/antoine-swarm-run-identity.patch").read_text(
+            encoding="utf-8"
+        )
+        self.assertIn('"$PROJECT_ROOT/research/patches/antoine-swarm-run-identity.patch"', launcher)
+        self.assertIn('"runId": self.run_id', patch)
+        self.assertIn('setpoint.run_id == grant["runId"]', patch)
 
     def test_probe_callsigns_must_be_single_nats_subject_tokens(self) -> None:
         validate_vehicle_callsigns("drone-1", "drone-2")
@@ -155,7 +166,9 @@ class MutationTests(unittest.TestCase):
 
     def test_wrong_callsign_changes_only_vehicle_binding_and_freshness_sequence(self) -> None:
         original = valid_live_setpoint()
-        mutated, evidence = mutate_setpoint(original, "wrong-callsign", "drone-1", "drone-2")
+        mutated, evidence = mutate_setpoint(
+            original, "wrong-callsign", "drone-1", "drone-2", "run-1"
+        )
         self.assertEqual(mutated["vehicleId"], "drone-1")
         self.assertEqual(mutated["sequence"], 130)
         self.assertEqual(evidence["sequenceGap"], 100)
@@ -166,7 +179,7 @@ class MutationTests(unittest.TestCase):
 
     def test_wrong_task_changes_only_task_binding_and_freshness_sequence(self) -> None:
         original = valid_live_setpoint()
-        mutated, evidence = mutate_setpoint(original, "wrong-task", "drone-1", "drone-2")
+        mutated, evidence = mutate_setpoint(original, "wrong-task", "drone-1", "drone-2", "run-1")
         self.assertNotEqual(mutated["taskId"], original["taskId"])
         self.assertNotEqual(
             mutated["vigieAdmissionCorrelationId"], original["vigieAdmissionCorrelationId"]
@@ -179,24 +192,35 @@ class MutationTests(unittest.TestCase):
 
     def test_wrong_target_changes_only_one_bounded_position_component_and_sequence(self) -> None:
         original = valid_live_setpoint()
-        mutated, evidence = mutate_setpoint(original, "wrong-target", "drone-1", "drone-2")
+        mutated, evidence = mutate_setpoint(original, "wrong-target", "drone-1", "drone-2", "run-1")
         self.assertEqual(mutated["position_enu_m"], [10.0, 8.0, 10.0])
         self.assertEqual(mutated["sequence"], 130)
         for field in original.keys() - {"position_enu_m", "sequence"}:
             self.assertEqual(mutated[field], original[field], field)
         self.assertEqual(evidence["field"], "position_enu_m")
 
-    def test_stale_run_is_explicitly_unsupported_by_setpoint_contract(self) -> None:
-        payload, evidence = mutate_setpoint({}, "stale-run", "drone-1", "drone-2")
-        self.assertIsNone(payload)
-        self.assertEqual(evidence["status"], "unsupported")
+    def test_stale_run_mutation_changes_only_run_binding_and_sequence(self) -> None:
+        original = valid_live_setpoint()
+        mutated, evidence = mutate_setpoint(original, "stale-run", "drone-1", "drone-2", "run-1")
+        self.assertEqual(mutated["runId"], "stale-run-1")
+        self.assertNotEqual(mutated["runId"], original["runId"])
+        self.assertEqual(mutated["sequence"], original["sequence"] + 100)
+        for field in original.keys() - {"runId", "sequence"}:
+            self.assertEqual(mutated[field], original[field], field)
+        self.assertEqual(evidence["status"], "supported")
         self.assertEqual(evidence["field"], "runId")
 
     def test_rejects_payload_not_bound_to_requested_target(self) -> None:
         payload = valid_live_setpoint()
         payload["vehicleId"] = "drone-1"
         with self.assertRaises(ValueError):
-            mutate_setpoint(payload, "wrong-task", "drone-1", "drone-2")
+            mutate_setpoint(payload, "wrong-task", "drone-1", "drone-2", "run-1")
+
+    def test_mutation_rejects_setpoint_from_another_run(self) -> None:
+        payload = valid_live_setpoint()
+        payload["runId"] = "previous-run"
+        with self.assertRaisesRegex(ValueError, "expected live target contract"):
+            mutate_setpoint(payload, "stale-run", "drone-1", "drone-2", "run-1")
 
     def test_wrong_callsign_decision_requires_rejection_without_candidate_acceptance(self) -> None:
         lines = [
@@ -245,6 +269,16 @@ class MutationTests(unittest.TestCase):
         ]
         decision = controller_decision(
             "wrong-target", lines, 31, "drone-2", "unused", self.PROBE_HASH
+        )
+        self.assertEqual(decision["status"], "rejected-before-active-setpoint")
+        self.assertTrue(decision["activeSetpointSequenceNotAdvanced"])
+
+    def test_stale_run_decision_requires_rejection_before_active_setpoint(self) -> None:
+        lines = [
+            f"ANTOINE_GZ_SETPOINT_REJECTED callsign=drone-2 reason=current-grant-or-vigie-binding vehicle_id=drone-2 sequence=130 payload_sha256={self.PROBE_HASH} last_sequence=30",
+        ]
+        decision = controller_decision(
+            "stale-run", lines, 130, "drone-2", "stale-run-1", self.PROBE_HASH
         )
         self.assertEqual(decision["status"], "rejected-before-active-setpoint")
         self.assertTrue(decision["activeSetpointSequenceNotAdvanced"])

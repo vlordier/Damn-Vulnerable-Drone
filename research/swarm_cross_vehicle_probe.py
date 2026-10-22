@@ -77,27 +77,27 @@ def read_one_json(output: str) -> dict:
 
 
 def mutate_setpoint(
-    payload: dict, mutation: str, source: str, target: str
+    payload: dict, mutation: str, source: str, target: str, expected_run_id: str
 ) -> tuple[dict | None, dict]:
     """Apply one binding mutation; bump sequence only to keep it a fresh command."""
-    if mutation == "stale-run":
-        return None, {
-            "status": "unsupported",
-            "field": "runId",
-            "reason": "mission-setpoint-v2.1-has-no-runId-field; run identity is carried by the authority grant and broker context",
-        }
-    if mutation not in {"wrong-callsign", "wrong-task", "wrong-target"}:
+    if mutation not in SUPPORTED_MUTATIONS:
         raise ValueError(f"unsupported mutation {mutation}")
     if (
         payload.get("contract") != "furia.gzsitl.mission-setpoint"
-        or payload.get("version") != "2.1.0"
+        or payload.get("version") != "2.2.0"
         or payload.get("vehicleId") != target
+        or not isinstance(payload.get("runId"), str)
+        or not payload.get("runId")
+        or payload.get("runId") != expected_run_id
         or not isinstance(payload.get("sequence"), int)
         or isinstance(payload.get("sequence"), bool)
     ):
         raise ValueError("captured setpoint does not match the expected live target contract")
     mutated = dict(payload)
-    if mutation == "wrong-callsign":
+    if mutation == "stale-run":
+        mutated["runId"] = f"stale-{payload['runId']}"
+        field, before, after = "runId", payload["runId"], mutated["runId"]
+    elif mutation == "wrong-callsign":
         mutated["vehicleId"] = source
         field, before, after = "vehicleId", target, source
     elif mutation == "wrong-task":
@@ -561,7 +561,7 @@ def controller_decision(
             else None,
             "mutatedVehicleId": mutation_value,
         }
-    if mutation in {"wrong-task", "wrong-target"}:
+    if mutation in {"wrong-task", "wrong-target", "stale-run"}:
         return {
             "status": "rejected-before-active-setpoint"
             if rejected and not received
@@ -571,7 +571,7 @@ def controller_decision(
             "rejectionEvidence": rejected,
             "activeSetpointSequenceNotAdvanced": rejected is not None and not received,
         }
-    return {"status": "unsupported", "reason": "runId is not a mission-setpoint v2.1 field"}
+    return {"status": "unsupported", "reason": f"unsupported mutation {mutation}"}
 
 
 def publish_json(server: str, subject: str, payload: dict) -> None:
@@ -655,37 +655,88 @@ def main() -> int:
     output = run_dir / "research-cross-vehicle-authorization.json"
     write_report(output, report)
     try:
-        if args.mutation == "stale-run":
-            _, support = mutate_setpoint({}, args.mutation, args.source, args.target)
-            report.update({"mutationSupport": support, "status": "inconclusive"})
-        else:
-            validate_run_evidence_paths(run_dir, args.target)
-            validate_run_nats_endpoint(
-                args.server, run_dir, time.monotonic() + args.wait_timeout_seconds
+        validate_run_evidence_paths(run_dir, args.target)
+        validate_run_nats_endpoint(
+            args.server, run_dir, time.monotonic() + args.wait_timeout_seconds
+        )
+        model, target = target_plan(run_dir, args.target)
+        config_text = read_run_text(run_dir, Path("research-swarm-config.json"))
+        if config_text is None:
+            raise ValueError("run-owned swarm config is unavailable")
+        config = json.loads(config_text)
+        models = vehicle_models_from_config(config)
+        validate_probe_roster(models, args.source, args.target)
+        pose_deadline = time.monotonic() + args.wait_timeout_seconds
+        dwell = None
+        while time.monotonic() < pose_deadline:
+            dwell = pose_window_at_target(pose_path, model, target)
+            if dwell:
+                break
+            time.sleep(0.2)
+        if dwell is None:
+            raise TimeoutError(
+                "independent Gazebo pose never held the target waypoint for the declared dwell"
             )
-            model, target = target_plan(run_dir, args.target)
-            config_text = read_run_text(run_dir, Path("research-swarm-config.json"))
-            if config_text is None:
-                raise ValueError("run-owned swarm config is unavailable")
-            config = json.loads(config_text)
-            models = vehicle_models_from_config(config)
-            validate_probe_roster(models, args.source, args.target)
-            pose_deadline = time.monotonic() + args.wait_timeout_seconds
-            dwell = None
-            while time.monotonic() < pose_deadline:
-                dwell = pose_window_at_target(pose_path, model, target)
-                if dwell:
-                    break
-                time.sleep(0.2)
-            if dwell is None:
-                raise TimeoutError(
-                    "independent Gazebo pose never held the target waypoint for the declared dwell"
-                )
-            report["preInjectionPoseWindow"] = dwell
-            effect_before = vehicle_effect_snapshot(run_dir, models)
-            report["effectSnapshotBefore"] = effect_before
+        report["preInjectionPoseWindow"] = dwell
+        effect_before = vehicle_effect_snapshot(run_dir, models)
+        report["effectSnapshotBefore"] = effect_before
 
-            before = (
+        before = (
+            read_run_text(
+                run_dir,
+                Path("logs") / f"antoine-controller-{args.target}.log",
+                errors="replace",
+            )
+            or ""
+        )
+        captured = subprocess.run(
+            [
+                "nats",
+                "--no-context",
+                "--server",
+                args.server,
+                "sub",
+                "--count=1",
+                "--raw",
+                subject,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        payload = read_one_json(captured.stdout)
+        mutated, mutation_evidence = mutate_setpoint(
+            payload, args.mutation, args.source, args.target, run_dir.name
+        )
+        if mutated is None:
+            raise ValueError("requested supported mutation returned no payload")
+        probe_sequence = mutated["sequence"]
+        report.update(
+            {
+                "mutationSupport": mutation_evidence,
+                "capturedSequence": payload["sequence"],
+                "probeSequence": probe_sequence,
+                "capturedPayloadSha256": hashlib.sha256(
+                    json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+                "mutatedPayloadSha256": hashlib.sha256(
+                    json.dumps(mutated, sort_keys=True, separators=(",", ":")).encode()
+                ).hexdigest(),
+                "capturedSetpointHadRunIdField": "runId" in payload,
+                "capturedTaskId": payload.get("taskId"),
+                "capturedPositionEnuM": payload.get("position_enu_m"),
+            }
+        )
+        publish_json(args.server, subject, mutated)
+        report["publishedMessages"] = 1
+        report["injectionAtUnixMs"] = int(time.time() * 1000)
+        decision_deadline = time.monotonic() + DECISION_TIMEOUT_SECONDS
+        report["decisionTimeoutSeconds"] = DECISION_TIMEOUT_SECONDS
+        decision = None
+        after = before
+        while time.monotonic() < decision_deadline and decision is None:
+            after = (
                 read_run_text(
                     run_dir,
                     Path("logs") / f"antoine-controller-{args.target}.log",
@@ -693,99 +744,44 @@ def main() -> int:
                 )
                 or ""
             )
-            captured = subprocess.run(
-                [
-                    "nats",
-                    "--no-context",
-                    "--server",
-                    args.server,
-                    "sub",
-                    "--count=1",
-                    "--raw",
-                    subject,
-                ],
-                check=True,
-                capture_output=True,
-                text=True,
-                timeout=8,
+            decision = controller_decision(
+                args.mutation,
+                after[len(before) :].splitlines(),
+                probe_sequence,
+                args.target,
+                str(mutation_evidence.get("after", "")),
+                report["mutatedPayloadSha256"],
             )
-            payload = read_one_json(captured.stdout)
-            mutated, mutation_evidence = mutate_setpoint(
-                payload, args.mutation, args.source, args.target
-            )
-            if mutated is None:
-                raise ValueError("requested supported mutation returned no payload")
-            probe_sequence = mutated["sequence"]
-            report.update(
-                {
-                    "mutationSupport": mutation_evidence,
-                    "capturedSequence": payload["sequence"],
-                    "probeSequence": probe_sequence,
-                    "capturedPayloadSha256": hashlib.sha256(
-                        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-                    ).hexdigest(),
-                    "mutatedPayloadSha256": hashlib.sha256(
-                        json.dumps(mutated, sort_keys=True, separators=(",", ":")).encode()
-                    ).hexdigest(),
-                    "capturedSetpointHadRunIdField": "runId" in payload,
-                    "capturedTaskId": payload.get("taskId"),
-                    "capturedPositionEnuM": payload.get("position_enu_m"),
-                }
-            )
-            publish_json(args.server, subject, mutated)
-            report["publishedMessages"] = 1
-            report["injectionAtUnixMs"] = int(time.time() * 1000)
-            decision_deadline = time.monotonic() + DECISION_TIMEOUT_SECONDS
-            report["decisionTimeoutSeconds"] = DECISION_TIMEOUT_SECONDS
-            decision = None
-            after = before
-            while time.monotonic() < decision_deadline and decision is None:
-                after = (
-                    read_run_text(
-                        run_dir,
-                        Path("logs") / f"antoine-controller-{args.target}.log",
-                        errors="replace",
-                    )
-                    or ""
-                )
-                decision = controller_decision(
-                    args.mutation,
-                    after[len(before) :].splitlines(),
-                    probe_sequence,
-                    args.target,
-                    str(mutation_evidence.get("after", "")),
-                    report["mutatedPayloadSha256"],
-                )
-                if decision["status"] == "inconclusive":
-                    decision = None
-                    time.sleep(0.05)
-            report["controllerDecision"] = decision or {"status": "inconclusive"}
-            effect_at_decision = vehicle_effect_snapshot(run_dir, models)
-            time.sleep(1.0)
-            effect_after = vehicle_effect_snapshot(run_dir, models)
-            report["effectSnapshotAtDecision"] = effect_at_decision
-            report["effectSnapshotAfterObservation"] = effect_after
-            report["effectComparison"] = compare_effect_snapshots(
-                effect_before, effect_after, models, run_dir.name
-            )
-            report["controllerLogEvidence"] = [
-                line
-                for line in after[len(before) :].splitlines()
-                if f"ANTOINE_GZ_SETPOINT_REJECTED callsign={args.target}" in line
-                or f"ANTOINE_GZ_SETPOINT_RECEIVED callsign={args.target} sequence={probe_sequence} "
-                in line
-                or report["mutatedPayloadSha256"] in line
-                or f"ANTOINE_GZ_SETPOINT_HOLD callsign={args.target}" in line
-            ][-20:]
-            if decision and decision["status"] in {
-                "rejected",
-                "rejected-before-active-setpoint",
-            }:
-                report["status"] = report["effectComparison"]["status"]
-                if report["status"] == "measured":
-                    report["status"] = "passed"
-            else:
-                report["status"] = "inconclusive"
+            if decision["status"] == "inconclusive":
+                decision = None
+                time.sleep(0.05)
+        report["controllerDecision"] = decision or {"status": "inconclusive"}
+        effect_at_decision = vehicle_effect_snapshot(run_dir, models)
+        time.sleep(1.0)
+        effect_after = vehicle_effect_snapshot(run_dir, models)
+        report["effectSnapshotAtDecision"] = effect_at_decision
+        report["effectSnapshotAfterObservation"] = effect_after
+        report["effectComparison"] = compare_effect_snapshots(
+            effect_before, effect_after, models, run_dir.name
+        )
+        report["controllerLogEvidence"] = [
+            line
+            for line in after[len(before) :].splitlines()
+            if f"ANTOINE_GZ_SETPOINT_REJECTED callsign={args.target}" in line
+            or f"ANTOINE_GZ_SETPOINT_RECEIVED callsign={args.target} sequence={probe_sequence} "
+            in line
+            or report["mutatedPayloadSha256"] in line
+            or f"ANTOINE_GZ_SETPOINT_HOLD callsign={args.target}" in line
+        ][-20:]
+        if decision and decision["status"] in {
+            "rejected",
+            "rejected-before-active-setpoint",
+        }:
+            report["status"] = report["effectComparison"]["status"]
+            if report["status"] == "measured":
+                report["status"] = "passed"
+        else:
+            report["status"] = "inconclusive"
     except (OSError, ValueError, subprocess.SubprocessError, TimeoutError, KeyError) as error:
         report.update({"status": "inconclusive", "error": str(error)})
     write_report(output, report)

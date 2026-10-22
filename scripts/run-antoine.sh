@@ -165,6 +165,7 @@ cat "$PROJECT_ROOT/research/patches/antoine-flight-lifecycle.patch" \
   "$PROJECT_ROOT/research/patches/antoine-swarm-state-partition.patch" \
   "$PROJECT_ROOT/research/patches/antoine-swarm-arrival-experiment.patch" \
   "$PROJECT_ROOT/research/patches/antoine-swarm-grant-retention-experiment.patch" \
+  "$PROJECT_ROOT/research/patches/antoine-swarm-run-identity.patch" \
   >"$ANTOINE_RESEARCH_SOURCE_PATCH"
 uv run --no-project python "$PROJECT_ROOT/research/snapshot_antoine_build_inputs.py" \
   "$BASE_ANTOINE_ROOT" "$EW_WIRE_SOURCE" "$ANTOINE_SOURCE_SNAPSHOT" \

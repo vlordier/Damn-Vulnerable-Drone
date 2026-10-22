@@ -186,9 +186,12 @@ wrong-task request have run-bound controller decisions plus independent
 three-window pose and actuator evidence. A bounded `wrong-target` mutation is
 also available: it shifts one ENU target component by 2 m, advances the
 sequence for freshness, and requires controller rejection before the active
-setpoint advances. Mission-setpoint v2.1 has no `runId` field, so a stale-run
-mutation is unavailable. The selected MAVLink bridge only fans telemetry out;
-it has no command ingress where a wrong system ID could be exercised.
+setpoint advances. The run-owned launcher now applies a typed mission-setpoint
+v2.2 extension carrying `runId`; the controller requires it to match the
+active signed execution grant. The bounded stale-run mutation is implemented
+but still needs qualifying live evidence. The selected MAVLink bridge only
+fans telemetry out; it has no command ingress where a wrong system ID could
+be exercised.
 
 These requirements map to `dvd-fgt.16.1.4`, `dvd-fgt.16.2.3`,
 `dvd-fgt.16.2.4`, and `dvd-fgt.16.3.2`. The existing
