@@ -1358,7 +1358,7 @@ async fn qgc_to_antoine_nats(
                                     None
                                 }
                                 Ok(points)
-                                    if points.len() <= 5
+                                    if (1..=5).contains(&points.len())
                                         && points.iter().all(|point| {
                                             point.iter().all(|value| value.is_finite())
                                                 && point[0].abs() <= 3.0

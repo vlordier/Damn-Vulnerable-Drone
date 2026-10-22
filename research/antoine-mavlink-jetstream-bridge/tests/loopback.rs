@@ -480,6 +480,9 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
                 let omit_mission_state = request_id
                     .as_str()
                     .is_some_and(|id| id.contains("-mission-query-15-"));
+                let empty_uploaded_mission = request_id
+                    .as_str()
+                    .is_some_and(|id| id.contains("-mission-query-16-"));
                 let reject_mission_upload = command_type == "mission_upload"
                     && upload_count.fetch_add(1, std::sync::atomic::Ordering::Relaxed) > 0;
                 if command_type == "mission_clear" {
@@ -489,6 +492,8 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
                 }
                 let response = if reject_mission_query {
                     serde_json::json!({"requestId":request_id,"accepted":false,"armed":true,"mode":"GUIDED"})
+                } else if empty_uploaded_mission {
+                    serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED","missionUploaded":true,"waypoints":[]})
                 } else if omit_mission_state {
                     serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED"})
                 } else if reject_mission_upload {
@@ -1073,6 +1078,28 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     let _ = timeout(Duration::from_secs(2), reply_rx.recv())
         .await
         .context("malformed SITL mission query was not received")?;
+    let empty_uploaded_mission_list = v2_frame(43, 16, 255, &[1, 1, 0], 132);
+    gcs.send_to(&empty_uploaded_mission_list, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("empty uploaded mission response timeout")??;
+    assert_eq!(buffer[7], 47, "empty uploaded mission must be rejected");
+    let (_, empty_mission_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(empty_mission_ack) =
+        empty_mission_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for empty uploaded mission");
+    };
+    assert_eq!(
+        empty_mission_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
+    let _ = timeout(Duration::from_secs(2), reply_rx.recv())
+        .await
+        .context("empty uploaded mission query was not received")?;
     let mut mission_count_payload = vec![0; 4];
     mission_count_payload[0..2].copy_from_slice(&1_u16.to_le_bytes());
     mission_count_payload[2] = 1;
