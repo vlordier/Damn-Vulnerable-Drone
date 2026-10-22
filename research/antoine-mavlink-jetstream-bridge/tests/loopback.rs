@@ -885,6 +885,41 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         "unsupported mission item must not be published to Antoine"
     );
 
+    for (sequence, payload_length) in [(20, 34), (21, 39)] {
+        let mut malformed_item_payload = vec![0; payload_length];
+        malformed_item_payload[30] = 16;
+        malformed_item_payload[32] = 1;
+        malformed_item_payload[33] = 1;
+        if payload_length > 34 {
+            malformed_item_payload[34] = 6;
+        }
+        let malformed_item = v2_frame(73, sequence, 255, &malformed_item_payload, 38);
+        gcs.send_to(&malformed_item, qgc_bind).await?;
+        let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+            .await
+            .context("malformed mission-item ACK timeout")??;
+        assert_eq!(buffer[7], 47, "malformed mission item should be rejected");
+        let (_, malformed_item_response) =
+            mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+                &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+            )?;
+        let mavlink::dialects::common::MavMessage::MISSION_ACK(malformed_item_ack) =
+            malformed_item_response
+        else {
+            anyhow::bail!("expected MISSION_ACK for malformed mission item");
+        };
+        assert_eq!(
+            malformed_item_ack.mavtype,
+            mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+        );
+    }
+    assert!(
+        timeout(Duration::from_millis(100), reply_rx.recv())
+            .await
+            .is_err(),
+        "malformed mission items must not be published to Antoine"
+    );
+
     let rejected_mission_list = v2_frame(43, 14, 255, &[1, 1, 0], 132);
     gcs.send_to(&rejected_mission_list, qgc_bind).await?;
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))

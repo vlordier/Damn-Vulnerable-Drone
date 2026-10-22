@@ -1416,10 +1416,29 @@ async fn qgc_to_antoine_nats(
             continue;
         }
         if frame.message_id == 73 {
-            if frame.payload.len() < 37 {
+            if frame.payload.len() < 34 {
                 continue;
             }
-            if frame.payload.len() > 38 {
+            let seq = u16::from_le_bytes([frame.payload[28], frame.payload[29]]) as usize;
+            let command_id = u16::from_le_bytes([frame.payload[30], frame.payload[31]]);
+            let target = frame.payload[32];
+            let component = frame.payload[33];
+            if (target != 0 && target != config.system_id)
+                || (component != 0 && component != 1)
+                || command_id != 16
+            {
+                mission_upload = None;
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    2,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
+            }
+            if !(37..=38).contains(&frame.payload.len()) {
                 mission_upload = None;
                 let ack = mission_ack(
                     frame.sequence.wrapping_add(1),
@@ -1431,16 +1450,8 @@ async fn qgc_to_antoine_nats(
                 gcs.send_to(&ack, source).await?;
                 continue;
             }
-            let seq = u16::from_le_bytes([frame.payload[28], frame.payload[29]]) as usize;
-            let command_id = u16::from_le_bytes([frame.payload[30], frame.payload[31]]);
-            let target = frame.payload[32];
-            let component = frame.payload[33];
             let coord_frame = frame.payload[34];
-            if (target != 0 && target != config.system_id)
-                || (component != 0 && component != 1)
-                || !matches!(coord_frame, 1 | 3 | 6)
-                || command_id != 16
-            {
+            if !matches!(coord_frame, 1 | 3 | 6) {
                 mission_upload = None;
                 let ack = mission_ack(
                     frame.sequence.wrapping_add(1),
