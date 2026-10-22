@@ -276,6 +276,91 @@ class GazeboFailureReportTests(unittest.TestCase):
         self.assertEqual(checker.raw_telemetry, advanced)
         self.assertEqual(checker.telemetry_rejection, "telemetry is not valid JSON")
 
+    def test_lost_arm_ack_still_attempts_failure_cleanup(self) -> None:
+        cleanup_reports: list[dict] = []
+
+        class FakeFlightCheck:
+            def __init__(self, *_args):
+                self.callsign = "drone-1"
+                self.run_id = "run-1"
+                self.telemetry = {"armed": False, "prearm_ready": True}
+                self.valid_telemetry_received = asyncio.Event()
+                self.audit_frames = []
+                self.phase = "connecting"
+                self.home_pose = None
+                self.raw_telemetry = {}
+                self.telemetry_rejection = None
+                self.requests = []
+                self.arm_command_sent = False
+
+            async def start(self) -> None:
+                self.valid_telemetry_received.set()
+
+            async def wait_state(self, *_args, **_kwargs) -> dict:
+                return dict(self.telemetry)
+
+            async def wait_pose(self, *_args, **_kwargs) -> tuple[float, float, float]:
+                return (0.0, 0.0, 0.0)
+
+            async def mission_clear(self) -> None:
+                return None
+
+            async def mission_list(self) -> tuple[int, list]:
+                return (0, [])
+
+            def long(self, command: int, **_kwargs) -> bytes:
+                return str(command).encode()
+
+            async def request(self, _packet: bytes, command: int, **_kwargs) -> None:
+                self.requests.append(command)
+                if command == 400 and not self.arm_command_sent:
+                    self.arm_command_sent = True
+                    self.telemetry["armed"] = True
+                    raise AssertionError("ARM ACK lost after command may have applied")
+
+            async def disarm_after_settle(self, _home) -> None:
+                self.telemetry["armed"] = False
+
+            def pose(self):
+                return (0.0, 0.0, 0.0)
+
+            def pose_observation(self):
+                return {
+                    "simulationTimeSeconds": 1.0,
+                    "position": (0.0, 0.0, 0.0),
+                }
+
+            async def close(self) -> None:
+                return None
+
+        def record_failed_report(_run_dir, _callsign, _failure, cleanup, _check):
+            cleanup_reports.append(cleanup)
+            return Path("failed-report.json")
+
+        environment = {
+            "ANTOINE_GZ_POSE_FILE": "/tmp/run/flight-proof/gazebo-pose.jsonl",
+            "ANTOINE_GZ_RUN_DIR": "/tmp/run",
+        }
+        with (
+            mock.patch.dict(CHECKER.os.environ, environment),
+            mock.patch.object(CHECKER, "GazeboFlightCheck", FakeFlightCheck),
+            mock.patch.object(CHECKER, "write_failed_report", side_effect=record_failed_report),
+            mock.patch("builtins.print"),
+        ):
+            with self.assertRaisesRegex(AssertionError, "ARM ACK lost"):
+                asyncio.run(CHECKER.run_check())
+
+        self.assertEqual(len(cleanup_reports), 1)
+        self.assertEqual(
+            cleanup_reports[0],
+            {
+                "attempted": True,
+                "rtlConfirmed": True,
+                "landConfirmed": True,
+                "disarmConfirmed": True,
+            },
+        )
+
     def test_pose_observation_requires_fresh_finite_timestamped_vehicle_pose(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_directory = Path(directory)

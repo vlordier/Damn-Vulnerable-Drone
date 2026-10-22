@@ -562,9 +562,11 @@ async def run_check() -> dict:
         mission_count, mission = await check.mission_list()
         require_check((mission_count, mission) == (0, []), (mission_count, mission))
 
-        await check.request(check.long(400, p1=1.0), 400)
-        armed = True
         check.phase = "arm"
+        # The command may take effect even if its ACK is lost. From this point
+        # onward, failure handling must assume the vehicle could be armed.
+        armed = True
+        await check.request(check.long(400, p1=1.0), 400)
         await check.wait_state(
             lambda state: state.get("armed") is True,
             4,
