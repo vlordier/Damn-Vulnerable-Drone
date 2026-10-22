@@ -480,10 +480,10 @@ fn gazebo_telemetry_time_ms(value: &serde_json::Value, previous: Option<u64>) ->
     Ok(observed_at_ms)
 }
 
-fn parse_telemetry_json(payload: &[u8]) -> Result<serde_json::Value> {
+fn parse_strict_json(payload: &[u8]) -> Result<serde_json::Value> {
     let mut deserializer = serde_json::Deserializer::from_slice(payload);
     let value = StrictJsonValue::deserialize(&mut deserializer)
-        .context("parse telemetry JSON without duplicate object keys")?;
+        .context("parse JSON without duplicate object keys")?;
     deserializer
         .end()
         .context("trailing data after telemetry JSON")?;
@@ -1008,7 +1008,7 @@ async fn clear_mission(
     .await
     .ok()
     .and_then(|response| response.ok())
-    .and_then(|response| serde_json::from_slice::<serde_json::Value>(&response.payload).ok())
+    .and_then(|response| parse_strict_json(&response.payload).ok())
     .is_some_and(|value| control_result_matches(&value, &request_id) && value["accepted"] == true)
 }
 
@@ -1310,7 +1310,7 @@ async fn antoine_nats_telemetry_to_gcs(
     let mut last_gazebo_observed_at_ms = None;
     let mut last_telemetry = tokio::time::Instant::now() - std::time::Duration::from_secs(1);
     while let Some(message) = subscription.next().await {
-        let value: serde_json::Value = match parse_telemetry_json(&message.payload) {
+        let value: serde_json::Value = match parse_strict_json(&message.payload) {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(%error, "invalid Antoine telemetry JSON");
@@ -1691,78 +1691,71 @@ async fn qgc_to_antoine_nats(
                     tracing::warn!(request_id, %error, "mission query failed; returning a mission error");
                     None
                 }
-                Ok(Ok(response)) => {
-                    match serde_json::from_slice::<serde_json::Value>(&response.payload) {
-                        Err(error) => {
-                            tracing::warn!(request_id, %error, "mission query returned invalid JSON; returning a mission error");
-                            None
-                        }
-                        Ok(value)
-                            if !control_result_matches(&value, &request_id)
-                                || value["accepted"] != true =>
-                        {
-                            tracing::warn!(
-                                request_id,
-                                returned_request_id = ?value["requestId"],
-                                accepted = ?value["accepted"],
-                                "mission query response did not match the request; returning a mission error"
-                            );
-                            None
-                        }
-                        Ok(value) if value["missionUploaded"] == false => {
-                            if value["waypoints"] == serde_json::json!([]) {
-                                tracing::debug!(
-                                    request_id,
-                                    "controller reports no uploaded mission"
-                                );
-                                Some(Vec::new())
-                            } else {
-                                tracing::warn!(request_id, "mission query reports no mission but includes waypoints; returning a mission error");
-                                None
-                            }
-                        }
-                        Ok(value) if value["missionUploaded"] == true => {
-                            match serde_json::from_value::<Vec<[f64; 3]>>(
-                                value["waypoints"].clone(),
-                            ) {
-                                Err(error) => {
-                                    tracing::warn!(request_id, %error, "mission query returned invalid waypoints; returning a mission error");
-                                    None
-                                }
-                                Ok(points)
-                                    if (1..=5).contains(&points.len())
-                                        && points.iter().all(|point| {
-                                            point.iter().all(|value| value.is_finite())
-                                                && point[0].abs() <= 3.0
-                                                && point[1].abs() <= 3.0
-                                                && (-3.0..=0.0).contains(&point[2])
-                                        }) =>
-                                {
-                                    tracing::debug!(
-                                        request_id,
-                                        waypoint_count = points.len(),
-                                        "mission query succeeded"
-                                    );
-                                    Some(points)
-                                }
-                                Ok(_) => {
-                                    tracing::warn!(
-                                        request_id,
-                                        "mission query waypoints exceed the local envelope; returning a mission error"
-                                    );
-                                    None
-                                }
-                            }
-                        }
-                        Ok(_) => {
-                            tracing::warn!(
-                                request_id,
-                                "mission query omitted a valid missionUploaded flag; returning a mission error"
-                            );
+                Ok(Ok(response)) => match parse_strict_json(&response.payload) {
+                    Err(error) => {
+                        tracing::warn!(request_id, %error, "mission query returned invalid JSON; returning a mission error");
+                        None
+                    }
+                    Ok(value)
+                        if !control_result_matches(&value, &request_id)
+                            || value["accepted"] != true =>
+                    {
+                        tracing::warn!(
+                            request_id,
+                            returned_request_id = ?value["requestId"],
+                            accepted = ?value["accepted"],
+                            "mission query response did not match the request; returning a mission error"
+                        );
+                        None
+                    }
+                    Ok(value) if value["missionUploaded"] == false => {
+                        if value["waypoints"] == serde_json::json!([]) {
+                            tracing::debug!(request_id, "controller reports no uploaded mission");
+                            Some(Vec::new())
+                        } else {
+                            tracing::warn!(request_id, "mission query reports no mission but includes waypoints; returning a mission error");
                             None
                         }
                     }
-                }
+                    Ok(value) if value["missionUploaded"] == true => {
+                        match serde_json::from_value::<Vec<[f64; 3]>>(value["waypoints"].clone()) {
+                            Err(error) => {
+                                tracing::warn!(request_id, %error, "mission query returned invalid waypoints; returning a mission error");
+                                None
+                            }
+                            Ok(points)
+                                if (1..=5).contains(&points.len())
+                                    && points.iter().all(|point| {
+                                        point.iter().all(|value| value.is_finite())
+                                            && point[0].abs() <= 3.0
+                                            && point[1].abs() <= 3.0
+                                            && (-3.0..=0.0).contains(&point[2])
+                                    }) =>
+                            {
+                                tracing::debug!(
+                                    request_id,
+                                    waypoint_count = points.len(),
+                                    "mission query succeeded"
+                                );
+                                Some(points)
+                            }
+                            Ok(_) => {
+                                tracing::warn!(
+                                        request_id,
+                                        "mission query waypoints exceed the local envelope; returning a mission error"
+                                    );
+                                None
+                            }
+                        }
+                    }
+                    Ok(_) => {
+                        tracing::warn!(
+                                request_id,
+                                "mission query omitted a valid missionUploaded flag; returning a mission error"
+                            );
+                        None
+                    }
+                },
             };
             let Some(live_waypoints) = live_waypoints else {
                 let ack = mission_ack(
@@ -2082,7 +2075,7 @@ async fn qgc_to_antoine_nats(
                     .await
                     .ok()
                     .and_then(|r| r.ok())
-                    .and_then(|r| serde_json::from_slice::<serde_json::Value>(&r.payload).ok())
+                    .and_then(|r| parse_strict_json(&r.payload).ok())
                     .is_some_and(|v| {
                         control_result_matches(&v, &request_id) && v["accepted"] == true
                     });
@@ -2166,7 +2159,7 @@ async fn qgc_to_antoine_nats(
         let accepted = match response {
             Ok(Ok(message)) => {
                 tracing::debug!(request_id, response=%String::from_utf8_lossy(&message.payload), "Antoine control response");
-                match serde_json::from_slice::<serde_json::Value>(&message.payload) {
+                match parse_strict_json(&message.payload) {
                     Ok(value) if control_result_matches(&value, &request_id) => {
                         if value["accepted"] != true {
                             tracing::warn!(request_id, reason=?value["reason"], "Antoine rejected MAVLink control request");
@@ -2281,7 +2274,7 @@ async fn readonly_jetstream_to_vehicle(
     while let Some(message) = messages.next().await {
         let message = message?;
         let result = async {
-            let value: serde_json::Value = serde_json::from_slice(&message.payload)?;
+            let value = parse_strict_json(&message.payload)?;
             if !request_run_id_matches(config.run_id.as_deref(), &value) {
                 bail!("JetStream request run identity does not match this bridge run");
             }
@@ -2812,19 +2805,22 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_json_rejects_duplicate_keys_at_any_object_depth() {
+    fn nats_json_rejects_duplicate_keys_at_any_object_depth() {
         let valid = br#"{"schema":"furia.telemetry","nested":{"value":1},"items":[{"value":2}]}"#;
-        assert!(parse_telemetry_json(valid).is_ok());
+        assert!(parse_strict_json(valid).is_ok());
 
         for ambiguous in [
             br#"{"identity":"drone-1","identity":"other-drone"}"#.as_slice(),
             br#"{"nested":{"runId":"selected","runId":"other"}}"#,
             br#"{"items":[{"protocol":"antoine","protocol":"antoine-gz"}]}"#,
+            br#"{"accepted":false,"accepted":true}"#,
+            br#"{"requestId":"old","requestId":"selected"}"#,
+            br#"{"raw_base64":"old-frame","raw_base64":"selected-frame"}"#,
         ] {
-            let error = parse_telemetry_json(ambiguous).unwrap_err().to_string();
+            let error = parse_strict_json(ambiguous).unwrap_err().to_string();
             assert!(error.contains("duplicate object key"), "{error}");
         }
-        assert!(parse_telemetry_json(br#"{"schema":"ok"} trailing"#).is_err());
+        assert!(parse_strict_json(br#"{"schema":"ok"} trailing"#).is_err());
     }
 
     #[test]
