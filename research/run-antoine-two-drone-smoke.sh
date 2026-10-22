@@ -26,6 +26,7 @@ NATS_ID="$REPORT_ROOT/.$RUN_ID-nats.identity"
 SIM_ID="$REPORT_ROOT/.$RUN_ID-sim.identity"
 BRIDGE_ID="$REPORT_ROOT/.$RUN_ID-bridge.identity"
 APPLIER_ID="$REPORT_ROOT/.$RUN_ID-applier.identity"
+RUN_STAGE="initializing"
 
 for tool in nats nats-server uv; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Required command not found: $tool" >&2; exit 1; }
@@ -42,6 +43,37 @@ export GZ_BIN
 export ANTOINE_GZ_FLIGHT_NATS_PORT="$SERVER_PORT"
 mkdir -p "$REPORT_ROOT"
 mkdir "$RUN_DIR"
+cleanup_owned_children() {
+  [[ -z "$BRIDGE_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$BRIDGE_PID" "$BRIDGE_ID" TERM || true
+  [[ -z "$APPLIER_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$APPLIER_PID" "$APPLIER_ID" TERM || true
+  [[ -z "$SIM_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$SIM_PID" "$SIM_ID" TERM || true
+  [[ -z "$NATS_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$NATS_PID" "$NATS_ID" TERM || true
+  [[ -z "$BRIDGE_PID" ]] || wait "$BRIDGE_PID" 2>/dev/null || true
+  [[ -z "$APPLIER_PID" ]] || wait "$APPLIER_PID" 2>/dev/null || true
+  [[ -z "$SIM_PID" ]] || wait "$SIM_PID" 2>/dev/null || true
+  [[ -z "$NATS_PID" ]] || wait "$NATS_PID" 2>/dev/null || true
+  rm -f "$APPLIER_ID" "$BRIDGE_ID" "$SIM_ID" "$NATS_ID"
+}
+finalize_failed_startup() {
+  local status=$?
+  trap - EXIT INT TERM
+  set +e
+  cleanup_owned_children
+  if ((status != 0)) && [[ -d "$RUN_DIR" ]]; then
+    {
+      printf 'runId=%s\n' "$RUN_ID"
+      printf 'stage=%s\n' "$RUN_STAGE"
+      printf 'exitCode=%s\n' "$status"
+    } >"$RUN_DIR/research-run-failure.txt"
+    uv run --no-project python "$PROJECT_ROOT/research/build_evidence_manifest.py" "$RUN_DIR" >/dev/null
+  fi
+  exit "$status"
+}
+trap finalize_failed_startup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+RUN_STAGE="prepare-world"
 uv run --no-project python "$PROJECT_ROOT/research/prepare_antoine_two_drone_world.py" \
   "$SIM_SOURCE/worlds/antoine-gz-flight-proof.sdf" "$RUN_DIR/two-drone-world.sdf" \
   >"$RUN_DIR/world-build.log"
@@ -75,24 +107,11 @@ PROVENANCE_ARGS=(
   --require-input c2_gazebo_bridge --require-input c2_python_requirements
   --require-input nats_executable --require-input nats-server_executable --require-input uv_executable
 )
+RUN_STAGE="preflight-provenance"
 uv run --no-project python "$PROJECT_ROOT/research/capture_antoine_provenance.py" \
   "${PROVENANCE_ARGS[@]}" --phase pre --output "$RUN_DIR/research-provenance-pre.json" >/dev/null
 
-cleanup() {
-  local status=$?
-  [[ -z "$BRIDGE_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$BRIDGE_PID" "$BRIDGE_ID" TERM || true
-  [[ -z "$APPLIER_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$APPLIER_PID" "$APPLIER_ID" TERM || true
-  [[ -z "$SIM_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$SIM_PID" "$SIM_ID" TERM || true
-  [[ -z "$NATS_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$NATS_PID" "$NATS_ID" TERM || true
-  [[ -z "$BRIDGE_PID" ]] || wait "$BRIDGE_PID" 2>/dev/null || true
-  [[ -z "$APPLIER_PID" ]] || wait "$APPLIER_PID" 2>/dev/null || true
-  [[ -z "$SIM_PID" ]] || wait "$SIM_PID" 2>/dev/null || true
-  [[ -z "$NATS_PID" ]] || wait "$NATS_PID" 2>/dev/null || true
-  rm -f "$APPLIER_ID" "$BRIDGE_ID" "$SIM_ID" "$NATS_ID"
-  return "$status"
-}
-trap cleanup EXIT INT TERM
-
+RUN_STAGE="start-nats"
 dvd_run_owned_child "$PROJECT_ROOT" "$NATS_ID" nats-server -a 127.0.0.1 -p "$SERVER_PORT" \
   -js -sd "$RUN_DIR/jetstream" >"$RUN_DIR/nats.log" 2>&1 &
 NATS_PID=$!
@@ -113,6 +132,7 @@ for _ in {1..80}; do
 done
 [[ "$ready" == 1 ]] || { echo "run-owned NATS broker did not become ready" >&2; exit 1; }
 
+RUN_STAGE="start-gazebo"
 dvd_run_owned_child "$PROJECT_ROOT" "$SIM_ID" "$GZ_BIN" sim -s -r \
   --physics-engine gz-physics-bullet-featherstone-plugin "$RUN_DIR/two-drone-world.sdf" \
   >"$RUN_DIR/gazebo.log" 2>&1 &
@@ -132,6 +152,7 @@ done
 
 # Verify the actuator layer can address both model-specific Gazebo command
 # topics. No Antoine controller or non-neutral actuator command is started.
+RUN_STAGE="start-actuator-applier"
 mkdir -p "$RUN_DIR/applier-neutral" "$RUN_DIR/applier-authorized"
 export NATS_URL="$SERVER"
 export DVD_APPLIER_BIN="$APPLIER_BIN"
@@ -167,6 +188,7 @@ for _ in {1..160}; do
 done
 [[ "$ready" == 1 ]] || { echo "actuator applier did not attest both vehicles; see $RUN_DIR/applier.log" >&2; tail -30 "$RUN_DIR/applier.log" >&2; exit 1; }
 
+RUN_STAGE="start-bridge"
 dvd_run_owned_child "$PROJECT_ROOT" "$BRIDGE_ID" uv run --no-project \
   --with-requirements "$C2_SCRIPTS/../requirements-gz-sitl.txt" \
   "$C2_SCRIPTS/c2-gz-sitl-bridge.py" --nats-url "$SERVER" \
@@ -175,25 +197,29 @@ dvd_run_owned_child "$PROJECT_ROOT" "$BRIDGE_ID" uv run --no-project \
   >"$RUN_DIR/bridge.log" 2>&1 &
 BRIDGE_PID=$!
 set +e
+RUN_STAGE="two-drone-probe"
 uv run --no-project python "$PROJECT_ROOT/research/antoine_two_drone_probe.py" \
   --gz "$GZ_BIN" --server "$SERVER" --run-dir "$RUN_DIR" --applier-log "$RUN_DIR/applier.log"
 PROBE_STATUS=$?
 set -e
-cleanup
-trap - EXIT INT TERM
+RUN_STAGE="post-run-provenance"
+cleanup_owned_children
 set +e
 uv run --no-project python "$PROJECT_ROOT/research/capture_antoine_provenance.py" \
   "${PROVENANCE_ARGS[@]}" --phase post --output "$RUN_DIR/research-provenance.json" >/dev/null
 PROVENANCE_CAPTURE_STATUS=$?
 set -e
 set +e
+RUN_STAGE="finalize-smoke-report"
 uv run --project "$PROJECT_ROOT/research" python \
   "$PROJECT_ROOT/research/finalize_antoine_two_drone_smoke.py" \
   --run-dir "$RUN_DIR" --capture-exit-code "$PROVENANCE_CAPTURE_STATUS"
 FINALIZE_STATUS=$?
 set -e
+RUN_STAGE="build-evidence-manifest"
 uv run --no-project python "$PROJECT_ROOT/research/build_evidence_manifest.py" "$RUN_DIR" >/dev/null
 printf 'two-drone smoke run: %s\n' "$RUN_DIR"
 cat "$RUN_DIR/research-two-drone-smoke.json"
+trap - EXIT INT TERM
 if [[ "$PROBE_STATUS" -ne 0 ]]; then exit "$PROBE_STATUS"; fi
 exit "$FINALIZE_STATUS"

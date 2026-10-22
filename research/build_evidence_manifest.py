@@ -30,6 +30,7 @@ PUBLIC_EVIDENCE = {
     "research-early-revoke.json",
     "research-camera-observation.json",
     "research-two-drone-smoke.json",
+    "research-run-failure.txt",
     "research-sequence-poisoning.json",
     "research-sequence-poisoning-summary.json",
     "research-swarm-flight.json",

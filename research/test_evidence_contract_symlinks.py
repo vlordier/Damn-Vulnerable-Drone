@@ -137,12 +137,16 @@ class EvidenceManifestSymlinkTests(unittest.TestCase):
             run_dir = Path(directory) / "run-a"
             run_dir.mkdir()
             (run_dir / "research-two-drone-smoke.json").write_text('{"status":"passed"}\n')
+            (run_dir / "research-run-failure.txt").write_text(
+                "runId=run-a\nstage=start-gazebo\nexitCode=1\n", encoding="utf-8"
+            )
             (run_dir / "gazebo-pose-info.jsonl").write_text('{"pose":[]}\n')
 
             manifest = build(run_dir)
 
         names = {item["name"] for item in manifest["publicEvidence"]}
         self.assertIn("research-two-drone-smoke.json", names)
+        self.assertIn("research-run-failure.txt", names)
         self.assertIn("gazebo-pose-info.jsonl", names)
 
     def test_builder_omits_allowlisted_file_under_symlinked_directory(self) -> None:
