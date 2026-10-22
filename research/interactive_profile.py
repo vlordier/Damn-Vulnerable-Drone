@@ -276,6 +276,60 @@ def read_nats_messages(port: int, subject: str) -> tuple[list[Any], dict[str, st
         return [], {"status": "invalid", "reason": f"NATS returned non-JSON data for {subject}"}
 
 
+def _verified_run_nats_log(
+    receipt: dict[str, Any], port: int
+) -> tuple[Path | None, dict[str, str] | None]:
+    run_directory = receipt.get("runDirectory")
+    run_id = receipt.get("runId")
+    if not isinstance(run_directory, str) or not isinstance(run_id, str):
+        return None, {"status": "unverified", "reason": "receipt lacks a run directory identity"}
+    run_path = Path(run_directory)
+    if run_path.is_symlink() or run_path.name != run_id or not run_path.is_dir():
+        return None, {"status": "unverified", "reason": "run directory is missing or mismatched"}
+    try:
+        resolved_run = run_path.resolve(strict=True)
+    except (OSError, RuntimeError):
+        return None, {"status": "unverified", "reason": "run directory cannot be resolved"}
+    expected_flight = resolved_run / "flight-proof"
+    flight_directory = receipt.get("flightRunDirectory")
+    if isinstance(flight_directory, str) and flight_directory:
+        declared_flight = Path(flight_directory)
+        if declared_flight != run_path / "flight-proof" or declared_flight.is_symlink():
+            return None, {
+                "status": "invalid",
+                "reason": "flight evidence directory does not match the run-owned path",
+            }
+        try:
+            if declared_flight.resolve(strict=True) != expected_flight:
+                return None, {
+                    "status": "invalid",
+                    "reason": "flight evidence directory does not match the run-owned path",
+                }
+        except (OSError, RuntimeError):
+            return None, {
+                "status": "unverified",
+                "reason": "flight evidence directory is unavailable",
+            }
+    nats_log = expected_flight / "logs" / "nats.log"
+    try:
+        relative_log = nats_log.relative_to(resolved_run)
+        if (
+            contains_symlink_component(resolved_run, relative_log)
+            or not nats_log.is_file()
+            or not nats_log.resolve(strict=True).is_relative_to(resolved_run)
+        ):
+            raise ValueError("linked or external log")
+        log = nats_log.read_text(encoding="utf-8", errors="replace")
+    except (OSError, ValueError, RuntimeError):
+        return None, {"status": "unverified", "reason": "run-owned NATS log is unavailable"}
+    if (
+        f"Listening for client connections on 127.0.0.1:{port}" not in log
+        or "Server is ready" not in log
+    ):
+        return None, {"status": "unverified", "reason": "run-owned NATS endpoint is not verified"}
+    return nats_log, None
+
+
 def _sample_audited_heartbeat(
     receipt: dict[str, Any], *, subject_prefix: str, direction: str, label: str
 ) -> dict[str, Any]:
@@ -285,6 +339,9 @@ def _sample_audited_heartbeat(
     port = ports.get("nats") if isinstance(ports, dict) else None
     if _callsign_error(callsign) or not isinstance(port, int) or isinstance(port, bool):
         return {"status": "unverified", "reason": "run receipt lacks a valid callsign or NATS port"}
+    _, run_error = _verified_run_nats_log(receipt, port)
+    if run_error is not None:
+        return run_error
     subject = f"{subject_prefix}.{callsign}"
     try:
         result = subprocess.run(

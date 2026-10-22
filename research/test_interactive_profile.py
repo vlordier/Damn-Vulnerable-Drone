@@ -652,6 +652,25 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertNotIn("sub", command)
         self.assertNotIn("publish", command)
 
+    def test_audit_heartbeat_requires_run_owned_nats_readiness_log(self) -> None:
+        self.heartbeat.stop()
+        flight_directory = Path(self.temp.name) / "flight-proof"
+        external_logs = Path(self.temp.name) / "external-heartbeat-logs"
+        (flight_directory / "logs").rename(external_logs)
+        (external_logs / "nats.log").write_text(
+            "Listening for client connections on 127.0.0.1:14226\nServer is ready\n",
+            encoding="utf-8",
+        )
+        (flight_directory / "logs").symlink_to(external_logs, target_is_directory=True)
+        with patch("interactive_profile.subprocess.run") as run:
+            result = interactive_profile.sample_qgc_heartbeat(
+                json.loads(self.receipt.read_text(encoding="utf-8"))
+            )
+
+        self.assertEqual(result["status"], "unverified")
+        self.assertIn("NATS log is unavailable", result["reason"])
+        run.assert_not_called()
+
     def test_audit_heartbeat_rejects_stale_and_non_heartbeat_frames(self) -> None:
         self.heartbeat.stop()
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
