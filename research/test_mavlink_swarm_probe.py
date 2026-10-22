@@ -169,6 +169,22 @@ def reserve_ports(count: int) -> list[int]:
             sock.close()
 
 
+def local_udp_loopback_available() -> bool:
+    receiver = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    sender = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        receiver.bind(("127.0.0.1", 0))
+        receiver.settimeout(0.5)
+        sender.sendto(b"dvd-udp-loopback-check", receiver.getsockname())
+        payload, _ = receiver.recvfrom(64)
+        return payload == b"dvd-udp-loopback-check"
+    except OSError:
+        return False
+    finally:
+        receiver.close()
+        sender.close()
+
+
 def send_frames(peer_ports: list[int], system_ids: list[int], count: int = 3) -> None:
     time.sleep(0.1)
     payloads = {
@@ -188,6 +204,11 @@ def send_frames(peer_ports: list[int], system_ids: list[int], count: int = 3) ->
 
 
 class MainTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        if not local_udp_loopback_available():
+            raise unittest.SkipTest("local UDP delivery is unavailable on this host")
+
     def run_probe(self, extra_frames: list[tuple[int, int]] | None = None) -> tuple[int, dict]:
         ports = reserve_ports(4)
         bind_ports, peer_ports = ports[:2], ports[2:]
