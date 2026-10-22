@@ -156,6 +156,8 @@ MIN_FREE_MIB="${ANTOINE_SWARM_MIN_FREE_MIB:-4096}" \
   "${PROJECT_ROOT}/research/check-free-space.sh" \
   "${REPORT_ROOT}" "${PROJECT_ROOT}" \
   "${ANTOINE_GZ_CARGO_TARGET_DIR:-${PROJECT_ROOT}/.cargo-target/antoine-gz}"
+uv run --project "${PROJECT_ROOT}/research" python \
+  "${PROJECT_ROOT}/research/check_swarm_host_load.py"
 mkdir -p "${REPORT_ROOT}"
 [[ ! -e "${RUN_DIR}" ]] || { echo "Refusing to overwrite evidence: ${RUN_DIR}" >&2; exit 1; }
 case "${FAULT}" in none|state-stream-timing|state-stream-partition|controller-state-blackhole|state-blackhole|command-rate|cross-vehicle-authorization) ;; *) echo "Unsupported swarm fault: ${FAULT}" >&2; exit 2 ;; esac

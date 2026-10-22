@@ -5,7 +5,7 @@ UV ?= uv
 SHELLCHECK ?= shellcheck
 RESEARCH_PYTHON := $(UV) run --project research
 RESEARCH_FLIGHT := research/run-antoine-two-drone-flight.sh
-SWARM_RUNNER = RUSTUP_TOOLCHAIN="$(RUSTUP_TOOLCHAIN)" ANTOINE_GZ_CARGO_TARGET_DIR="$(ANTOINE_GZ_CARGO_TARGET_DIR)" ANTOINE_SWARM_MIN_FREE_MIB="$(ANTOINE_SWARM_MIN_FREE_MIB)" ./$(RESEARCH_FLIGHT)
+SWARM_RUNNER = RUSTUP_TOOLCHAIN="$(RUSTUP_TOOLCHAIN)" ANTOINE_GZ_CARGO_TARGET_DIR="$(ANTOINE_GZ_CARGO_TARGET_DIR)" ANTOINE_SWARM_MIN_FREE_MIB="$(ANTOINE_SWARM_MIN_FREE_MIB)" ANTOINE_SWARM_MAX_LOAD_PER_CPU="$(ANTOINE_SWARM_MAX_LOAD_PER_CPU)" ./$(RESEARCH_FLIGHT)
 SWARM_LIVE_SECONDS ?= 75
 LAB_SHELL_SCRIPTS := research/run-antoine-two-drone-flight.sh research/run-antoine-gazebo-mavlink.sh research/check-free-space.sh scripts/run-antoine.sh scripts/run-qgc-antoine.sh
 ANTOINE_BRIDGE_DIR ?= $(CURDIR)/research/antoine-mavlink-jetstream-bridge
@@ -13,6 +13,7 @@ ANTOINE_BRIDGE_TARGET_DIR ?= /tmp/dvd-antoine-bridge-target
 ANTOINE_QGC_DIR ?= $(HOME)/Work/antoine-qgroundcontrol
 ANTOINE_GZ_CARGO_TARGET_DIR ?= /tmp/antoine-gz-target
 ANTOINE_SWARM_MIN_FREE_MIB ?= 4096
+ANTOINE_SWARM_MAX_LOAD_PER_CPU ?= 0.75
 QGC_CONFIG ?= Debug
 QGC_GAZEBO_MIN_FREE_MIB ?= 2048
 ANTOINE_GZ_FLIGHT_GUI ?= 1
@@ -47,6 +48,7 @@ help: ## Show common commands
 	  '  make state-timing      Observe swarm state timing without injection' \
 	  '  make swarm-smoke       Check two-drone NATS/actuator wiring only' \
 	  '  make swarm-baseline    Run a clean 2–5 vehicle trajectory baseline' \
+	  '  ANTOINE_SWARM_MAX_LOAD_PER_CPU=0.75 sets the 1m/5m load-per-core preflight cap' \
 	  '  make swarm-flight      Fly two drones and measure pair separation' \
 	  '  make swarm-live        Open Gazebo GUI while two drones fly' \
 	  '  make swarm-live SWARM_LIVE_SECONDS=90 ANTOINE_SWARM_SIZE=3' \
@@ -157,6 +159,8 @@ doctor: ## Check the local Antoine/Gazebo prerequisites without starting a run
 	MIN_FREE_MIB="$(ANTOINE_SWARM_MIN_FREE_MIB)" ./research/check-free-space.sh \
 	  "$${ANTOINE_REPORT_DIR:-$(CURDIR)/build_logs/research/antoine-scenarios}" \
 	  "$(ANTOINE_GZ_CARGO_TARGET_DIR)" "$(ANTOINE_BRIDGE_TARGET_DIR)"; \
+	ANTOINE_SWARM_MAX_LOAD_PER_CPU="$(ANTOINE_SWARM_MAX_LOAD_PER_CPU)" \
+	  $(RESEARCH_PYTHON) python research/check_swarm_host_load.py; \
 	echo 'Antoine/Gazebo prerequisites are present.'
 
 console-start: ## Start the local research console
@@ -218,6 +222,7 @@ swarm-bridge: ## Fly with one MAVLink telemetry bridge per drone
 
 test-swarm: ## Run planner, summarizer, and MAVLink probe unit tests
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_check_free_space.py' -v
+	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_check_swarm_host_load.py' -v
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_swarm_behavior.py' -v
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_swarm_cross_vehicle_probe.py' -v
 	$(RESEARCH_PYTHON) python -m unittest discover -s research -p 'test_summarize_swarm_flight.py' -v
