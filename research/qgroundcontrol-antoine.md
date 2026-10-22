@@ -444,11 +444,18 @@ has SHA-256 `a5a323a409d5b42446a15b1e3b75d8e05b1262d49f0656bcaa866711f2d49aa3`,
 but its source revision and inclusion of the Antoine control patch are
 unverified, so it is not counted as the configured patched app.
 
-The default headless launcher now captures, verifies, seals, builds, and launches
-Antoine from a run-owned source snapshot. Fresh committed-tree acceptance at
-`/private/tmp/dvd-antoine-committed-sealed-acceptance-20261022/gazebo-mavlink-acceptance.json`
-passed with stable pre/post provenance, 71 audited MAVLink frames, independent
-Gazebo/MAVLink altitude delta of 0.024 m, and final `armed=false`. The same
+The default headless launcher captures, verifies, seals, builds, and launches
+Antoine from a run-owned source snapshot. The latest QGC-free live acceptance at
+`/private/tmp/antoine-gz-mavlink-20261022T000044Z-92f764a0-088e-450e-99b1-f1aa0789e6c0/gazebo-mavlink-acceptance.json`
+passed after reusing binaries only when their sealed source snapshot matched the
+fresh run snapshot. It recorded valid `antoine-gz` NATS telemetry, 122 audited
+MAVLink frames, a 0.009 m Gazebo/MAVLink altitude delta, final `armed=false`,
+and stable pre/post provenance with no changed inputs or source trees. Status
+inspection after shutdown confirmed the run-owned NATS and UDP ports were
+closed. A preceding isolated run at
+`/private/tmp/antoine-gz-mavlink-20261021T235344Z-f157ef42-e9ff-404d-ac94-f1af29ad44ce/gazebo-mavlink-acceptance.json`
+did not pass: its LAND path failed the settled-home gate, and cleanup did not
+confirm disarm. That failure remains evidence, not a qualified run. The same
 profile implementation passed two-cycle lifecycle acceptance at
 `/tmp/dvd-antoine-headless-lifecycle-20261021T224449Z.json`: both runs reported
 fresh telemetry and disarmed state; stale identity metadata could not signal
