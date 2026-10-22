@@ -10,6 +10,7 @@ from pathlib import Path
 
 from build_evidence_manifest import build as build_evidence_manifest
 from dvd_research.evidence_contract import classify_measurements
+from dvd_research.scenario_catalog import load_scenario_catalog
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = (
@@ -307,6 +308,24 @@ class EvidenceClassifierParityTests(unittest.TestCase):
 
         self.assertFalse(manifest["measurements"]["gazeboAttitudeQualified"])
         self.assertEqual(manifest["measurementClassification"], "inconclusive")
+
+    def test_catalog_rejects_swarm_flight_without_attitude_gate(self) -> None:
+        catalog_path = ROOT / "research" / "scenario-catalog.json"
+        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+        scenario = next(
+            item for item in catalog["scenarios"] if item["id"] == "swarm-minimum-separation"
+        )
+        scenario["evidenceGates"].remove("gazeboAttitudeQualified")
+
+        with tempfile.TemporaryDirectory() as directory:
+            mutated_catalog = Path(directory) / "scenario-catalog.json"
+            mutated_catalog.write_text(json.dumps(catalog), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "without the Gazebo attitude gate"):
+                load_scenario_catalog(
+                    mutated_catalog,
+                    ROOT,
+                    ROOT / "simulator" / "mgmt" / "templates" / "pages" / "attacks" / "antoine",
+                )
 
     def test_ui_and_csv_import_the_shared_classifier(self) -> None:
         consumers = (

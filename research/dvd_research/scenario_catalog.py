@@ -90,6 +90,14 @@ def load_scenario_catalog(
             or len(set(gates)) != len(gates)
         ):
             raise ValueError(f"scenario {item_id} has invalid evidence gates")
+        if (
+            item_id.startswith("swarm-")
+            and ("allFlightsPassed" in gates or "allFinalPositionsMeasured" in gates)
+            and "gazeboAttitudeQualified" not in gates
+        ):
+            raise ValueError(
+                f"scenario {item_id} qualifies a swarm flight without the Gazebo attitude gate"
+            )
 
         guide = item.get("guide")
         if guide is not None:
