@@ -78,6 +78,10 @@ class MutationTests(unittest.TestCase):
         self.assertIn('"$PROJECT_ROOT/research/patches/antoine-swarm-run-identity.patch"', launcher)
         self.assertIn('"runId": self.run_id', patch)
         self.assertIn('setpoint.run_id == grant["runId"]', patch)
+        self.assertIn(
+            'export GZ_CONFIG_PATH="$GZ_INSTALL/share/gz${GZ_CONFIG_PATH:+:$GZ_CONFIG_PATH}"',
+            launcher,
+        )
 
     def test_probe_callsigns_must_be_single_nats_subject_tokens(self) -> None:
         validate_vehicle_callsigns("drone-1", "drone-2")

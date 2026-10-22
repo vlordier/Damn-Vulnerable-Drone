@@ -263,6 +263,7 @@ if [[ -f "$GZ_INSTALL/setup.bash" ]]; then
   source "$GZ_INSTALL/setup.bash" >/dev/null 2>&1 || true
   set -u
 fi
+export GZ_CONFIG_PATH="$GZ_INSTALL/share/gz${GZ_CONFIG_PATH:+:$GZ_CONFIG_PATH}"
 export GZ_SIM_SYSTEM_PLUGIN_PATH="$GZ_INSTALL/lib${GZ_SIM_SYSTEM_PLUGIN_PATH:+:$GZ_SIM_SYSTEM_PLUGIN_PATH}"
 export DYLD_LIBRARY_PATH="$GZ_INSTALL/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PATH}"
 if [[ "${ANTOINE_GZ_CAMERA_RENDERING:-0}" == "1" ]]; then
