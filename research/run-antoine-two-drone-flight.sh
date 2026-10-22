@@ -326,13 +326,6 @@ fi
 uv run --no-project python "${PROJECT_ROOT}/research/capture_swarm_host_context.py" \
   --run-id "${RUN_ID}" --phase pre --project-root "${PROJECT_ROOT}" \
   --output "${HOST_CONTEXT_PRE}"
-dvd_run_owned_child "${PROJECT_ROOT}" "${HOST_CONTEXT_IDENTITY}" \
-  uv run --no-project python "${PROJECT_ROOT}/research/capture_swarm_host_context.py" \
-  --run-id "${RUN_ID}" --phase during --project-root "${PROJECT_ROOT}" \
-  --interval-seconds 5 --stop-file "${HOST_CONTEXT_STOP}" \
-  --output "${HOST_CONTEXT_DURING}" \
-  >"${REPORT_ROOT}/${RUN_ID}-host-context.log" 2>&1 &
-HOST_CONTEXT_PID=$!
 
 dvd_run_owned_child "${PROJECT_ROOT}" "${IDENTITY}" env \
   ${FLIGHT_FAULT_ENV[@]+"${FLIGHT_FAULT_ENV[@]}"} \
@@ -355,6 +348,13 @@ done
 if [[ "${run_dir_ready}" -eq 1 ]]; then
   printf 'swarm run evidence directory: %s\n' "${RUN_DIR}"
   cp "${HOST_CONTEXT_PRE}" "${RUN_DIR}/research-host-context-pre.json"
+  dvd_run_owned_child "${PROJECT_ROOT}" "${HOST_CONTEXT_IDENTITY}" \
+    uv run --no-project python "${PROJECT_ROOT}/research/capture_swarm_host_context.py" \
+    --run-id "${RUN_ID}" --phase during --project-root "${PROJECT_ROOT}" \
+    --interval-seconds 5 --stop-file "${HOST_CONTEXT_STOP}" \
+    --output "${HOST_CONTEXT_DURING}" \
+    >"${REPORT_ROOT}/${RUN_ID}-host-context.log" 2>&1 &
+  HOST_CONTEXT_PID=$!
 fi
 if [[ "${run_dir_ready}" -eq 1 ]]; then
   if [[ -z "${POSITIVE_TARGET}" ]]; then
