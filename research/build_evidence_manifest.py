@@ -16,6 +16,7 @@ from dvd_research.evidence_contract import (
     contains_symlink_component,
     sign_manifest_if_configured,
 )
+from dvd_research.run_files import read_run_text
 from dvd_research.scenario_catalog import load_scenario_catalog
 
 PUBLIC_EVIDENCE = {
@@ -377,6 +378,20 @@ def build(run_dir: Path) -> dict[str, Any]:
             ),
         }
     elif camera:
+        camera_profile = {}
+        try:
+            profile_text = read_run_text(run_dir, Path("research-profile.env"))
+        except (OSError, ValueError):
+            profile_text = None
+        if profile_text is not None:
+            camera_profile = dict(
+                line.split("=", 1) for line in profile_text.splitlines() if "=" in line
+            )
+        camera_run_scope_matches = (
+            camera_profile.get("GZ_IP") == "127.0.0.1"
+            and bool(camera_profile.get("GZ_PARTITION"))
+            and camera.get("partition") == camera_profile.get("GZ_PARTITION")
+        )
         measurements = {
             "capturedMessages": camera.get("capturedMessages"),
             "cameraFramesCaptured": camera.get("capturedMessages"),
@@ -388,9 +403,17 @@ def build(run_dir: Path) -> dict[str, Any]:
             "payloadSizes": camera.get("payloadSizes"),
             "imagePayloadsStored": camera.get("imagePayloadsStored"),
             "runIdentityMatches": camera.get("runId") == run_dir.name,
+            "cameraRunScopeMatches": camera_run_scope_matches,
             "cameraObservationBoundsValid": (
                 type(camera.get("capturedMessages")) is int
-                and 0 <= camera.get("capturedMessages") <= 5
+                and 1 <= camera.get("capturedMessages") <= 5
+                and camera.get("topicListed") is True
+                and camera.get("publisherPresentAtProbe") is True
+                and camera.get("subscriberExitCode") == 0
+                and camera.get("subscriberTimedOut") is False
+                and camera.get("discoveryError") is None
+                and camera.get("subscriberStartError") is None
+                and camera_run_scope_matches
                 and camera.get("imagePayloadsStored") is False
                 and camera.get("topic")
                 == "/world/antoine_gz_flight_proof/model/isr/link/base_link/sensor/camera/image"

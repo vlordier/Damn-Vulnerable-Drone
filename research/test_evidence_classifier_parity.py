@@ -310,6 +310,58 @@ class EvidenceClassifierParityTests(unittest.TestCase):
         self.assertFalse(manifest["measurements"]["gazeboAttitudeQualified"])
         self.assertEqual(manifest["measurementClassification"], "failed_swarm_flight")
 
+    def test_camera_manifest_requires_run_profile_partition_match(self) -> None:
+        for report_partition, expected_classification in (
+            ("camera-run", "observation_only"),
+            ("other-run", "inconclusive"),
+        ):
+            with (
+                self.subTest(partition=report_partition),
+                tempfile.TemporaryDirectory() as directory,
+            ):
+                run_dir = Path(directory) / "antoine-camera-manifest-test"
+                run_dir.mkdir()
+                camera = {
+                    "runId": run_dir.name,
+                    "scenario": "gazebo-camera-readable-topic-antoine",
+                    "partition": report_partition,
+                    "capturedMessages": 5,
+                    "topicListed": True,
+                    "publisherPresentAtProbe": True,
+                    "subscriberExitCode": 0,
+                    "subscriberTimedOut": False,
+                    "discoveryError": None,
+                    "subscriberStartError": None,
+                    "imagePayloadsStored": False,
+                    "topic": "/world/antoine_gz_flight_proof/model/isr/link/base_link/sensor/camera/image",
+                }
+                (run_dir / "research-camera-observation.json").write_text(
+                    json.dumps(camera), encoding="utf-8"
+                )
+                (run_dir / "research-profile.env").write_text(
+                    "GZ_IP=127.0.0.1\nGZ_PARTITION=camera-run\n", encoding="utf-8"
+                )
+                (run_dir / "research-provenance-comparison.json").write_text(
+                    json.dumps(
+                        {
+                            "runId": run_dir.name,
+                            "prePhaseValid": True,
+                            "postPhaseValid": True,
+                            "profileMatches": True,
+                            "stable": True,
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+                manifest = build_evidence_manifest(run_dir)
+
+                self.assertEqual(manifest["measurementClassification"], expected_classification)
+                self.assertEqual(
+                    manifest["measurements"]["cameraRunScopeMatches"],
+                    report_partition == "camera-run",
+                )
+
     def test_manifest_does_not_qualify_pass_status_with_failed_attitude_gate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "antoine-swarm-flight-manifest-invalid-test"
