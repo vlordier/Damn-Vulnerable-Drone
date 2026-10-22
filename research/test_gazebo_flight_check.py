@@ -33,7 +33,10 @@ class GazeboFailureReportTests(unittest.TestCase):
         self.assertIn("/flight-proof/gazebo-pose.jsonl", content)
         self.assertIn('ANTOINE_GZ_RUN_DIR="$$run_dir"', content)
         runner = SCRIPT.parents[1] / "run-antoine-gazebo-mavlink.sh"
-        self.assertIn('ANTOINE_GZ_RUN_DIR="${RUN_DIR}"', runner.read_text(encoding="utf-8"))
+        runner_text = runner.read_text(encoding="utf-8")
+        self.assertIn('ANTOINE_GZ_RUN_DIR="${RUN_DIR}"', runner_text)
+        self.assertIn('RUN_ID="$(basename "${RUN_DIR}")"', runner_text)
+        self.assertGreaterEqual(runner_text.count('ANTOINE_GZ_FLIGHT_RUN_ID="${RUN_ID}"'), 2)
 
     def test_antoine_local_authority_patch_binds_runtime_world_digest(self) -> None:
         patch = SCRIPT.parents[1] / "patches/antoine-gazebo-battery-drain.patch"
@@ -41,6 +44,8 @@ class GazeboFailureReportTests(unittest.TestCase):
             '+    --world-digest "sha256:$WORLD_SHA256"',
             patch.read_text(encoding="utf-8"),
         )
+        self.assertIn('+RUN_ID="${ANTOINE_GZ_FLIGHT_RUN_ID:-${RUN_DIR##*/}}"', patch.read_text())
+        self.assertIn('+  FURIA_SITL_RUN_ID="$RUN_ID"', patch.read_text())
 
     def test_make_patch_target_applies_missing_world_binding_idempotently(self) -> None:
         repo = SCRIPT.parents[2]
@@ -57,18 +62,42 @@ class GazeboFailureReportTests(unittest.TestCase):
             )
             script = root / "scripts/gz_flight_proof.sh"
             script.parent.mkdir(parents=True)
-            script.write_text(
-                '  start_owned "$BIN_DIR/antoine_gz_local_authority" \\\n'
-                '    --callsign "$callsign" --nats-url "$NATS_URL" --world-frame-id "$FRAME_ID" \\\n'
-                '    --waypoints "$waypoints" --arrival-radius-m "$ARRIVAL_RADIUS_M" \\\n',
-                encoding="utf-8",
+            lines = ["# fixture"] * 730
+            lines[382] = 'RUN_ID="${RUN_DIR##*/}"'
+            lines[383] = ""
+            lines[384] = (
+                "# Derive the Ed25519 public keys the run pins. `uv run --with pynacl` keeps this"
             )
+            lines[625] = (
+                '  FURIA_GZ_APPLIER_REQUIRE_LIFECYCLE="$APPLIER_LIFECYCLE_REQUIRED" ' + chr(92)
+            )
+            lines[626] = (
+                '  FURIA_SITL_RUN_ID="${RUN_DIR##*/}" GZ_SITL_WORLD_SHA256="sha256:$WORLD_SHA256" '
+                + chr(92)
+            )
+            lines[627] = (
+                """  FURIA_PRIME_ENU_FRAME_ID="$FRAME_ID" "$DVD_APPLIER_BIN" --agents "$AGENTS_CSV" --verbose' """
+                + chr(92)
+            )
+            lines[722] = '  start_owned "$BIN_DIR/antoine_gz_local_authority" ' + chr(92)
+            lines[723] = (
+                '    --callsign "$callsign" --nats-url "$NATS_URL" --world-frame-id "$FRAME_ID" '
+                + chr(92)
+            )
+            lines[724] = (
+                '    --waypoints "$waypoints" --arrival-radius-m "$ARRIVAL_RADIUS_M" ' + chr(92)
+            )
+            script.write_text("\n".join(lines) + "\n", encoding="utf-8")
             subprocess.run(["git", "init", "--quiet", str(root)], check=True)
 
             command = ["make", "antoine-gz-battery-patch", f"ANTOINE_ROOT={root}"]
             first = subprocess.run(command, cwd=repo, capture_output=True, text=True, check=False)
             self.assertEqual(first.returncode, 0, first.stdout + first.stderr)
             self.assertIn('--world-digest "sha256:$WORLD_SHA256"', script.read_text())
+            self.assertIn(
+                'RUN_ID="${ANTOINE_GZ_FLIGHT_RUN_ID:-${RUN_DIR##*/}}"', script.read_text()
+            )
+            self.assertIn('FURIA_SITL_RUN_ID="$RUN_ID"', script.read_text())
 
             second = subprocess.run(command, cwd=repo, capture_output=True, text=True, check=False)
             self.assertEqual(second.returncode, 0, second.stdout + second.stderr)
@@ -174,6 +203,7 @@ class GazeboFailureReportTests(unittest.TestCase):
     def test_nats_telemetry_accepts_only_the_gazebo_profile_contract(self) -> None:
         checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
         checker.callsign = "drone-1"
+        checker.run_id = "run-1"
         checker.raw_telemetry = {"identity": "drone-1", "protocol": "antoine-gz"}
         checker.telemetry_rejection = None
         checker.valid_telemetry_received = asyncio.Event()
@@ -186,6 +216,7 @@ class GazeboFailureReportTests(unittest.TestCase):
             "version": "1.0.0",
             "identity": "drone-1",
             "protocol": "antoine-gz",
+            "runId": "run-1",
             "observedAtUnixMs": time.time_ns() // 1_000_000,
         }
         asyncio.run(deliver(json.dumps(valid).encode()))
@@ -197,6 +228,8 @@ class GazeboFailureReportTests(unittest.TestCase):
             {**valid, "protocol": "antoine"},
             {**valid, "version": "2.0.0"},
             {**valid, "identity": "another-drone"},
+            {**valid, "runId": "another-run"},
+            {key: value for key, value in valid.items() if key != "runId"},
             {**valid, "observedAtUnixMs": valid["observedAtUnixMs"] - 1_001},
             {**valid, "observedAtUnixMs": valid["observedAtUnixMs"] + 251},
             {**valid, "observedAtUnixMs": True},
@@ -271,7 +304,7 @@ class GazeboFailureReportTests(unittest.TestCase):
                     {
                         "contract": CHECKER.ACTUATOR_OUTPUT_CONTRACT,
                         "version": CHECKER.ACTUATOR_OUTPUT_VERSION,
-                        "runId": audit_directory.parent.name,
+                        "runId": run_directory.name,
                         "vehicleId": "drone-1",
                         "actuatorKind": "motors",
                         "sequence": 99,
@@ -289,7 +322,7 @@ class GazeboFailureReportTests(unittest.TestCase):
             audit_path.write_text(outside.read_text(encoding="utf-8"), encoding="utf-8")
             checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
             checker.run_directory = run_directory
-            checker.run_id = audit_directory.parent.name
+            checker.run_id = run_directory.name
             checker.callsign = "drone-1"
             self.assertEqual(checker.actuator_audit()[0]["sequence"], 99)
 
@@ -305,11 +338,11 @@ class GazeboFailureReportTests(unittest.TestCase):
     def test_authorized_motor_output_requires_run_bound_measured_audit(self) -> None:
         checker = CHECKER.GazeboFlightCheck.__new__(CHECKER.GazeboFlightCheck)
         checker.callsign = "drone-1"
-        checker.run_id = "flight-proof"
+        checker.run_id = "run-1"
         valid = {
             "contract": CHECKER.ACTUATOR_OUTPUT_CONTRACT,
             "version": CHECKER.ACTUATOR_OUTPUT_VERSION,
-            "runId": "flight-proof",
+            "runId": "run-1",
             "vehicleId": "drone-1",
             "actuatorKind": "motors",
             "sequence": 12,
@@ -322,7 +355,7 @@ class GazeboFailureReportTests(unittest.TestCase):
             "executionGrant": {
                 "contract": "furia.prime.execution-grant",
                 "vehicleId": "drone-1",
-                "runId": "flight-proof",
+                "runId": "run-1",
                 "worldDigest": "sha256:" + "a" * 64,
                 "worldFrameId": "enu-test",
                 "targetEnuMm": [1000, 2000, 3000],

@@ -96,7 +96,9 @@ antoine-gz-battery-patch: ## Apply versioned Antoine Gazebo battery and world-bi
 	  battery_present=1; \
 	fi; \
 	world_present=0; \
-	if rg -Fq -- '--world-digest "sha256:$$WORLD_SHA256"' "$$antoine_root/scripts/gz_flight_proof.sh"; then \
+	if rg -Fq -- 'RUN_ID="$${ANTOINE_GZ_FLIGHT_RUN_ID:-$${RUN_DIR##*/}}"' "$$antoine_root/scripts/gz_flight_proof.sh" \
+	  && rg -Fq -- 'FURIA_SITL_RUN_ID="$$RUN_ID" GZ_SITL_WORLD_SHA256=' "$$antoine_root/scripts/gz_flight_proof.sh" \
+	  && rg -Fq -- '--world-digest "sha256:$$WORLD_SHA256"' "$$antoine_root/scripts/gz_flight_proof.sh"; then \
 	  world_present=1; \
 	fi; \
 	if [[ "$$battery_present" == 1 && "$$world_present" == 1 ]]; then \
@@ -106,16 +108,16 @@ antoine-gz-battery-patch: ## Apply versioned Antoine Gazebo battery and world-bi
 	  trap 'rm -rf "$$patch_dir"' EXIT; \
 	  if [[ "$$battery_present" == 0 ]]; then \
 	    sed '/^diff --git a\/scripts\/gz_flight_proof.sh/,$$d' "$$patch_file" > "$$patch_dir/battery.patch"; \
-	    if git -C "$$antoine_root" apply --check "$$patch_dir/battery.patch" >/dev/null 2>&1; then \
-	      git -C "$$antoine_root" apply "$$patch_dir/battery.patch" || exit 1; \
+	    if (cd "$$antoine_root" && patch --batch --fuzz=0 -p1 --dry-run --verbose < "$$patch_dir/battery.patch"); then \
+	      (cd "$$antoine_root" && patch --batch --fuzz=0 -p1 < "$$patch_dir/battery.patch") || exit 1; \
 	    else \
 	      echo 'Battery patch does not apply cleanly; inspect the Antoine SITL source.' >&2; exit 1; \
 	    fi; \
 	  fi; \
 	  if [[ "$$world_present" == 0 ]]; then \
 	    sed -n '/^diff --git a\/scripts\/gz_flight_proof.sh/,$$p' "$$patch_file" > "$$patch_dir/world.patch"; \
-	    if git -C "$$antoine_root" apply --check "$$patch_dir/world.patch" >/dev/null 2>&1; then \
-	      git -C "$$antoine_root" apply "$$patch_dir/world.patch" || exit 1; \
+	    if (cd "$$antoine_root" && patch --batch --fuzz=0 -p1 --dry-run --verbose < "$$patch_dir/world.patch"); then \
+	      (cd "$$antoine_root" && patch --batch --fuzz=0 -p1 < "$$patch_dir/world.patch") || exit 1; \
 	    else \
 	      echo 'Runtime world-binding patch does not apply cleanly; inspect the Antoine launcher.' >&2; exit 1; \
 	    fi; \

@@ -55,9 +55,16 @@ index 743e306c9a..246a9ce04d 100644
 diff --git a/scripts/gz_flight_proof.sh b/scripts/gz_flight_proof.sh
 --- a/scripts/gz_flight_proof.sh
 +++ b/scripts/gz_flight_proof.sh
+@@ -383,1 +383,1 @@
+-RUN_ID="${RUN_DIR##*/}"
++RUN_ID="${ANTOINE_GZ_FLIGHT_RUN_ID:-${RUN_DIR##*/}}"
+@@ -626,3 +626,3 @@
+   FURIA_GZ_APPLIER_REQUIRE_LIFECYCLE="$APPLIER_LIFECYCLE_REQUIRED" \
+-  FURIA_SITL_RUN_ID="${RUN_DIR##*/}" GZ_SITL_WORLD_SHA256="sha256:$WORLD_SHA256" \
++  FURIA_SITL_RUN_ID="$RUN_ID" GZ_SITL_WORLD_SHA256="sha256:$WORLD_SHA256" \
+   FURIA_PRIME_ENU_FRAME_ID="$FRAME_ID" "$DVD_APPLIER_BIN" --agents "$AGENTS_CSV" --verbose' \
 @@ -723,3 +723,4 @@
    start_owned "$BIN_DIR/antoine_gz_local_authority" \
      --callsign "$callsign" --nats-url "$NATS_URL" --world-frame-id "$FRAME_ID" \
 +    --world-digest "sha256:$WORLD_SHA256" \
      --waypoints "$waypoints" --arrival-radius-m "$ARRIVAL_RADIUS_M" \
- 

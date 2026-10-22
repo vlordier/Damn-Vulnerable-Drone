@@ -13,6 +13,11 @@ RUN_ID="antoine-gz-mavlink-$(date -u +%Y%m%dT%H%M%SZ)-$(uuidgen | tr '[:upper:]'
 RUN_DIR="${ANTOINE_GZ_MAVLINK_RUN_DIR:-/tmp/${RUN_ID}}"
 mkdir -p "$(dirname "${RUN_DIR}")"
 RUN_DIR="$(cd "$(dirname "${RUN_DIR}")" && pwd -P)/$(basename "${RUN_DIR}")"
+RUN_ID="$(basename "${RUN_DIR}")"
+[[ "${RUN_ID}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]] || {
+  echo "Invalid Antoine/Gazebo run ID derived from run directory: ${RUN_ID}" >&2
+  exit 2
+}
 FLIGHT_RUN_DIR="${RUN_DIR}/flight-proof"
 OPEN_QGC="${ANTOINE_GZ_OPEN_QGC:-1}"
 HEADLESS_ACCEPTANCE="${ANTOINE_GZ_HEADLESS_ACCEPTANCE:-0}"
@@ -330,6 +335,7 @@ echo "Starting the isolated Antoine/Gazebo profile at ${NATS_URL}..."
   cd "${ANTOINE_RUN_ROOT}"
   source "${RUN_DIR}/logs/native-build-environment.sh"
   dvd_run_owned_child "${PROJECT_ROOT}" "${PROFILE_IDENTITY}" env ANTOINE_GZ_INTERACTIVE_CONTROL=1 \
+    ANTOINE_GZ_FLIGHT_RUN_ID="${RUN_ID}" \
     AGR_SIM="${GAZEBO_SOURCE_SNAPSHOT}" \
     AGR_C2_SCRIPTS="${GAZEBO_SOURCE_SNAPSHOT}/c2-bridge/scripts" \
     ANTOINE_GZ_FLIGHT_GUI=0 \
@@ -439,7 +445,8 @@ fi
 
 if [[ "${HEADLESS_ACCEPTANCE}" == "1" ]]; then
   echo "Running bounded headless MAVLink-to-NATS-to-Antoine/Gazebo acceptance..."
-  ANTOINE_GZ_POSE_FILE="${FLIGHT_RUN_DIR}/gazebo-pose.jsonl" \
+  ANTOINE_GZ_FLIGHT_RUN_ID="${RUN_ID}" \
+    ANTOINE_GZ_POSE_FILE="${FLIGHT_RUN_DIR}/gazebo-pose.jsonl" \
     ANTOINE_GZ_RUN_DIR="${RUN_DIR}" \
     MAVLINK_NATS_URL="${NATS_URL}" MAVLINK_CALLSIGN="${CALLSIGN}" \
     QGC_BRIDGE_PORT="${QGC_BIND_PORT}" MAVLINK_GAZEBO_CHECK_PORT="${GAZEBO_CHECK_PORT}" \
