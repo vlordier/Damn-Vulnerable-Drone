@@ -567,6 +567,22 @@ fn mission_request_int(
     )
 }
 
+fn mission_waypoint_metadata_supported(payload: &[u8], sequence: usize) -> bool {
+    if payload.len() < 37 {
+        return false;
+    }
+    let parameter =
+        |offset: usize| f32::from_le_bytes(payload[offset..offset + 4].try_into().unwrap());
+    let yaw = parameter(12);
+    parameter(0) == 0.0
+        && parameter(4) == 0.0
+        && parameter(8) == 0.0
+        && (yaw == 0.0 || yaw.is_nan())
+        && payload[35] <= 1
+        && (sequence == 0 || payload[35] == 0)
+        && payload[36] == 1
+}
+
 async fn clear_mission(
     client: &async_nats::Client,
     subject: &str,
@@ -1294,8 +1310,6 @@ async fn qgc_to_antoine_nats(
                 || (component != 0 && component != 1)
                 || !matches!(coord_frame, 1 | 3 | 6)
                 || command_id != 16
-                || frame.payload[35] > 1
-                || frame.payload[36] > 1
             {
                 mission_upload = None;
                 let ack = mission_ack(
@@ -1304,6 +1318,18 @@ async fn qgc_to_antoine_nats(
                     frame.system_id,
                     frame.component_id,
                     2,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
+            }
+            if !mission_waypoint_metadata_supported(&frame.payload, seq) {
+                mission_upload = None;
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    1,
                 );
                 gcs.send_to(&ack, source).await?;
                 continue;
@@ -1732,6 +1758,40 @@ mod tests {
         );
         assert!(gazebo.get("type").is_none());
         assert_eq!(gazebo["request_id"], "gazebo-query");
+    }
+
+    #[test]
+    fn mission_waypoint_rejects_execution_fields_the_nats_schema_cannot_represent() {
+        let mut payload = vec![0_u8; 37];
+        payload[35] = 1;
+        payload[36] = 1;
+        assert!(mission_waypoint_metadata_supported(&payload, 0));
+
+        payload[12..16].copy_from_slice(&f32::NAN.to_le_bytes());
+        assert!(mission_waypoint_metadata_supported(&payload, 0));
+
+        for (offset, value) in [(0, 1.0_f32), (4, 1.0), (8, 1.0), (12, 1.0)] {
+            payload.fill(0);
+            payload[35] = 1;
+            payload[36] = 1;
+            payload[offset..offset + 4].copy_from_slice(&value.to_le_bytes());
+            assert!(
+                !mission_waypoint_metadata_supported(&payload, 0),
+                "unsupported mission parameter at offset {offset} was accepted"
+            );
+        }
+
+        payload.fill(0);
+        payload[35] = 1;
+        payload[36] = 0;
+        assert!(!mission_waypoint_metadata_supported(&payload, 0));
+
+        payload[36] = 1;
+        assert!(!mission_waypoint_metadata_supported(&payload, 1));
+
+        payload[35] = 0;
+        assert!(mission_waypoint_metadata_supported(&payload, 1));
+        assert!(!mission_waypoint_metadata_supported(&payload[..36], 0));
     }
 
     #[test]
