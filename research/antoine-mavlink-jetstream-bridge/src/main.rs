@@ -644,6 +644,24 @@ fn mission_query_envelope(config: &Config, request_id: String) -> serde_json::Va
     envelope
 }
 
+fn control_result_matches(value: &serde_json::Value, request_id: &str) -> bool {
+    value["schema"] == "furia.mavlink.control.result"
+        && value["version"] == "1.0.0"
+        && value["requestId"] == request_id
+}
+
+fn control_result_mode_id(value: &serde_json::Value) -> Option<u8> {
+    match value["mode"].as_str()? {
+        "STABILIZE" => Some(0),
+        "GUIDED" => Some(1),
+        "AUTO" => Some(2),
+        "HOLD" => Some(3),
+        "RTL" => Some(4),
+        "LAND" => Some(5),
+        _ => None,
+    }
+}
+
 fn mission_ack(
     sequence: u8,
     system_id: u8,
@@ -748,7 +766,7 @@ async fn clear_mission(
     .ok()
     .and_then(|response| response.ok())
     .and_then(|response| serde_json::from_slice::<serde_json::Value>(&response.payload).ok())
-    .is_some_and(|value| value["requestId"] == request_id && value["accepted"] == true)
+    .is_some_and(|value| control_result_matches(&value, &request_id) && value["accepted"] == true)
 }
 
 fn control_command(frame: &FrameInfo, vehicle_system_id: u8) -> Result<Option<serde_json::Value>> {
@@ -1403,7 +1421,8 @@ async fn qgc_to_antoine_nats(
                             None
                         }
                         Ok(value)
-                            if value["requestId"] != request_id || value["accepted"] != true =>
+                            if !control_result_matches(&value, &request_id)
+                                || value["accepted"] != true =>
                         {
                             tracing::warn!(
                                 request_id,
@@ -1787,7 +1806,9 @@ async fn qgc_to_antoine_nats(
                     .ok()
                     .and_then(|r| r.ok())
                     .and_then(|r| serde_json::from_slice::<serde_json::Value>(&r.payload).ok())
-                    .is_some_and(|v| v["accepted"] == true && v["requestId"] == request_id);
+                    .is_some_and(|v| {
+                        control_result_matches(&v, &request_id) && v["accepted"] == true
+                    });
                     if accepted {
                         uploaded_waypoints = waypoints;
                     }
@@ -1855,29 +1876,27 @@ async fn qgc_to_antoine_nats(
             Ok(Ok(message)) => {
                 tracing::debug!(request_id, response=%String::from_utf8_lossy(&message.payload), "Antoine control response");
                 match serde_json::from_slice::<serde_json::Value>(&message.payload) {
-                    Ok(value) if value["requestId"] == request_id => {
+                    Ok(value) if control_result_matches(&value, &request_id) => {
                         if value["accepted"] != true {
                             tracing::warn!(request_id, reason=?value["reason"], "Antoine rejected MAVLink control request");
                             false
                         } else {
-                            if let Some(armed) = value["armed"].as_bool() {
-                                *armed_state.write().await = armed;
-                            }
-                            if let Some(mode) = value["mode"].as_str() {
-                                let id = match mode {
-                                    "STABILIZE" => Some(0),
-                                    "GUIDED" => Some(1),
-                                    "AUTO" => Some(2),
-                                    "HOLD" => Some(3),
-                                    "RTL" => Some(4),
-                                    "LAND" => Some(5),
-                                    _ => None,
-                                };
-                                if let Some(id) = id {
-                                    *mode_state.write().await = id;
+                            match (value["armed"].as_bool(), control_result_mode_id(&value)) {
+                                (Some(armed), Some(mode_id)) => {
+                                    *armed_state.write().await = armed;
+                                    *mode_state.write().await = mode_id;
+                                    true
+                                }
+                                (armed, mode) => {
+                                    tracing::warn!(
+                                        request_id,
+                                        ?armed,
+                                        ?mode,
+                                        "accepted Antoine result omitted valid state"
+                                    );
+                                    false
                                 }
                             }
-                            true
                         }
                     }
                     _ => false,
@@ -2154,6 +2173,33 @@ mod tests {
         );
         assert!(gazebo.get("type").is_none());
         assert_eq!(gazebo["request_id"], "gazebo-query");
+    }
+
+    #[test]
+    fn control_results_require_the_versioned_envelope_and_supported_state() {
+        let mut result = serde_json::json!({
+            "schema":"furia.mavlink.control.result",
+            "version":"1.0.0",
+            "requestId":"control-1",
+            "accepted":true,
+            "armed":true,
+            "mode":"GUIDED"
+        });
+        assert!(control_result_matches(&result, "control-1"));
+        assert_eq!(control_result_mode_id(&result), Some(1));
+
+        result["schema"] = serde_json::json!("unexpected.result");
+        assert!(!control_result_matches(&result, "control-1"));
+        result["schema"] = serde_json::json!("furia.mavlink.control.result");
+        result["version"] = serde_json::json!("2.0.0");
+        assert!(!control_result_matches(&result, "control-1"));
+        result["version"] = serde_json::json!("1.0.0");
+        assert!(!control_result_matches(&result, "another-request"));
+
+        result["mode"] = serde_json::json!("UNKNOWN");
+        assert_eq!(control_result_mode_id(&result), None);
+        result["armed"] = serde_json::json!("true");
+        assert_eq!(result["armed"].as_bool(), None);
     }
 
     #[test]

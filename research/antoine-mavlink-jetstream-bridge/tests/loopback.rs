@@ -515,6 +515,9 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
                 } else {
                     serde_json::json!({"requestId":request_id,"accepted":true,"armed":true,"mode":"GUIDED","missionUploaded":false,"waypoints":[]})
                 };
+                let mut response = response;
+                response["schema"] = serde_json::json!("furia.mavlink.control.result");
+                response["version"] = serde_json::json!("1.0.0");
                 let _ = reply_client
                     .publish(reply, response.to_string().into())
                     .await;
@@ -1821,6 +1824,8 @@ async fn gazebo_nats_mode_routes_gcs_arm_through_local_authority() -> Result<()>
         .publish(
             reply,
             serde_json::json!({
+                "schema": "wrong.result",
+                "version": "1.0.0",
                 "requestId": request_id,
                 "accepted": true,
                 "armed": true,
@@ -1833,6 +1838,50 @@ async fn gazebo_nats_mode_routes_gcs_arm_through_local_authority() -> Result<()>
     client.flush().await?;
 
     let mut buffer = [0_u8; 512];
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("GCS did not receive rejection for malformed authority result")??;
+    let (_, message) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+        &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+    )?;
+    let mavlink::dialects::common::MavMessage::COMMAND_ACK(ack) = message else {
+        anyhow::bail!("expected MAVLink COMMAND_ACK for malformed authority result");
+    };
+    assert_eq!(
+        ack.result,
+        mavlink::dialects::common::MavResult::MAV_RESULT_DENIED
+    );
+
+    let arm_retry = v2_frame(76, 11, 10, &arm_payload[..32], 152);
+    gcs.send_to(&arm_retry, qgc_bind).await?;
+    let request = timeout(Duration::from_secs(2), controls.next())
+        .await
+        .context("local authority did not receive the retried arm request")?
+        .context("local authority subscription ended")?;
+    let envelope: serde_json::Value = serde_json::from_slice(&request.payload)?;
+    let request_id = envelope["request_id"]
+        .as_str()
+        .context("retried Gazebo authority request omitted its correlation ID")?;
+    let reply = request
+        .reply
+        .context("retried Gazebo authority request omitted its reply subject")?;
+    client
+        .publish(
+            reply,
+            serde_json::json!({
+                "schema": "furia.mavlink.control.result",
+                "version": "1.0.0",
+                "requestId": request_id,
+                "accepted": true,
+                "armed": true,
+                "mode": "GUIDED"
+            })
+            .to_string()
+            .into(),
+        )
+        .await?;
+    client.flush().await?;
+
     let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
         .context("GCS did not receive the authority decision")??;
