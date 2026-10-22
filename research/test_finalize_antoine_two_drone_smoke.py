@@ -52,6 +52,32 @@ class TwoDroneSmokeFinalizerTests(unittest.TestCase):
             self.assertFalse(report["provenanceStable"])
             self.assertEqual(report["status"], "inconclusive")
 
+    def test_missing_or_invalid_comparison_downgrades_without_losing_report(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_run(Path(directory))
+            external = Path(directory) / "external.json"
+            external.write_text('{"stable":true}', encoding="utf-8")
+            (run_dir / "research-provenance-comparison.json").symlink_to(external)
+
+            report, status = finalize(run_dir, 0)
+
+            self.assertEqual(status, 2)
+            self.assertEqual(report["status"], "inconclusive")
+            self.assertFalse(report["provenanceStable"])
+            self.assertTrue((run_dir / "research-two-drone-smoke.json").is_file())
+
+    def test_malformed_comparison_downgrades_to_inconclusive(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = self.make_run(Path(directory))
+            (run_dir / "research-provenance-comparison.json").write_text(
+                "not-json", encoding="utf-8"
+            )
+
+            report, status = finalize(run_dir, 0)
+
+            self.assertEqual(status, 2)
+            self.assertEqual(report["status"], "inconclusive")
+
 
 if __name__ == "__main__":
     unittest.main()

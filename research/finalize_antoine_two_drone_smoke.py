@@ -18,8 +18,14 @@ def finalize(run_dir: Path, capture_exit_code: int) -> tuple[dict, int]:
     if not isinstance(report, dict):
         raise ValueError("two-drone smoke report must be a JSON object")
 
-    comparison_text = read_run_text(run_dir, Path("research-provenance-comparison.json"))
-    comparison = json.loads(comparison_text) if comparison_text else {}
+    try:
+        comparison_text = read_run_text(run_dir, Path("research-provenance-comparison.json"))
+    except (OSError, ValueError):
+        comparison_text = None
+    try:
+        comparison = json.loads(comparison_text) if comparison_text else {}
+    except json.JSONDecodeError:
+        comparison = {}
     if not isinstance(comparison, dict):
         comparison = {}
     stable = capture_exit_code == 0 and comparison.get("stable") is True
