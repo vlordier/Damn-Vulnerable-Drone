@@ -146,6 +146,13 @@ class QGroundControlPatchContractTests(unittest.TestCase):
         self.assertIn('--binary "$$qgc_binary"', makefile)
         self.assertIn('--binary "${QGC_BINARY}"', profile_runner)
 
+    def test_gazebo_launcher_validates_callsign_before_build_work(self) -> None:
+        runner = (ROOT / "research/run-antoine-gazebo-mavlink.sh").read_text(encoding="utf-8")
+        validation = runner.index('CALLSIGN}" =~ ^[A-Za-z0-9_-]{1,64}$')
+        first_snapshot = runner.index("snapshot_antoine_build_inputs.py")
+        self.assertLess(validation, first_snapshot)
+        self.assertIn("one NATS subject token", runner[validation : validation + 250])
+
     def test_antoine_arm_ui_is_scoped_to_supported_vehicle_identity(self) -> None:
         patch = PATCH.read_text(encoding="utf-8")
         self.assertIn(

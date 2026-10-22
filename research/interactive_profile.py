@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from dvd_research.evidence_contract import contains_symlink_component
+from dvd_research.nats_identity import valid_callsign
 from dvd_research.run_files import read_run_text
 
 STOP_TIMEOUT_SECONDS = 5.0
@@ -91,12 +92,8 @@ def process_identity(pid: int) -> str | None:
 
 
 def _callsign_error(callsign: Any) -> str | None:
-    if not isinstance(callsign, str) or not callsign:
-        return "callsign must be a non-empty string"
-    if any(
-        ord(character) < 33 or ord(character) == 127 or character in ".*>" for character in callsign
-    ):
-        return "callsign must be a single NATS subject token"
+    if not valid_callsign(callsign):
+        return "callsign must be 1..64 ASCII letters, digits, '-' or '_' (one NATS subject token)"
     return None
 
 

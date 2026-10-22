@@ -78,7 +78,7 @@ class InteractiveReceiptTests(unittest.TestCase):
                 bridge_port=14661,
             )
 
-            with self.assertRaisesRegex(ValueError, "single non-empty NATS subject token"):
+            with self.assertRaisesRegex(ValueError, "one NATS subject token"):
                 create_receipt(args)
 
             self.assertFalse((run_dir / "interactive-profile.json").exists())

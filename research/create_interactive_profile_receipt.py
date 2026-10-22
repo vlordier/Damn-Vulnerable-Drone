@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from dvd_research.nats_identity import valid_callsign
 from gazebo_version import gazebo_version
 
 
@@ -169,15 +170,10 @@ def snapshot_record(run_dir: Path, snapshot_dir: Path, filename: str, contract: 
 
 def create_receipt(args: argparse.Namespace) -> dict[str, Any]:
     run_dir = args.run_dir.resolve()
-    if (
-        not isinstance(args.callsign, str)
-        or not args.callsign
-        or any(
-            ord(character) < 33 or ord(character) == 127 or character in ".*>"
-            for character in args.callsign
+    if not valid_callsign(args.callsign):
+        raise ValueError(
+            "callsign must be 1..64 ASCII letters, digits, '-' or '_' (one NATS subject token)"
         )
-    ):
-        raise ValueError("callsign must be a single non-empty NATS subject token")
     ports = {
         "nats": args.nats_port,
         "qgcUdpListen": args.qgc_port,

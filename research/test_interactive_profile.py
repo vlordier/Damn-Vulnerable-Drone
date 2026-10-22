@@ -287,7 +287,7 @@ class InteractiveProfileTests(unittest.TestCase):
         run.assert_not_called()
         self.assertEqual(result["status"], "partial")
         self.assertEqual(result["telemetry"]["status"], "invalid")
-        self.assertIn("single NATS subject token", result["telemetry"]["reason"])
+        self.assertIn("one NATS subject token", result["telemetry"]["reason"])
         self.assertEqual(result["bridgeHeartbeat"]["status"], "unverified")
         self.assertEqual(result["qgcPeerRouting"]["status"], "unverified")
         self.assertEqual(result["gazeboPoseRecorder"]["status"], "unverified")
