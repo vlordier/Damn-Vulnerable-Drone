@@ -681,8 +681,8 @@ fn control_command(frame: &FrameInfo, vehicle_system_id: u8) -> Result<Option<se
             if params[..6].iter().any(|value| !empty_or_nan(value)) {
                 bail!("MAV_CMD_NAV_TAKEOFF supports altitude only; pitch, options, yaw, and coordinates must be zero or NaN sentinels");
             }
-            if !p(6).is_finite() || p(6) <= 0.0 {
-                bail!("MAV_CMD_NAV_TAKEOFF altitude must be positive");
+            if !p(6).is_finite() || !(0.4..=3.0).contains(&p(6)) {
+                bail!("MAV_CMD_NAV_TAKEOFF altitude must be within the Antoine SITL envelope 0.4..=3.0 m");
             }
             serde_json::json!({"type":"takeoff","payload":{"altitude_m":p(6)}})
         }
@@ -2193,11 +2193,13 @@ mod tests {
             .contains("supports altitude only"));
 
         payload[16..20].copy_from_slice(&0.0_f32.to_le_bytes());
-        payload[24..28].copy_from_slice(&0.0_f32.to_le_bytes());
-        assert!(control_command(&frame(payload.clone()), 1)
-            .unwrap_err()
-            .to_string()
-            .contains("altitude must be positive"));
+        for altitude in [0.39_f32, 3.01_f32, f32::INFINITY] {
+            payload[24..28].copy_from_slice(&altitude.to_le_bytes());
+            assert!(control_command(&frame(payload.clone()), 1)
+                .unwrap_err()
+                .to_string()
+                .contains("Antoine SITL envelope 0.4..=3.0 m"));
+        }
 
         payload.fill(0);
         payload[28..30].copy_from_slice(&21_u16.to_le_bytes());
