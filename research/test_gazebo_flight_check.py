@@ -278,6 +278,9 @@ class GazeboFailureReportTests(unittest.TestCase):
 
     def test_lost_arm_ack_still_attempts_failure_cleanup(self) -> None:
         cleanup_reports: list[dict] = []
+        failure_to_raise: BaseException = AssertionError(
+            "ARM ACK lost after command may have applied"
+        )
 
         class FakeFlightCheck:
             def __init__(self, *_args):
@@ -292,6 +295,7 @@ class GazeboFailureReportTests(unittest.TestCase):
                 self.telemetry_rejection = None
                 self.requests = []
                 self.arm_command_sent = False
+                self.failure = failure_to_raise
 
             async def start(self) -> None:
                 self.valid_telemetry_received.set()
@@ -325,7 +329,7 @@ class GazeboFailureReportTests(unittest.TestCase):
                 if command == 400 and not self.arm_command_sent:
                     self.arm_command_sent = True
                     self.telemetry["armed"] = True
-                    raise AssertionError("ARM ACK lost after command may have applied")
+                    raise self.failure
 
             async def disarm_after_settle(self, _home) -> None:
                 self.telemetry["armed"] = False
@@ -356,20 +360,23 @@ class GazeboFailureReportTests(unittest.TestCase):
             mock.patch.object(CHECKER, "write_failed_report", side_effect=record_failed_report),
             mock.patch("builtins.print"),
         ):
-            with self.assertRaisesRegex(AssertionError, "ARM ACK lost"):
-                asyncio.run(CHECKER.run_check())
+            for failure in (
+                AssertionError("ARM ACK lost after command may have applied"),
+                asyncio.CancelledError(),
+            ):
+                with self.subTest(failure=type(failure).__name__):
+                    failure_to_raise = failure
+                    with self.assertRaises(type(failure)):
+                        asyncio.run(CHECKER.run_check())
 
-        self.assertEqual(len(cleanup_reports), 1)
-        self.assertEqual(
-            cleanup_reports[0],
-            {
-                "attempted": True,
-                "rtlConfirmed": False,
-                "landConfirmed": True,
-                "disarmConfirmed": True,
-                "errors": {"rtl": "AssertionError: RTL pose confirmation lost"},
-            },
-        )
+        expected_cleanup = {
+            "attempted": True,
+            "rtlConfirmed": False,
+            "landConfirmed": True,
+            "disarmConfirmed": True,
+            "errors": {"rtl": "AssertionError: RTL pose confirmation lost"},
+        }
+        self.assertEqual(cleanup_reports, [expected_cleanup, expected_cleanup])
 
     def test_pose_observation_requires_fresh_finite_timestamped_vehicle_pose(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

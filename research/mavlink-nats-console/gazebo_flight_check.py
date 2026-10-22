@@ -518,6 +518,56 @@ class GazeboFlightCheck(FlightCheck):
         await super().close()
 
 
+async def cleanup_after_failure(
+    check: GazeboFlightCheck,
+    armed: bool,
+    home: tuple[float, float, float] | None,
+) -> dict:
+    cleanup = {
+        "attempted": armed and home is not None,
+        "rtlConfirmed": False,
+        "landConfirmed": False,
+        "disarmConfirmed": False,
+        "errors": {},
+    }
+    if not armed or home is None:
+        return cleanup
+
+    try:
+        await check.request(check.long(20), 20, wait=2)
+        await check.wait_pose(
+            lambda point: math.dist(point, home) <= 0.25, 40, "failure cleanup RTL"
+        )
+        cleanup["rtlConfirmed"] = True
+    except Exception as cleanup_error:
+        cleanup["errors"]["rtl"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
+        print(f"Safety cleanup could not confirm RTL: {cleanup_error}", file=sys.stderr)
+
+    try:
+        await check.request(check.long(21), 21, wait=2)
+        await check.wait_pose(
+            lambda point: math.dist(point, home) <= 0.25, 15, "failure cleanup LAND"
+        )
+        cleanup["landConfirmed"] = True
+    except Exception as cleanup_error:
+        cleanup["errors"]["land"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
+        print(f"Safety cleanup could not confirm LAND: {cleanup_error}", file=sys.stderr)
+
+    try:
+        await check.disarm_after_settle(home)
+        disarmed_state = await check.wait_state(
+            lambda state: state.get("armed") is False,
+            5,
+            "failure cleanup disarmed heartbeat",
+            fresh_fields=("armed",),
+        )
+        cleanup["disarmConfirmed"] = disarmed_state.get("armed") is False
+    except Exception as cleanup_error:
+        cleanup["errors"]["disarm"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
+        print(f"Safety cleanup could not confirm disarm: {cleanup_error}", file=sys.stderr)
+    return cleanup
+
+
 async def run_check() -> dict:
     url = os.environ.get("MAVLINK_NATS_URL", "nats://127.0.0.1:14226")
     callsign = os.environ.get("MAVLINK_CALLSIGN", "drone-1")
@@ -840,50 +890,26 @@ async def run_check() -> dict:
             "validGazeboTelemetryReceived": check.valid_telemetry_received.is_set(),
             "telemetryRejection": getattr(check, "telemetry_rejection", None),
         }
-    except Exception as failure:
-        cleanup = {
-            "attempted": armed and home is not None,
-            "rtlConfirmed": False,
-            "landConfirmed": False,
-            "disarmConfirmed": False,
-            "errors": {},
-        }
-        if armed and home is not None:
+    except BaseException as failure:
+        cleanup_task = asyncio.create_task(cleanup_after_failure(check, armed, home))
+        while True:
             try:
-                await check.request(check.long(20), 20, wait=2)
-                await check.wait_pose(
-                    lambda point: math.dist(point, home) <= 0.25, 40, "failure cleanup RTL"
-                )
-                cleanup["rtlConfirmed"] = True
+                cleanup = await asyncio.shield(cleanup_task)
+                break
+            except asyncio.CancelledError:
+                if cleanup_task.done():
+                    cleanup = cleanup_task.result()
+                    break
+                continue
             except Exception as cleanup_error:
-                cleanup["errors"]["rtl"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
-                print(f"Safety cleanup could not confirm RTL: {cleanup_error}", file=sys.stderr)
-
-            try:
-                await check.request(check.long(21), 21, wait=2)
-                await check.wait_pose(
-                    lambda point: math.dist(point, home) <= 0.25, 15, "failure cleanup LAND"
-                )
-                cleanup["landConfirmed"] = True
-            except Exception as cleanup_error:
-                cleanup["errors"]["land"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
-                print(f"Safety cleanup could not confirm LAND: {cleanup_error}", file=sys.stderr)
-
-            try:
-                await check.disarm_after_settle(home)
-                disarmed_state = await check.wait_state(
-                    lambda state: state.get("armed") is False,
-                    5,
-                    "failure cleanup disarmed heartbeat",
-                    fresh_fields=("armed",),
-                )
-                cleanup["disarmConfirmed"] = disarmed_state.get("armed") is False
-            except Exception as cleanup_error:
-                cleanup["errors"]["disarm"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
-                print(
-                    f"Safety cleanup could not confirm disarm: {cleanup_error}",
-                    file=sys.stderr,
-                )
+                cleanup = {
+                    "attempted": armed and home is not None,
+                    "rtlConfirmed": False,
+                    "landConfirmed": False,
+                    "disarmConfirmed": False,
+                    "errors": {"cleanup": f"{type(cleanup_error).__name__}: {cleanup_error}"},
+                }
+                break
         report_path = write_failed_report(run_directory, callsign, failure, cleanup, check)
         print(f"Gazebo MAVLink failure report: {report_path}", file=sys.stderr)
         raise
