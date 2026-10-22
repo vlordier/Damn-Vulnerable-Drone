@@ -240,6 +240,51 @@ class PairArtifactTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "changed after report generation"):
                 verify_artifacts(run_dir, report)
 
+    def test_rejects_required_evidence_through_symlinked_parent_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run-a"
+            run_dir.mkdir()
+            names = [
+                *REQUIRED_ARTIFACTS,
+                "research-profile.env",
+                "research-host-context-pre.json",
+                "research-host-context-during.jsonl",
+                "research-host-context-post.json",
+                "research-swarm-config.json",
+                "research-swarm-plan.json",
+                "flight-evidence-drone-1.json",
+                "gz-flight-proof-report-drone-1.json",
+                "logs/antoine-controller-drone-1.log",
+            ]
+            artifacts = {}
+            for name in names:
+                path = run_dir / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("raw evidence\n", encoding="utf-8")
+                artifacts[name] = {
+                    "available": True,
+                    "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                }
+            external_logs = root / "external-logs"
+            (run_dir / "logs").rename(external_logs)
+            (run_dir / "logs").symlink_to(external_logs, target_is_directory=True)
+            report = {"evidenceArtifacts": artifacts, "vehicles": {"drone-1": {}}}
+
+            with self.assertRaisesRegex(ValueError, "raw evidence is missing"):
+                verify_artifacts(run_dir, report)
+
+    def test_rejects_symlinked_run_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "run-a"
+            run_dir.mkdir()
+            alias = root / "run-alias"
+            alias.symlink_to(run_dir, target_is_directory=True)
+
+            with self.assertRaisesRegex(ValueError, "symlinked run directory"):
+                verify_artifacts(alias, {"evidenceArtifacts": {}, "vehicles": {}})
+
     def test_host_context_records_pre_during_and_post_load_on_the_same_machine(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run-a"

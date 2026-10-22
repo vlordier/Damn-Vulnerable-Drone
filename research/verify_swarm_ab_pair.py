@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from dvd_research.evidence_contract import contains_symlink_component
 from summarize_antoine_two_drone_flight import (
     load_host_context_samples,
     load_swarm_config,
@@ -42,6 +43,8 @@ def is_sha256(value: Any) -> bool:
 
 
 def read_object(path: Path, description: str) -> dict[str, Any]:
+    if path.is_symlink():
+        raise ValueError(f"cannot read linked {description}: {path}")
     try:
         value = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
@@ -126,7 +129,13 @@ def verify_provenance(baseline: dict[str, Any], variant: dict[str, Any]) -> None
 
 
 def verify_artifacts(run_dir: Path, report: dict[str, Any]) -> None:
-    artifacts = report["evidenceArtifacts"]
+    run_dir = Path(run_dir)
+    if run_dir.is_symlink():
+        raise ValueError("refusing to verify artifacts through a symlinked run directory")
+    run_dir = run_dir.resolve(strict=True)
+    artifacts = report.get("evidenceArtifacts")
+    if not isinstance(artifacts, dict):
+        raise ValueError(f"artifact inventory is missing: {run_dir.name}")
     required = [
         *REQUIRED_ARTIFACTS,
         "research-profile.env",
@@ -150,10 +159,16 @@ def verify_artifacts(run_dir: Path, report: dict[str, Any]) -> None:
         if (
             not isinstance(entry, dict)
             or entry.get("available") is not True
-            or path.is_symlink()
+            or contains_symlink_component(run_dir, Path(name))
             or not path.is_file()
         ):
             raise ValueError(f"required raw evidence is missing: {run_dir.name}/{name}")
+        try:
+            path.resolve(strict=True).relative_to(run_dir)
+        except (OSError, ValueError) as error:
+            raise ValueError(
+                f"required raw evidence escapes run directory: {run_dir.name}/{name}"
+            ) from error
         digest = hashlib.sha256()
         with path.open("rb") as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -373,7 +388,12 @@ def summarize_outcome(report: dict[str, Any]) -> dict[str, Any]:
 def verify_pair(baseline_dir: Path, variant_dir: Path, factor: str) -> dict[str, Any]:
     if factor not in FACTORS:
         raise ValueError(f"unsupported factor: {factor}")
-    baseline_dir, variant_dir = baseline_dir.resolve(), variant_dir.resolve()
+    baseline_dir, variant_dir = Path(baseline_dir), Path(variant_dir)
+    if baseline_dir.is_symlink() or variant_dir.is_symlink():
+        raise ValueError("baseline and variant run directories cannot be symlinks")
+    baseline_dir, variant_dir = baseline_dir.resolve(strict=True), variant_dir.resolve(strict=True)
+    if not baseline_dir.is_dir() or not variant_dir.is_dir():
+        raise ValueError("baseline and variant must be run directories")
     if baseline_dir == variant_dir:
         raise ValueError("baseline and variant must be different run directories")
     baseline_config_raw = read_object(
