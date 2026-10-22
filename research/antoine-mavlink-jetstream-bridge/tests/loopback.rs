@@ -1320,10 +1320,37 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
     );
     let clear_all = v2_frame(45, 31, 255, &[1, 1, 0], 232);
     gcs.send_to(&clear_all, qgc_bind).await?;
-    let (_length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("pending upload rejection ACK timeout")??;
+    assert_eq!(buffer[7], 47, "pending upload should be rejected first");
+    let (_, pending_upload_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(pending_upload_ack) =
+        pending_upload_response
+    else {
+        anyhow::bail!("expected MISSION_ACK rejecting pending upload before clear");
+    };
+    assert_eq!(
+        pending_upload_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
         .await
         .context("mission clear response timeout")??;
     assert_eq!(buffer[7], 47, "MISSION_CLEAR_ALL should be acknowledged");
+    let (_, clear_response) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+        &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+    )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(clear_ack) = clear_response else {
+        anyhow::bail!("expected MISSION_ACK for MISSION_CLEAR_ALL");
+    };
+    assert_eq!(
+        clear_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ACCEPTED
+    );
     let _ = timeout(Duration::from_secs(2), reply_rx.recv())
         .await
         .context("mission clear request was not sent to Antoine")?;

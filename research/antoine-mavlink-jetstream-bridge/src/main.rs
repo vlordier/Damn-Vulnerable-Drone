@@ -76,6 +76,25 @@ impl PendingMissionUpload {
     }
 }
 
+async fn reject_pending_mission_upload(
+    gcs: &tokio::net::UdpSocket,
+    pending: &mut Option<PendingMissionUpload>,
+    vehicle_system_id: u8,
+    sequence: u8,
+) -> Result<()> {
+    if let Some(upload) = pending.take() {
+        let ack = mission_ack(
+            sequence.wrapping_add(1),
+            vehicle_system_id,
+            upload.system_id,
+            upload.component_id,
+            1,
+        );
+        gcs.send_to(&ack, upload.source).await?;
+    }
+    Ok(())
+}
+
 fn x25_checksum(bytes: &[u8], crc_extra: u8) -> u16 {
     bytes
         .iter()
@@ -1125,7 +1144,13 @@ async fn qgc_to_antoine_nats(
                 continue;
             }
             if count == 0 {
-                mission_upload = None;
+                reject_pending_mission_upload(
+                    &gcs,
+                    &mut mission_upload,
+                    config.system_id,
+                    frame.sequence,
+                )
+                .await?;
                 let accepted = clear_mission(
                     &client,
                     &command_subject,
@@ -1147,16 +1172,13 @@ async fn qgc_to_antoine_nats(
                 gcs.send_to(&ack, source).await?;
                 continue;
             }
-            if let Some(old_upload) = mission_upload.take() {
-                let ack = mission_ack(
-                    frame.sequence.wrapping_add(1),
-                    config.system_id,
-                    old_upload.system_id,
-                    old_upload.component_id,
-                    1,
-                );
-                gcs.send_to(&ack, old_upload.source).await?;
-            }
+            reject_pending_mission_upload(
+                &gcs,
+                &mut mission_upload,
+                config.system_id,
+                frame.sequence,
+            )
+            .await?;
             mission_upload = Some(PendingMissionUpload {
                 source,
                 system_id: frame.system_id,
@@ -1202,7 +1224,13 @@ async fn qgc_to_antoine_nats(
                 gcs.send_to(&ack, source).await?;
                 continue;
             }
-            mission_upload = None;
+            reject_pending_mission_upload(
+                &gcs,
+                &mut mission_upload,
+                config.system_id,
+                frame.sequence,
+            )
+            .await?;
             let accepted = clear_mission(
                 &client,
                 &command_subject,
@@ -1254,6 +1282,13 @@ async fn qgc_to_antoine_nats(
                 gcs.send_to(&ack, source).await?;
                 continue;
             }
+            reject_pending_mission_upload(
+                &gcs,
+                &mut mission_upload,
+                config.system_id,
+                frame.sequence,
+            )
+            .await?;
             let request_id = format!(
                 "{}-mission-query-{}-{}",
                 frame.system_id,
@@ -1397,6 +1432,13 @@ async fn qgc_to_antoine_nats(
                 gcs.send_to(&ack, source).await?;
                 continue;
             }
+            reject_pending_mission_upload(
+                &gcs,
+                &mut mission_upload,
+                config.system_id,
+                frame.sequence,
+            )
+            .await?;
             let item_seq = u16::from_le_bytes([frame.payload[0], frame.payload[1]]) as usize;
             if let Some(point) = uploaded_waypoints.get(item_seq) {
                 let cos_lat = config.home_lat_deg.to_radians().cos();
