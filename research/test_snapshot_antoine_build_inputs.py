@@ -128,6 +128,40 @@ class AntoineSourceSnapshotTests(unittest.TestCase):
             )
             self.assertEqual(second["sourcePatch"]["status"], "already-present")
 
+    def test_concatenated_patch_sections_keep_distinct_file_targets(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source, wire, target = root / "source", root / "wire", root / "run/source"
+            populate(source, wire)
+            sitl_file = source / "sitl/antoine-sitl/src/lib.rs"
+            runner_file = source / "scripts/gz_flight_proof.sh"
+            sitl_file.write_text("pub fn value() {}\n", encoding="utf-8")
+            runner_file.write_text("#!/bin/sh\nold_runner_gate=1\n", encoding="utf-8")
+            patch = root / "combined.patch"
+            patch.write_text(
+                "diff --git a/sitl/antoine-sitl/src/lib.rs b/sitl/antoine-sitl/src/lib.rs\n"
+                "--- a/sitl/antoine-sitl/src/lib.rs\n"
+                "+++ b/sitl/antoine-sitl/src/lib.rs\n"
+                "@@ -1 +1 @@\n-pub fn value() {}\n+pub fn improved() {}\n"
+                "diff --git a/scripts/gz_flight_proof.sh b/scripts/gz_flight_proof.sh\n"
+                "--- a/scripts/gz_flight_proof.sh\n"
+                "+++ b/scripts/gz_flight_proof.sh\n"
+                "@@ -2 +2 @@\n-old_runner_gate=1\n+new_runner_gate=1\n",
+                encoding="utf-8",
+            )
+
+            receipt = snapshot.create_snapshot(source, wire, target, source_patch=patch)
+
+            self.assertEqual(receipt["sourcePatch"]["status"], "applied")
+            self.assertEqual(
+                (target / "antoine/sitl/antoine-sitl/src/lib.rs").read_text(encoding="utf-8"),
+                "pub fn improved() {}\n",
+            )
+            self.assertEqual(
+                (target / "antoine/scripts/gz_flight_proof.sh").read_text(encoding="utf-8"),
+                "#!/bin/sh\nnew_runner_gate=1\n",
+            )
+
     def test_offset_patch_does_not_leave_unrecorded_backup_files(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
