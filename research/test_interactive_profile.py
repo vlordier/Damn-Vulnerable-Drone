@@ -315,6 +315,24 @@ class InteractiveProfileTests(unittest.TestCase):
         self.assertIn("Gazebo protocol", result["reason"])
         read_messages.assert_called_once_with(14226, "furia.telemetry.drone-1")
 
+    def test_sample_telemetry_rejects_nats_log_through_symlinked_directory(self) -> None:
+        flight_directory = Path(self.temp.name) / "flight-proof"
+        external_logs = Path(self.temp.name) / "external-logs"
+        (flight_directory / "logs").rename(external_logs)
+        (external_logs / "nats.log").write_text(
+            "Listening for client connections on 127.0.0.1:14226\nServer is ready\n",
+            encoding="utf-8",
+        )
+        (flight_directory / "logs").symlink_to(external_logs, target_is_directory=True)
+        with patch("interactive_profile.read_nats_messages") as read_messages:
+            result = interactive_profile.sample_telemetry(
+                json.loads(self.receipt.read_text(encoding="utf-8"))
+            )
+
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIn("NATS log is unavailable", result["reason"])
+        read_messages.assert_not_called()
+
     def test_stop_rejects_unsupported_receipt_before_process_inspection(self) -> None:
         receipt = json.loads(self.receipt.read_text(encoding="utf-8"))
         receipt["version"] = "9.9.9"

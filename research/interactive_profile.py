@@ -18,6 +18,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from dvd_research.evidence_contract import contains_symlink_component
+
 STOP_TIMEOUT_SECONDS = 5.0
 STOP_POLL_SECONDS = 0.1
 SUPERVISOR_CLEANUP_GRACE_SECONDS = 2.0
@@ -118,7 +120,7 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
             "reason": callsign_error or "receipt lacks valid run or NATS port",
         }
     run_path = Path(run_directory)
-    if run_path.name != run_id or not run_path.is_dir():
+    if run_path.is_symlink() or run_path.name != run_id or not run_path.is_dir():
         return {
             "status": "unavailable",
             "reason": "run directory is missing or does not match runId",
@@ -152,6 +154,12 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
             "reason": "flight evidence directory is outside the run directory",
         }
     nats_log = flight_path / "logs" / "nats.log"
+    try:
+        nats_log_relative = nats_log.relative_to(resolved_run)
+    except ValueError:
+        return {"status": "invalid", "reason": "run-owned NATS log is outside the run directory"}
+    if contains_symlink_component(resolved_run, nats_log_relative) or not nats_log.is_file():
+        return {"status": "unavailable", "reason": "run-owned NATS log is unavailable"}
     try:
         log = nats_log.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -514,7 +522,7 @@ def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(run_directory, str) or not isinstance(run_id, str):
         return {"status": "unavailable", "reason": "receipt lacks a run directory identity"}
     run_path = Path(run_directory)
-    if run_path.name != run_id or not run_path.is_dir():
+    if run_path.is_symlink() or run_path.name != run_id or not run_path.is_dir():
         return {"status": "unavailable", "reason": "run directory is missing or mismatched"}
     expected_flight_path = (run_path / "flight-proof").resolve()
     if isinstance(flight_directory, str) and flight_directory:
@@ -541,7 +549,10 @@ def sample_gazebo_pose_recorder(receipt: dict[str, Any]) -> dict[str, Any]:
     if flight_path != resolved_run and not flight_path.is_relative_to(resolved_run):
         return {"status": "invalid", "reason": "flight evidence directory is outside the run"}
     pose_path = flight_path / "gazebo-pose.jsonl"
-    if pose_path.is_symlink() or not pose_path.is_file():
+    if (
+        contains_symlink_component(resolved_run, pose_path.relative_to(resolved_run))
+        or not pose_path.is_file()
+    ):
         return {"status": "unavailable", "reason": "run-owned Gazebo pose stream is missing"}
     try:
         stat = pose_path.stat()
