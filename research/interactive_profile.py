@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from dvd_research.evidence_contract import contains_symlink_component
+from dvd_research.run_files import read_run_text
 
 STOP_TIMEOUT_SECONDS = 5.0
 STOP_POLL_SECONDS = 0.1
@@ -153,16 +154,11 @@ def sample_telemetry(receipt: dict[str, Any]) -> dict[str, Any]:
             "status": "invalid",
             "reason": "flight evidence directory is outside the run directory",
         }
-    nats_log = flight_path / "logs" / "nats.log"
     try:
-        nats_log_relative = nats_log.relative_to(resolved_run)
-    except ValueError:
-        return {"status": "invalid", "reason": "run-owned NATS log is outside the run directory"}
-    if contains_symlink_component(resolved_run, nats_log_relative) or not nats_log.is_file():
+        log = read_run_text(flight_path, Path("logs/nats.log"), errors="replace")
+    except (OSError, ValueError):
         return {"status": "unavailable", "reason": "run-owned NATS log is unavailable"}
-    try:
-        log = nats_log.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    if log is None:
         return {"status": "unavailable", "reason": "run-owned NATS log is unavailable"}
     if (
         f"Listening for client connections on 127.0.0.1:{port}" not in log
@@ -312,15 +308,10 @@ def _verified_run_nats_log(
             }
     nats_log = expected_flight / "logs" / "nats.log"
     try:
-        relative_log = nats_log.relative_to(resolved_run)
-        if (
-            contains_symlink_component(resolved_run, relative_log)
-            or not nats_log.is_file()
-            or not nats_log.resolve(strict=True).is_relative_to(resolved_run)
-        ):
-            raise ValueError("linked or external log")
-        log = nats_log.read_text(encoding="utf-8", errors="replace")
+        log = read_run_text(expected_flight, Path("logs/nats.log"), errors="replace")
     except (OSError, ValueError, RuntimeError):
+        return None, {"status": "unverified", "reason": "run-owned NATS log is unavailable"}
+    if log is None:
         return None, {"status": "unverified", "reason": "run-owned NATS log is unavailable"}
     if (
         f"Listening for client connections on 127.0.0.1:{port}" not in log
