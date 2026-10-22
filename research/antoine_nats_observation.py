@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from dvd_research.run_nats import read_run_nats_log
+
 SUBJECTS = {
     "mission_setpoint": "furia.gzsitl.setpoint.drone-1",
     "execution_grant": "furia.prime.execution-grant.drone-1",
@@ -120,15 +122,11 @@ def main() -> int:
     ):
         raise SystemExit("refusing any endpoint except this run's explicit IPv4 loopback NATS URL")
 
-    nats_log = args.run_dir / "logs" / "nats.log"
     expected_ready_line = f"Listening for client connections on 127.0.0.1:{port}"
     ready_deadline = time.monotonic() + 180
     run_broker_ready = False
     while time.monotonic() < ready_deadline:
-        try:
-            broker_log = nats_log.read_text(errors="replace")
-        except OSError:
-            broker_log = ""
+        broker_log = read_run_nats_log(args.run_dir) or ""
         if expected_ready_line in broker_log and "Server is ready" in broker_log:
             run_broker_ready = True
             break

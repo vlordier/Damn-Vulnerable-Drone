@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from dvd_research.run_nats import read_run_nats_log
 from dvd_research.sensor_fixture import build_case
 
 SUBJECT = "brenta.sensor.gps.drone-1"
@@ -164,13 +165,9 @@ def main() -> int:
     }
     try:
         deadline = time.monotonic() + 100
-        nats_log = run_dir / "logs" / "nats.log"
         ready_line = f"Listening for client connections on 127.0.0.1:{parsed.port}"
         while time.monotonic() < deadline:
-            try:
-                broker_log = nats_log.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                broker_log = ""
+            broker_log = read_run_nats_log(run_dir) or ""
             if ready_line in broker_log and "Server is ready" in broker_log:
                 break
             time.sleep(0.1)

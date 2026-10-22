@@ -9,6 +9,8 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from dvd_research.run_nats import read_run_nats_log
+
 
 def validate_server(server: str, run_dir: Path, deadline: float) -> None:
     parsed = urlsplit(server)
@@ -23,13 +25,9 @@ def validate_server(server: str, run_dir: Path, deadline: float) -> None:
         or parsed.fragment
     ):
         raise ValueError("refusing any NATS endpoint except an explicit IPv4 loopback URL")
-    log_path = run_dir / "logs" / "nats.log"
     ready_line = f"Listening for client connections on 127.0.0.1:{parsed.port}"
     while time.monotonic() < deadline:
-        try:
-            log = log_path.read_text(errors="replace")
-        except OSError:
-            log = ""
+        log = read_run_nats_log(run_dir) or ""
         if ready_line in log and "Server is ready" in log:
             return
         time.sleep(0.1)
