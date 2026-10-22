@@ -7,7 +7,7 @@ RESEARCH_PYTHON := $(UV) run --project research
 RESEARCH_FLIGHT := research/run-antoine-two-drone-flight.sh
 SWARM_RUNNER = RUSTUP_TOOLCHAIN="$(RUSTUP_TOOLCHAIN)" ANTOINE_GZ_CARGO_TARGET_DIR="$(ANTOINE_GZ_CARGO_TARGET_DIR)" ANTOINE_SWARM_MIN_FREE_MIB="$(ANTOINE_SWARM_MIN_FREE_MIB)" ANTOINE_SWARM_MAX_LOAD_PER_CPU="$(ANTOINE_SWARM_MAX_LOAD_PER_CPU)" ./$(RESEARCH_FLIGHT)
 SWARM_LIVE_SECONDS ?= 75
-LAB_SHELL_SCRIPTS := research/run-antoine-two-drone-flight.sh research/run-antoine-gazebo-mavlink.sh research/check-free-space.sh scripts/run-antoine.sh scripts/run-qgc-antoine.sh
+LAB_SHELL_SCRIPTS := $(wildcard research/*.sh) scripts/run-antoine.sh scripts/run-qgc-antoine.sh
 ANTOINE_BRIDGE_DIR ?= $(CURDIR)/research/antoine-mavlink-jetstream-bridge
 ANTOINE_BRIDGE_TARGET_DIR ?= /tmp/dvd-antoine-bridge-target
 ANTOINE_QGC_DIR ?= $(HOME)/Work/antoine-qgroundcontrol
