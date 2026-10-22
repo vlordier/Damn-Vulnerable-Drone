@@ -9,8 +9,10 @@ import unittest
 from pathlib import Path
 
 from build_evidence_manifest import build as build_evidence_manifest
+from build_evidence_manifest import write_manifest
 from dvd_research.evidence_contract import classify_measurements
 from dvd_research.scenario_catalog import load_scenario_catalog
+from export_research_csv import rows as export_research_rows
 
 ROOT = Path(__file__).resolve().parents[1]
 FIXTURES = (
@@ -355,12 +357,16 @@ class EvidenceClassifierParityTests(unittest.TestCase):
                 )
 
                 manifest = build_evidence_manifest(run_dir)
+                write_manifest(run_dir, manifest)
 
                 self.assertEqual(manifest["measurementClassification"], expected_classification)
                 self.assertEqual(
                     manifest["measurements"]["cameraRunScopeMatches"],
                     report_partition == "camera-run",
                 )
+                csv_row = next(export_research_rows(run_dir.parent))
+                self.assertEqual(csv_row["cameraRunScopeMatches"], report_partition == "camera-run")
+                self.assertEqual(csv_row["runStatus"], expected_classification)
 
     def test_manifest_does_not_qualify_pass_status_with_failed_attitude_gate(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
