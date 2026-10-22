@@ -12,7 +12,12 @@ from antoine_setpoint_mutation import (
     read_audit_rows,
     wait_for_controller_ready,
 )
-from dvd_research.run_files import read_run_text, resolve_run_file, write_run_json
+from dvd_research.run_files import (
+    read_run_tail_text,
+    read_run_text,
+    resolve_run_file,
+    write_run_json,
+)
 
 
 class RunFilesTests(unittest.TestCase):
@@ -25,6 +30,14 @@ class RunFilesTests(unittest.TestCase):
 
             self.assertEqual(read_run_text(run_dir, Path("logs/controller.log")), "ready\n")
             self.assertIsNone(read_run_text(run_dir, Path("logs/not-ready.log")))
+
+    def test_bounded_tail_discards_a_partial_first_record(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            run_dir.mkdir()
+            (run_dir / "stream.jsonl").write_text("first\nsecond\nthird\n", encoding="utf-8")
+
+            self.assertEqual(read_run_tail_text(run_dir, Path("stream.jsonl"), 10), "third\n")
 
     def test_rejects_linked_run_root_parent_and_file(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

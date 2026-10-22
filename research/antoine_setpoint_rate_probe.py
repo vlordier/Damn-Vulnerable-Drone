@@ -13,10 +13,13 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from dvd_research.run_files import read_run_text, write_run_json
+from dvd_research.run_nats import validate_run_nats_endpoint
 from swarm_cross_vehicle_probe import (
     pose_window_at_target,
     read_one_json,
     target_plan,
+    validate_run_evidence_paths,
     vehicle_effect_snapshot,
 )
 
@@ -141,9 +144,16 @@ async def run(args: argparse.Namespace) -> dict:
     count = validate_limits(args.rate_hz, args.duration, args.max_messages)
     if args.source == args.target:
         raise ValueError("source and target callsigns must differ")
+    validate_run_evidence_paths(args.run_dir, args.target)
+    validate_run_nats_endpoint(
+        args.server, args.run_dir, time.monotonic() + args.wait_timeout_seconds
+    )
     run_dir = args.run_dir.resolve(strict=True)
     model, target_position = target_plan(run_dir, args.target)
-    config = json.loads((run_dir / "research-swarm-config.json").read_text(encoding="utf-8"))
+    config_text = read_run_text(run_dir, Path("research-swarm-config.json"))
+    if config_text is None:
+        raise ValueError("run-owned swarm config is unavailable")
+    config = json.loads(config_text)
     models = {
         item["callsign"]: item["model"]
         for item in config.get("vehicles", [])
@@ -154,7 +164,7 @@ async def run(args: argparse.Namespace) -> dict:
     if args.source not in models or args.target not in models or len(models) < 2:
         raise ValueError("run config must bind source and target callsigns to distinct models")
     pose_path = run_dir / "gazebo-pose.jsonl"
-    controller_log = run_dir / "logs" / f"antoine-controller-{args.target}.log"
+    controller_log = Path("logs") / f"antoine-controller-{args.target}.log"
     deadline = time.monotonic() + args.wait_timeout_seconds
     pose_window = None
     while time.monotonic() < deadline:
@@ -166,7 +176,7 @@ async def run(args: argparse.Namespace) -> dict:
         raise TimeoutError("independent Gazebo pose did not hold the target for the required dwell")
 
     before_effect = vehicle_effect_snapshot(run_dir, models)
-    before_log = controller_log.read_text(encoding="utf-8", errors="replace")
+    before_log = read_run_text(run_dir, controller_log, errors="replace") or ""
     subject = f"furia.gzsitl.setpoint.{args.target}"
     original = capture_setpoint(args.server, subject)
     sequence = original["sequence"] + SEQUENCE_HEADROOM
@@ -185,7 +195,7 @@ async def run(args: argparse.Namespace) -> dict:
     rejected: set[int] = set()
     accepted = set()
     while time.monotonic() < observation_deadline and len(rejected) < count:
-        after_text = controller_log.read_text(encoding="utf-8", errors="replace")
+        after_text = read_run_text(run_dir, controller_log, errors="replace") or ""
         decision_lines = after_text[len(before_log) :].splitlines()
         rejected = rejection_sequences(
             decision_lines, args.target, args.source, expected, payload_hashes
@@ -264,8 +274,7 @@ def main() -> int:
             "limits": "No message is sent unless the explicit loopback broker, run config, and live pose gates pass.",
         }
     args.run_dir.mkdir(parents=True, exist_ok=True)
-    output = args.run_dir / "research-swarm-rate-disruption.json"
-    output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    output = write_run_json(args.run_dir, Path("research-swarm-rate-disruption.json"), report)
     fault = {
         "contract": "damn-vulnerable-drone.antoine-swarm-fault",
         "version": "1.0.0",
@@ -280,9 +289,7 @@ def main() -> int:
         "limits": report.get("limits"),
         "evidence": "research-swarm-rate-disruption.json",
     }
-    (args.run_dir / "research-swarm-fault.json").write_text(
-        json.dumps(fault, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    write_run_json(args.run_dir, Path("research-swarm-fault.json"), fault)
     print(output)
     print(
         json.dumps(

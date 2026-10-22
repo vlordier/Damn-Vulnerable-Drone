@@ -14,6 +14,9 @@ import time
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from dvd_research.run_files import read_run_tail_text, read_run_text, resolve_run_file
+from dvd_research.run_nats import validate_run_nats_endpoint
+
 SUPPORTED_MUTATIONS = {"wrong-callsign", "wrong-task", "wrong-target", "stale-run"}
 MAX_PROBE_MESSAGES = 1
 MAX_POSE_BYTES = 512_000
@@ -150,7 +153,10 @@ def mutate_setpoint(
 
 
 def target_plan(run_dir: Path, callsign: str) -> tuple[str, list[float]]:
-    config = json.loads((run_dir / "research-swarm-config.json").read_text(encoding="utf-8"))
+    config_text = read_run_text(run_dir, Path("research-swarm-config.json"))
+    if config_text is None:
+        raise ValueError("run-owned swarm config is unavailable")
+    config = json.loads(config_text)
     if not isinstance(config, dict) or not isinstance(config.get("vehicles"), list):
         raise ValueError("swarm config must contain a vehicle roster")
     matches = [
@@ -205,7 +211,9 @@ def validate_probe_roster(models: dict[str, str], source: str, target: str) -> N
 
 
 def validate_run_evidence_paths(run_dir: Path, target: str) -> None:
-    """Reject run evidence paths that resolve through symlinks outside the run."""
+    """Reject symlinked run evidence paths before using them as measurements."""
+    if run_dir.is_symlink():
+        raise ValueError("selected run directory is a symlink")
     root = run_dir.resolve(strict=True)
     if not root.is_dir():
         raise ValueError("selected run path is not a directory")
@@ -217,11 +225,10 @@ def validate_run_evidence_paths(run_dir: Path, target: str) -> None:
     )
     for relative_path in paths:
         try:
-            resolved = (root / relative_path).resolve(strict=False)
-            resolved.relative_to(root)
+            resolve_run_file(root, relative_path)
         except (OSError, RuntimeError, ValueError) as error:
             raise ValueError(
-                f"run evidence path escapes the selected run: {relative_path}"
+                f"run evidence path is unsafe in the selected run: {relative_path}"
             ) from error
 
 
@@ -261,8 +268,6 @@ def pose_simulation_time(stamp: object) -> float | None:
 
 def vehicle_effect_snapshot(run_dir: Path, models: dict[str, str]) -> dict:
     """Capture bounded independent pose and applier state for every vehicle."""
-    pose_path = run_dir / "gazebo-pose.jsonl"
-    actuator_path = run_dir / "applier-neutral" / "actuator-output.jsonl"
     result = {
         "observedAtUnixMs": time.time_ns() // 1_000_000,
         "poseSimulationTimeSeconds": None,
@@ -271,14 +276,10 @@ def vehicle_effect_snapshot(run_dir: Path, models: dict[str, str]) -> dict:
         "missing": [],
     }
     try:
-        with pose_path.open("rb") as stream:
-            size = pose_path.stat().st_size
-            stream.seek(max(0, size - MAX_POSE_BYTES))
-            if stream.tell():
-                stream.readline()
-            lines = stream.read().decode("utf-8", errors="replace").splitlines()
+        pose_text = read_run_tail_text(run_dir, Path("gazebo-pose.jsonl"), MAX_POSE_BYTES)
     except OSError:
-        lines = []
+        pose_text = None
+    lines = (pose_text or "").splitlines()
     wanted_models = set(models.values())
     for line in reversed(lines):
         try:
@@ -314,14 +315,12 @@ def vehicle_effect_snapshot(run_dir: Path, models: dict[str, str]) -> dict:
         if len(result["poseByVehicle"]) == len(models):
             break
     try:
-        with actuator_path.open("rb") as stream:
-            size = actuator_path.stat().st_size
-            stream.seek(max(0, size - MAX_ACTUATOR_BYTES))
-            if stream.tell():
-                stream.readline()
-            actuator_lines = stream.read().decode("utf-8", errors="replace").splitlines()
+        actuator_text = read_run_tail_text(
+            run_dir, Path("applier-neutral/actuator-output.jsonl"), MAX_ACTUATOR_BYTES
+        )
     except OSError:
-        actuator_lines = []
+        actuator_text = None
+    actuator_lines = (actuator_text or "").splitlines()
     wanted_callsigns = set(models)
     for line in reversed(actuator_lines):
         try:
@@ -456,13 +455,12 @@ def pose_window_at_target(
 ) -> dict | None:
     """Return an independently measured waypoint dwell using flight thresholds."""
     try:
-        with pose_path.open("rb") as stream:
-            stream.seek(max(0, pose_path.stat().st_size - MAX_POSE_BYTES))
-            if stream.tell():
-                stream.readline()  # discard a possible partial first record
-            lines = stream.read().decode("utf-8", errors="replace").splitlines()
+        pose_text = read_run_tail_text(pose_path.parent, Path(pose_path.name), MAX_POSE_BYTES)
     except OSError:
         return None
+    if pose_text is None:
+        return None
+    lines = pose_text.splitlines()
     samples = []
     for line in lines:
         try:
@@ -634,10 +632,11 @@ def main() -> int:
         raise SystemExit("probe requires exactly one bounded message")
     if not 1 <= args.wait_timeout_seconds <= 300:
         raise SystemExit("pose wait timeout must be in 1..300 seconds")
+    if args.run_dir.is_symlink():
+        raise SystemExit("selected run directory is a symlink")
 
-    run_dir = args.run_dir.resolve()
+    run_dir = args.run_dir.resolve(strict=True)
     subject = f"furia.gzsitl.setpoint.{args.target}"
-    controller_log = run_dir / "logs" / f"antoine-controller-{args.target}.log"
     pose_path = run_dir / "gazebo-pose.jsonl"
     report = {
         "contract": "damn-vulnerable-drone.swarm-cross-vehicle-probe",
@@ -661,10 +660,14 @@ def main() -> int:
             report.update({"mutationSupport": support, "status": "inconclusive"})
         else:
             validate_run_evidence_paths(run_dir, args.target)
-            model, target = target_plan(run_dir, args.target)
-            config = json.loads(
-                (run_dir / "research-swarm-config.json").read_text(encoding="utf-8")
+            validate_run_nats_endpoint(
+                args.server, run_dir, time.monotonic() + args.wait_timeout_seconds
             )
+            model, target = target_plan(run_dir, args.target)
+            config_text = read_run_text(run_dir, Path("research-swarm-config.json"))
+            if config_text is None:
+                raise ValueError("run-owned swarm config is unavailable")
+            config = json.loads(config_text)
             models = vehicle_models_from_config(config)
             validate_probe_roster(models, args.source, args.target)
             pose_deadline = time.monotonic() + args.wait_timeout_seconds
@@ -682,7 +685,14 @@ def main() -> int:
             effect_before = vehicle_effect_snapshot(run_dir, models)
             report["effectSnapshotBefore"] = effect_before
 
-            before = controller_log.read_text(encoding="utf-8", errors="replace")
+            before = (
+                read_run_text(
+                    run_dir,
+                    Path("logs") / f"antoine-controller-{args.target}.log",
+                    errors="replace",
+                )
+                or ""
+            )
             captured = subprocess.run(
                 [
                     "nats",
@@ -730,7 +740,14 @@ def main() -> int:
             decision = None
             after = before
             while time.monotonic() < decision_deadline and decision is None:
-                after = controller_log.read_text(encoding="utf-8", errors="replace")
+                after = (
+                    read_run_text(
+                        run_dir,
+                        Path("logs") / f"antoine-controller-{args.target}.log",
+                        errors="replace",
+                    )
+                    or ""
+                )
                 decision = controller_decision(
                     args.mutation,
                     after[len(before) :].splitlines(),

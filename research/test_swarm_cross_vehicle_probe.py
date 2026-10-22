@@ -22,6 +22,7 @@ from swarm_cross_vehicle_probe import (
     pose_window_at_target,
     target_plan,
     validate_probe_roster,
+    validate_run_evidence_paths,
     validate_vehicle_callsigns,
     vehicle_effect_snapshot,
     vehicle_models_from_config,
@@ -320,8 +321,18 @@ class PoseTruthTests(unittest.TestCase):
 
         self.assertEqual(exit_code, 2)
         self.assertEqual(report["status"], "inconclusive")
-        self.assertIn("escapes the selected run", report["error"])
+        self.assertIn("unsafe in the selected run", report["error"])
         self.assertEqual(report["publishedMessages"], 0)
+
+    def test_run_evidence_validation_rejects_internal_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-1"
+            run_dir.mkdir()
+            (run_dir / "actual-pose.jsonl").write_text("{}\n", encoding="utf-8")
+            (run_dir / "gazebo-pose.jsonl").symlink_to(run_dir / "actual-pose.jsonl")
+
+            with self.assertRaisesRegex(ValueError, "unsafe in the selected run"):
+                validate_run_evidence_paths(run_dir, "drone-2")
 
     def test_new_probe_replaces_a_stale_pass_before_work(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

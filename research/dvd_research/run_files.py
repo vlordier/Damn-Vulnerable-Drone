@@ -71,6 +71,31 @@ def read_run_text(
         return stream.read()
 
 
+def read_run_tail_text(
+    run_dir: Path,
+    relative_path: Path,
+    max_bytes: int,
+    *,
+    encoding: str = "utf-8",
+    errors: str = "replace",
+) -> str | None:
+    """Read a bounded tail, dropping a partial first record after seeking."""
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise ValueError("run artifact tail size must be a positive integer")
+    path = resolve_run_file(run_dir, relative_path)
+    if path is None:
+        return None
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(descriptor, "rb") as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError("run artifact is not a regular file")
+        size = os.fstat(stream.fileno()).st_size
+        stream.seek(max(0, size - max_bytes))
+        if stream.tell():
+            stream.readline()
+        return stream.read().decode(encoding, errors=errors)
+
+
 def write_run_text(run_dir: Path, relative_path: Path, content: str) -> Path:
     """Atomically write a run artifact without following a linked destination."""
     relative_path = _relative_path(relative_path)
