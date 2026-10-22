@@ -27,6 +27,16 @@ with mock.patch.dict(sys.modules, {"flight_check": STUB_FLIGHT_CHECK}):
 
 
 class GazeboFailureReportTests(unittest.TestCase):
+    def test_runner_binds_one_callsign_for_bridge_antoine_and_provenance(self) -> None:
+        repo = SCRIPT.parents[2]
+        runner = (repo / "research/run-antoine-gazebo-mavlink.sh").read_text(encoding="utf-8")
+        provenance = (repo / "research/capture_antoine_provenance.py").read_text(encoding="utf-8")
+
+        self.assertIn('export ANTOINE_GZ_MAVLINK_CALLSIGN="${CALLSIGN}"', runner)
+        self.assertIn('export ANTOINE_GZ_CALLSIGN="${CALLSIGN}"', runner)
+        self.assertIn("printf 'ANTOINE_GZ_CALLSIGN=%s\\n' \"${ANTOINE_GZ_CALLSIGN}\"", runner)
+        self.assertIn('"ANTOINE_GZ_CALLSIGN",', provenance)
+
     def test_launcher_exits_on_interrupt_and_runs_cleanup_once(self) -> None:
         runner = SCRIPT.parents[1] / "run-antoine-gazebo-mavlink.sh"
         content = runner.read_text(encoding="utf-8")
