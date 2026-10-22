@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNNER = ROOT / "research" / "run-antoine-gazebo-mavlink.sh"
 START_TIMEOUT_SECONDS = 180.0
 STOP_TIMEOUT_SECONDS = 45.0
+FORCED_STOP_TIMEOUT_SECONDS = 5.0
 
 
 def _write_report(path: Path, report: dict[str, Any]) -> None:
@@ -65,6 +66,58 @@ def _stop_and_wait(
     if final_status.get("status") != "stopped":
         raise RuntimeError(f"post-stop status did not confirm cleanup: {final_status}")
     return stop_result, final_status
+
+
+def _stop_wrapper_process(process: subprocess.Popen[Any], report: dict[str, Any]) -> None:
+    """Stop only the process group created for this lifecycle run."""
+    if process.poll() is not None:
+        return
+    try:
+        process.send_signal(signal.SIGINT)
+        process.wait(timeout=STOP_TIMEOUT_SECONDS)
+        return
+    except ProcessLookupError:
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    except OSError as error:
+        report.setdefault("cleanupSignalFailures", []).append(
+            f"SIGINT wrapper: {type(error).__name__}: {error}"
+        )
+
+    report["cleanupEscalation"] = []
+    for stop_signal in (signal.SIGTERM, signal.SIGKILL):
+        report["cleanupEscalation"].append(signal.Signals(stop_signal).name)
+        try:
+            # _start uses start_new_session=True, so this group contains only
+            # the wrapper and processes launched by this lifecycle run.
+            os.killpg(process.pid, stop_signal)
+        except ProcessLookupError:
+            pass
+        except OSError as error:
+            report.setdefault("cleanupSignalFailures", []).append(
+                f"{signal.Signals(stop_signal).name}: {type(error).__name__}: {error}"
+            )
+            try:
+                process.send_signal(stop_signal)
+            except ProcessLookupError:
+                pass
+            except OSError as fallback_error:
+                report.setdefault("cleanupSignalFailures", []).append(
+                    f"{signal.Signals(stop_signal).name} wrapper fallback: "
+                    f"{type(fallback_error).__name__}: {fallback_error}"
+                )
+        try:
+            process.wait(timeout=FORCED_STOP_TIMEOUT_SECONDS)
+            return
+        except ProcessLookupError:
+            return
+        except subprocess.TimeoutExpired:
+            continue
+
+    report["cleanupStopFailure"] = (
+        "run-owned process group remained alive after SIGINT, SIGTERM, and SIGKILL"
+    )
 
 
 def _start(run_dir: Path, log_path: Path) -> tuple[subprocess.Popen[Any], Path]:
@@ -153,7 +206,7 @@ def run(report_path: Path) -> dict[str, Any]:
             active = None
         report["passed"] = True
         return report
-    except Exception as error:
+    except BaseException as error:
         report["failure"] = f"{type(error).__name__}: {error}"
         raise
     finally:
@@ -164,12 +217,7 @@ def run(report_path: Path) -> dict[str, Any]:
                     report["cleanupStopResult"] = interactive_profile.stop_owned(receipt)
             except Exception as cleanup_error:
                 report["cleanupStopFailure"] = f"{type(cleanup_error).__name__}: {cleanup_error}"
-            if process.poll() is None:
-                try:
-                    process.send_signal(signal.SIGINT)
-                    process.wait(timeout=STOP_TIMEOUT_SECONDS)
-                except (ProcessLookupError, subprocess.TimeoutExpired):
-                    pass
+            _stop_wrapper_process(process, report)
         _write_report(report_path, report)
 
 
