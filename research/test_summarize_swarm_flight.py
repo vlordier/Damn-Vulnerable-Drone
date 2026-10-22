@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import math
 import sys
 import tempfile
 import unittest
@@ -789,14 +790,41 @@ class SummaryTests(unittest.TestCase):
                 for pose in frame["pose"]:
                     if pose["name"] == "isr":
                         pose["orientation"] = {"x": 1.0, "y": 0.0, "z": 0.0, "w": 0.0}
+                    else:
+                        # Yaw is not tilt; heading changes must not fail this gate.
+                        half_yaw = math.sqrt(0.5)
+                        pose["orientation"] = {
+                            "x": 0.0,
+                            "y": 0.0,
+                            "z": half_yaw,
+                            "w": half_yaw,
+                        }
             pose_path.write_text("".join(json.dumps(frame) + "\n" for frame in frames))
             result = run_summary(run_dir)
         attitude = result["vehicles"]["drone-1"]["attitudeQuality"]
         self.assertAlmostEqual(attitude["maximumTiltRadians"], 3.141593, places=5)
         self.assertFalse(attitude["passed"])
         self.assertFalse(result["baselineGates"]["gazeboAttitudeWithinEnvelope"])
+        self.assertTrue(result["vehicles"]["drone-2"]["attitudeQuality"]["passed"])
         self.assertEqual(result["behaviorStatus"], "passed")
         self.assertEqual(result["status"], "inconclusive")
+
+    def test_missing_gazebo_quaternion_makes_attitude_evidence_unavailable(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-test"
+            build_run(run_dir, "lanes")
+            pose_path = run_dir / "gazebo-pose.jsonl"
+            frames = [json.loads(line) for line in pose_path.read_text().splitlines()]
+            for frame in frames:
+                for pose in frame["pose"]:
+                    if pose["name"] == "isr":
+                        pose.pop("orientation")
+            pose_path.write_text("".join(json.dumps(frame) + "\n" for frame in frames))
+            result = run_summary(run_dir)
+        attitude = result["vehicles"]["drone-1"]["attitudeQuality"]
+        self.assertFalse(attitude["measured"])
+        self.assertFalse(attitude["passed"])
+        self.assertFalse(result["baselineGates"]["gazeboAttitudeWithinEnvelope"])
 
     def test_missing_final_waypoint_time_keeps_behavior_inconclusive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
