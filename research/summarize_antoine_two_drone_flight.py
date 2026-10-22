@@ -26,6 +26,7 @@ MINIMUM_SEPARATION_METERS = 1.0
 MINIMUM_POSE_SAMPLES_PER_VEHICLE = 20
 MINIMUM_POSE_COVERAGE_SECONDS = 1.0
 MAXIMUM_POSE_GAP_SECONDS = 0.5
+MAXIMUM_ATTITUDE_TILT_RADIANS = 0.8
 MAXIMUM_CONTROL_TICKS_PER_STATE_SAMPLE = 1.1
 MINIMUM_CADENCE_TELEMETRY_SAMPLES = 20
 MAX_CROSS_VEHICLE_POSE_EFFECT_M = 1.0
@@ -115,8 +116,9 @@ def load_swarm_plan(
 
 def load_pose_samples(
     run_dir: Path, models: set[str]
-) -> dict[str, list[tuple[float, float, float, float]]]:
-    samples = {model: [] for model in models}
+) -> dict[str, list[tuple[float, float, float, float, float | None]]]:
+    samples: dict[str, list[tuple[float, float, float, float]]] = {model: [] for model in models}
+    attitude_samples: dict[str, list[float | None]] = {model: [] for model in models}
     pose_path = run_dir / "gazebo-pose.jsonl"
     if not pose_path.is_file():
         return samples
@@ -141,6 +143,14 @@ def load_pose_samples(
                     continue
                 position = pose.get("position", {})
                 try:
+                    orientation = pose.get("orientation", {})
+                    tilt = None
+                    if isinstance(orientation, dict):
+                        quaternion = [float(orientation[key]) for key in ("x", "y", "z", "w")]
+                        norm = math.sqrt(sum(value * value for value in quaternion))
+                        if norm > 1e-9 and all(math.isfinite(value) for value in quaternion):
+                            x, y, z, w = (value / norm for value in quaternion)
+                            tilt = math.acos(min(1.0, max(-1.0, 1.0 - 2.0 * (x * x + y * y))))
                     sample = (
                         timestamp,
                         float(position["x"]),
@@ -150,11 +160,12 @@ def load_pose_samples(
                 except (KeyError, TypeError, ValueError):
                     continue
                 samples[pose["name"]].append(sample)
-    return samples
+                attitude_samples[pose["name"]].append(tilt)
+    return samples, attitude_samples
 
 
 def measure_pose_stream(
-    samples: list[tuple[float, float, float, float]],
+    samples: list[tuple[float, float, float, float, float | None]],
 ) -> dict[str, Any]:
     timestamps = [sample[0] for sample in samples]
     deltas = [later - earlier for earlier, later in itertools.pairwise(timestamps)]
@@ -182,6 +193,23 @@ def measure_pose_stream(
         "enoughCoverage": enough_coverage,
         "freshEnough": fresh,
         "passed": monotonic and enough_samples and enough_coverage and fresh,
+    }
+
+
+def measure_attitude_stream(
+    tilts: list[float | None],
+) -> dict[str, Any]:
+    measured_tilts = [tilt for tilt in tilts if tilt is not None]
+    maximum = max(measured_tilts, default=None)
+    measured = len(measured_tilts) == len(tilts) and bool(tilts)
+    return {
+        "sampleCount": len(measured_tilts),
+        "expectedSampleCount": len(tilts),
+        "maximumTiltRadians": round(maximum, 6) if maximum is not None else None,
+        "maximumTiltDegrees": round(math.degrees(maximum), 3) if maximum is not None else None,
+        "thresholdRadians": MAXIMUM_ATTITUDE_TILT_RADIANS,
+        "measured": measured,
+        "passed": measured and maximum <= MAXIMUM_ATTITUDE_TILT_RADIANS,
     }
 
 
@@ -1040,7 +1068,9 @@ def selected_vehicle_authorization_evidence(
         pass
     if not actuator_rows:
         return {"status": "inconclusive", "reason": "selected-command-actuator-grant-not-found"}
-    pose_samples = load_pose_samples(run_dir, {item["model"] for item in vehicles})
+    pose_samples, _attitude_samples = load_pose_samples(
+        run_dir, {item["model"] for item in vehicles}
+    )
     target_model = vehicle["model"]
     target_samples = pose_samples.get(target_model, [])
     peer_samples = [item for item in vehicles if item["callsign"] != callsign]
@@ -1492,6 +1522,8 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
             or not isinstance(vehicle.get("actuatorEvidence"), dict)
             or vehicle.get("controllerStateCadence", {}).get("status")
             not in {"passed", "failed", "unavailable", "invalid"}
+            or not isinstance(vehicle.get("attitudeQuality"), dict)
+            or type(vehicle["attitudeQuality"].get("passed")) is not bool
             or vehicle["actuatorEvidence"].get("finalDisarmed", {}).get("status")
             not in {"measured", "unavailable"}
         ):
@@ -1543,9 +1575,14 @@ def main() -> int:
         plan = load_swarm_plan(run_dir, config, vehicles)
     except ValueError as error:
         raise SystemExit(str(error)) from error
-    pose_samples = load_pose_samples(run_dir, {item["model"] for item in vehicles})
+    pose_samples, attitude_samples = load_pose_samples(
+        run_dir, {item["model"] for item in vehicles}
+    )
     pose_stream_quality = {
         model: measure_pose_stream(samples) for model, samples in pose_samples.items()
+    }
+    attitude_quality = {
+        model: measure_attitude_stream(samples) for model, samples in attitude_samples.items()
     }
     all_pose_streams_passed = all(item["passed"] for item in pose_stream_quality.values())
     evidence_artifacts = hash_run_evidence(
@@ -1590,7 +1627,8 @@ def main() -> int:
     )
     trajectory_available = write_trajectory_svg(run_dir, vehicles, pose_samples)
     poses_by_callsign = {
-        vehicle["callsign"]: pose_samples[vehicle["model"]] for vehicle in vehicles
+        vehicle["callsign"]: [sample[:4] for sample in pose_samples[vehicle["model"]]]
+        for vehicle in vehicles
     }
     flight_reports = {
         vehicle["callsign"]: load_flight_report(run_dir, vehicle["callsign"])
@@ -1732,9 +1770,10 @@ def main() -> int:
             "localFlightPassed": report.get("localFlightPassed") is True,
             "poseSamples": len(pose_samples[model]),
             "postNeutralizationFinalPositionEnuM": (
-                list(pose_samples[model][-1][1:]) if pose_samples[model] else None
+                list(pose_samples[model][-1][1:4]) if pose_samples[model] else None
             ),
             "poseStreamQuality": pose_stream_quality[model],
+            "attitudeQuality": attitude_quality[model],
             "authorityScope": report.get("authorityScope"),
             "finalExecutionAuthority": execution_authority_status(report, run_dir.name, callsign),
             "controllerStateCadence": controller_state_cadence_status(
@@ -1932,6 +1971,7 @@ def main() -> int:
         item["controllerStateCadence"].get("status") == "passed"
         for item in vehicle_results.values()
     )
+    all_attitudes_qualified = all(item["passed"] for item in attitude_quality.values())
     all_transition_safe_stops_qualified = all(
         item["safeStopEvidence"].get("status") == "measured" for item in vehicle_results.values()
     )
@@ -2041,6 +2081,7 @@ def main() -> int:
         "runIdentityMatches": all_identities_match,
         "provenanceStable": provenance_stable is True,
         "poseStreamsOrderedFreshAndCovered": all_pose_streams_passed,
+        "gazeboAttitudeWithinEnvelope": all_attitudes_qualified,
         "allPairwiseSeparationMeasured": all_pairs_measured,
         "actuatorNeutralizationEvidence": all_actuator_evidence_passed,
         "independentPoseAndActuatorArtifactsPresent": independent_artifacts_present,
@@ -2091,6 +2132,7 @@ def main() -> int:
         "allTenPairSeparationsMeasured": pair_count == 10 and all_pairs_measured,
         "behaviorPassed": behavior_passed,
         "controllerStateCadenceQualified": all_controller_cadences_qualified,
+        "gazeboAttitudeQualified": all_attitudes_qualified,
         "transitionSafeStopsBoundAndRecovered": all_transition_safe_stops_qualified,
         "runOwnedSourceBuildInputsPresent": run_owned_source_build_inputs_present,
         "behaviorEvaluation": behavior_evaluation,
@@ -2120,6 +2162,7 @@ def main() -> int:
         "minimumPoseSamplesPerVehicle": MINIMUM_POSE_SAMPLES_PER_VEHICLE,
         "minimumPoseCoverageSeconds": MINIMUM_POSE_COVERAGE_SECONDS,
         "maximumPoseGapSeconds": MAXIMUM_POSE_GAP_SECONDS,
+        "maximumAttitudeTiltRadians": MAXIMUM_ATTITUDE_TILT_RADIANS,
         "limits": (
             "A local simulation result only. Swarm behaviours are scripted "
             "per-vehicle waypoint plans, not closed-loop formation control, "

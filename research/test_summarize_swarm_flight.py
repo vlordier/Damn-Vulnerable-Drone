@@ -142,6 +142,7 @@ def build_run(
                                         "y": position[1],
                                         "z": position[2],
                                     },
+                                    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
                                 }
                             ],
                         }
@@ -737,6 +738,8 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result["behavior"], "vee")
         self.assertTrue(result["behaviorEvaluation"]["gates"]["plannedFormationShapeMatched"])
         self.assertTrue(result["poseStreamQualityPassed"])
+        self.assertTrue(result["baselineGates"]["gazeboAttitudeWithinEnvelope"])
+        self.assertTrue(result["vehicles"]["drone-1"]["attitudeQuality"]["passed"])
         self.assertEqual(result["vehiclePairs"]["drone-1/drone-2"]["measurementStatus"], "measured")
         self.assertEqual(result["baselineStatus"], "inconclusive")
         self.assertIn("finalDisarmedStateAvailable", result["baselineInconclusiveReasons"])
@@ -759,6 +762,7 @@ class SummaryTests(unittest.TestCase):
                                 "position": {"x": 0.0, "y": 8.0, "z": 0.09}
                                 if model == "isr"
                                 else {"x": 8.0, "y": 8.0, "z": 0.09},
+                                "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
                             }
                         ],
                     }
@@ -774,6 +778,25 @@ class SummaryTests(unittest.TestCase):
             result["vehicles"]["drone-1"]["postNeutralizationFinalPositionEnuM"][2],
             1.0,
         )
+
+    def test_gazebo_inversion_fails_attitude_gate_independently_of_position(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-test"
+            build_run(run_dir, "lanes")
+            pose_path = run_dir / "gazebo-pose.jsonl"
+            frames = [json.loads(line) for line in pose_path.read_text().splitlines()]
+            for frame in frames:
+                for pose in frame["pose"]:
+                    if pose["name"] == "isr":
+                        pose["orientation"] = {"x": 1.0, "y": 0.0, "z": 0.0, "w": 0.0}
+            pose_path.write_text("".join(json.dumps(frame) + "\n" for frame in frames))
+            result = run_summary(run_dir)
+        attitude = result["vehicles"]["drone-1"]["attitudeQuality"]
+        self.assertAlmostEqual(attitude["maximumTiltRadians"], 3.141593, places=5)
+        self.assertFalse(attitude["passed"])
+        self.assertFalse(result["baselineGates"]["gazeboAttitudeWithinEnvelope"])
+        self.assertEqual(result["behaviorStatus"], "passed")
+        self.assertEqual(result["status"], "inconclusive")
 
     def test_missing_final_waypoint_time_keeps_behavior_inconclusive(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
