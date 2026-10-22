@@ -1,125 +1,37 @@
-diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-index 32334aa..b5682bc 100644
 --- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
 +++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-@@ -510,6 +510,37 @@ fn setpoint_matches_grant_task_binding(
-         && setpoint.target_shape.as_deref() == grant["targetShape"].as_str()
- }
- 
-+fn mission_setpoint_matches_live_authorization(
-+    setpoint: &MissionSetpoint,
-+    grant: &serde_json::Value,
-+    admissions: &VigieAdmissions,
-+    callsign: &str,
-+    frame_id: &str,
-+    now_ms: u64,
-+) -> bool {
-+    let issued = grant["issuedAtUnixMs"].as_u64().unwrap_or(0);
-+    let expires = grant["expiresAtUnixMs"].as_u64().unwrap_or(0);
-+    setpoint.vehicle_id == callsign
-+        && setpoint.command_lease.is_live_at(std::time::Instant::now())
-+        && setpoint.frame_id == frame_id
-+        && setpoint.mission_id == grant["missionId"].as_str().unwrap_or_default()
-+        && setpoint.task_id == grant["taskId"].as_str().unwrap_or_default()
-+        && setpoint.plan_revision == grant["planRevision"].as_str().unwrap_or_default()
-+        && setpoint.plan_digest == grant["planDigest"].as_str().unwrap_or_default()
-+        && setpoint_matches_grant_task_binding(setpoint, grant)
-+        && setpoint.execution_epoch == grant["executionEpoch"].as_u64().unwrap_or(0)
-+        && setpoint.authority_epoch == grant["authorityEpoch"].as_u64().unwrap_or(u64::MAX)
-+        && admissions.admits_for_grant(setpoint, now_ms, grant)
-+        && expires > issued
-+        && grant["targetFrameId"].as_str() == Some(setpoint.frame_id.as_str())
-+        && grant["targetEnuMm"].as_array().is_some_and(|target| {
-+            target.len() == 3
-+                && target.iter().zip(setpoint.position_enu_m).all(|(mm, meters)| {
-+                    mm.as_i64().is_some_and(|value| (meters * 1000.0).round() as i64 == value)
-+                })
-+        })
-+}
-+
- #[derive(Clone)]
- struct GpsFix {
-     timestamp_ms: u64,
-diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-index 32334aa..b5682bc 100644
---- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-@@ -1483,40 +1514,73 @@ async fn run_gz_plant(
-             }
-         });
-     }
+@@ -1654,6 +1654,18 @@
 -    let shared: Arc<Mutex<Option<GzState>>> = Arc::new(Mutex::new(None));
-+    // Keep the source stream available to the independent local authority and
-+    // forward it onto a controller-only subject. The run-local state fault is
-+    // applied only at this delivery edge, so authority observations continue.
-+    let controller_state_subject = format!("furia.gzsitl.controller-state.{callsign}");
-     {
+-    {
 -        let mut sub = client.subscribe(state_subject.clone()).await?;
 -        let shared = shared.clone();
 -        let state_callsign = callsign.clone();
-+        let mut source = client.subscribe(state_subject.clone()).await?;
-+        client.flush().await?;
-+        let relay_client = client.clone();
-+        let output_subject = controller_state_subject.clone();
-+        let relay_callsign = callsign.clone();
-         let fault = test_blackhole;
--        let started_at = std::time::Instant::now();
-+        let relay_run_id = run_id.clone();
-+        println!("ANTOINE_GZ_STATE_RELAY_READY run_id={relay_run_id} callsign={relay_callsign} source_subject={state_subject} controller_subject={output_subject}");
-+        let _ = std::io::Write::flush(&mut std::io::stdout());
-         tokio::spawn(async move {
-+            let started_at = std::time::Instant::now();
-+            let mut source_sequence = 0u64;
-+            let mut dropped = 0u64;
-+            let mut last_dropped_source_sequence = 0u64;
-+            let mut last_dropped_simulation_time_ns = 0u64;
-             let mut fault_entered = false;
-             let mut fault_exited = false;
-+            while let Some(message) = source.next().await {
-+                source_sequence = source_sequence.saturating_add(1);
-+                let simulation_time_ns = serde_json::from_slice::<serde_json::Value>(&message.payload)
-+                    .ok()
-+                    .and_then(|value| value.get("simulation_time_ns").and_then(serde_json::Value::as_u64));
-+                let elapsed_ms = started_at.elapsed().as_millis() as u64;
-+                let within_fault = dropped < 200 && fault.is_some_and(|(after_ms, duration_ms)| {
-+                    elapsed_ms >= after_ms && elapsed_ms < after_ms.saturating_add(duration_ms)
-+                });
-+                if within_fault {
-+                    dropped = dropped.saturating_add(1);
-+                    last_dropped_source_sequence = source_sequence;
-+                    last_dropped_simulation_time_ns = simulation_time_ns.unwrap_or_default();
-+                    if !fault_entered {
-+                        let unix_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value| value.as_millis()).unwrap_or_default();
-+                        println!("ANTOINE_GZ_STATE_PARTITION_ENTER run_id={relay_run_id} callsign={relay_callsign} unix_ms={unix_ms} after_ms={} duration_ms={} source_sequence={} simulation_time_ns={}", fault.map(|value| value.0).unwrap_or_default(), fault.map(|value| value.1).unwrap_or_default(), source_sequence, simulation_time_ns.unwrap_or_default());
-+                        let _ = std::io::Write::flush(&mut std::io::stdout());
-+                        fault_entered = true;
-+                    }
-+                    continue;
-+                }
-+                if fault_entered && !fault_exited {
-+                    let unix_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|value| value.as_millis()).unwrap_or_default();
-+                    println!("ANTOINE_GZ_STATE_PARTITION_EXIT run_id={relay_run_id} callsign={relay_callsign} unix_ms={unix_ms} elapsed_ms={elapsed_ms} dropped_messages={dropped} last_dropped_source_sequence={last_dropped_source_sequence} recovery_source_sequence={source_sequence} last_dropped_simulation_time_ns={last_dropped_simulation_time_ns} recovery_simulation_time_ns={}", simulation_time_ns.unwrap_or_default());
-+                    let _ = std::io::Write::flush(&mut std::io::stdout());
-+                    fault_exited = true;
-+                }
-+                if relay_client.publish(output_subject.clone(), message.payload).await.is_err() {
-+                    println!("ANTOINE_GZ_STATE_PARTITION_RELAY_ERROR run_id={relay_run_id} callsign={relay_callsign} source_sequence={source_sequence}");
-+                    let _ = std::io::Write::flush(&mut std::io::stdout());
-+                    break;
-+                }
-+            }
-+        });
-+    }
-+    let shared: Arc<Mutex<Option<GzState>>> = Arc::new(Mutex::new(None));
-+    {
-+        let mut sub = client.subscribe(controller_state_subject).await?;
-+        client.flush().await?;
-+        let shared = shared.clone();
-+        let state_callsign = callsign.clone();
-+        tokio::spawn(async move {
-             while let Some(msg) = sub.next().await {
-                 if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&msg.payload) {
-                     if let Some(st) = gz_state_from_json(&v, &state_callsign) {
+-        let fault = test_blackhole;
++// Keep the source stream available to the independent local authority and
++// forward it onto a controller-only subject. The run-local state fault is
++// applied only at this delivery edge, so authority observations continue.
++let controller_state_subject = format!("furia.gzsitl.controller-state.{callsign}");
++let mut source = client.subscribe(state_subject.clone()).await?;
++let mut controller = client.subscribe(controller_state_subject.clone()).await?;
++client.flush().await?;
++println!(
++    "ANTOINE_GZ_STATE_RELAY_READY run_id={run_id} callsign={callsign} source_subject={state_subject} controller_subject={controller_state_subject}"
++);
++let _ = std::io::Write::flush(&mut std::io::stdout());
++{
++    let relay_client = client.clone();
++    let output_subject = controller_state_subject;
++    let relay_callsign = callsign.clone();
++    let fault = test_blackhole;
++    let relay_run_id = run_id.clone();
++    tokio::spawn(async move {
+@@ -1661,32 +1673,78 @@
+-        tokio::spawn(async move {
+-            let mut fault_entered = false;
+-            let mut fault_exited = false;
+-            while let Some(msg) = sub.next().await {
+-                if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&msg.payload) {
+-                    if let Some(st) = gz_state_from_json(&v, &state_callsign) {
 -                        if let Some((after_ms, duration_ms)) = fault {
 -                            let elapsed_ms = started_at.elapsed().as_millis() as u64;
 -                            let within_fault = elapsed_ms >= after_ms
@@ -141,98 +53,94 @@ index 32334aa..b5682bc 100644
 -                                fault_exited = true;
 -                            }
 -                        }
-                         if trace {
-                             println!("ANTOINE_GZ_STATE_RECEIVED callsign={state_callsign}");
-                             let _ = std::io::Write::flush(&mut std::io::stdout());
-diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-index 32334aa..b5682bc 100644
---- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-@@ -1642,10 +1706,14 @@ async fn run_gz_plant(
- 
-     let setpoint_subject = format!("furia.gzsitl.setpoint.{callsign}");
-     let sp: Arc<Mutex<Option<MissionSetpoint>>> = Arc::new(Mutex::new(None));
-+    let core_grant = Arc::new(core_lease::CoreLease::new());
-     {
-         let mut sub = client.subscribe(setpoint_subject.clone()).await?;
-         let sp = sp.clone();
-         let callsign = callsign.clone();
-+        let core_grant = core_grant.clone();
-+        let vigie_admission = vigie_admission.clone();
-+        let world_frame_id = world_frame_id.clone();
-         tokio::spawn(async move {
-             let mut last_sequence = 0_u64;
-             let mut wall_clock = command_lease::WallClockGuard::default();
-diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-index 32334aa..b5682bc 100644
---- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-@@ -1677,21 +1745,36 @@ async fn run_gz_plant(
-                         }
-                         continue;
-                     }
-+                    let payload_sha256 = hex::encode(Sha256::digest(&msg.payload));
-                     if let Some(setpoint) =
-                         mission_setpoint_from_json_at(&v, wall_now_ms, std::time::Instant::now())
-                     {
--                        if setpoint.vehicle_id == callsign && setpoint.sequence > last_sequence {
-+                        let grant = core_grant.for_command().await;
-+                        let admissions = vigie_admission.lock().await;
-+                        let grant_bound = grant.as_ref().is_some_and(|grant| {
-+                            mission_setpoint_matches_live_authorization(
-+                                &setpoint,
-+                                grant,
-+                                &admissions,
-+                                &callsign,
-+                                &world_frame_id,
-+                                wall_now_ms,
-+                            )
-+                        });
-+                        drop(admissions);
-+                        if setpoint.sequence > last_sequence && grant_bound {
-                             last_sequence = setpoint.sequence;
-                             if trace {
-                                 println!(
--                                    "ANTOINE_GZ_SETPOINT_RECEIVED callsign={callsign} sequence={last_sequence} accepted_at_unix_ms={wall_now_ms}"
-+                                    "ANTOINE_GZ_SETPOINT_RECEIVED callsign={callsign} sequence={last_sequence} payload_sha256={payload_sha256} accepted_at_unix_ms={wall_now_ms}"
-                                 );
-                                 let _ = std::io::Write::flush(&mut std::io::stdout());
-                             }
-                             *sp.lock().await = Some(setpoint);
-                         } else if trace {
-                             println!(
--                                "ANTOINE_GZ_SETPOINT_REJECTED callsign={callsign} reason=vehicle-or-sequence vehicle_id={} sequence={} last_sequence={last_sequence}",
-+                                "ANTOINE_GZ_SETPOINT_REJECTED callsign={callsign} reason={} vehicle_id={} sequence={} payload_sha256={payload_sha256} last_sequence={last_sequence}",
-+                                if !grant_bound { "current-grant-or-vigie-binding" } else { "vehicle-or-sequence" },
-                                 setpoint.vehicle_id,
-                                 setpoint.sequence
-                             );
-diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-index 32334aa..b5682bc 100644
---- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-@@ -1699,8 +1782,10 @@ async fn run_gz_plant(
-                         }
-                     } else if trace {
-                         println!(
--                            "ANTOINE_GZ_SETPOINT_REJECTED callsign={callsign} reason={}",
--                            mission_setpoint_rejection_diagnostic(&v, wall_now_ms)
-+                            "ANTOINE_GZ_SETPOINT_REJECTED callsign={callsign} reason={} vehicle_id={} sequence={} payload_sha256={payload_sha256}",
-+                            mission_setpoint_rejection_diagnostic(&v, wall_now_ms),
-+                            v.get("vehicleId").and_then(serde_json::Value::as_str).unwrap_or("missing"),
-+                            v.get("sequence").and_then(serde_json::Value::as_u64).unwrap_or(0)
-                         );
-                         let _ = std::io::Write::flush(&mut std::io::stdout());
-                     }
-diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-index 32334aa..b5682bc 100644
---- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-@@ -1824,7 +1909,6 @@ async fn run_gz_plant(
-         });
-     }
-     let grant_subject = format!("furia.prime.execution-grant.{callsign}");
--    let core_grant = Arc::new(core_lease::CoreLease::new());
-     {
-         let revoke_subject = format!("furia.prime.execution-revoke.{callsign}");
-         let mut sub = client.subscribe(revoke_subject.clone()).await?;
+-                        if trace {
+-                            println!("ANTOINE_GZ_STATE_RECEIVED callsign={state_callsign}");
+-                            let _ = std::io::Write::flush(&mut std::io::stdout());
+-                        }
+-                        *shared.lock().await = Some(st);
++        let mut source_sequence = 0u64;
++        let mut dropped = 0u64;
++        let mut last_dropped_source_sequence = 0u64;
++        let mut last_dropped_simulation_time_ns = 0u64;
++        let mut fault_entered = false;
++        let mut fault_exited = false;
++        while let Some(message) = source.next().await {
++            source_sequence = source_sequence.saturating_add(1);
++            let simulation_time_ns =
++                serde_json::from_slice::<serde_json::Value>(&message.payload)
++                    .ok()
++                    .and_then(|value| {
++                        value
++                            .get("simulation_time_ns")
++                            .and_then(serde_json::Value::as_u64)
++                    });
++            let elapsed_ms = started_at.elapsed().as_millis() as u64;
++            let within_fault = dropped < 200
++                && fault.is_some_and(|(after_ms, duration_ms)| {
++                    elapsed_ms >= after_ms && elapsed_ms < after_ms.saturating_add(duration_ms)
++                });
++            if within_fault {
++                dropped = dropped.saturating_add(1);
++                last_dropped_source_sequence = source_sequence;
++                last_dropped_simulation_time_ns = simulation_time_ns.unwrap_or_default();
++                if !fault_entered {
++                    let unix_ms = std::time::SystemTime::now()
++                        .duration_since(std::time::UNIX_EPOCH)
++                        .map(|value| value.as_millis())
++                        .unwrap_or_default();
++                    println!(
++                        "ANTOINE_GZ_STATE_PARTITION_ENTER run_id={relay_run_id} callsign={relay_callsign} unix_ms={unix_ms} after_ms={} duration_ms={} source_sequence={} simulation_time_ns={}",
++                        fault.map(|value| value.0).unwrap_or_default(),
++                        fault.map(|value| value.1).unwrap_or_default(),
++                        source_sequence,
++                        simulation_time_ns.unwrap_or_default()
++                    );
++                    let _ = std::io::Write::flush(&mut std::io::stdout());
++                    fault_entered = true;
++                }
++                continue;
++            }
++            if fault_entered && !fault_exited {
++                let unix_ms = std::time::SystemTime::now()
++                    .duration_since(std::time::UNIX_EPOCH)
++                    .map(|value| value.as_millis())
++                    .unwrap_or_default();
++                println!(
++                    "ANTOINE_GZ_STATE_PARTITION_EXIT run_id={relay_run_id} callsign={relay_callsign} unix_ms={unix_ms} elapsed_ms={elapsed_ms} dropped_messages={dropped} last_dropped_source_sequence={last_dropped_source_sequence} recovery_source_sequence={source_sequence} last_dropped_simulation_time_ns={last_dropped_simulation_time_ns} recovery_simulation_time_ns={}",
++                    simulation_time_ns.unwrap_or_default()
++                );
++                let _ = std::io::Write::flush(&mut std::io::stdout());
++                fault_exited = true;
++            }
++            if relay_client
++                .publish(output_subject.clone(), message.payload)
++                .await
++                .is_err()
++            {
++                println!(
++                    "ANTOINE_GZ_STATE_PARTITION_RELAY_ERROR run_id={relay_run_id} callsign={relay_callsign} source_sequence={source_sequence}"
++                );
++                let _ = std::io::Write::flush(&mut std::io::stdout());
++                break;
++            }
++        }
++    });
++}
++let shared: Arc<Mutex<Option<GzState>>> = Arc::new(Mutex::new(None));
++{
++    let state_callsign = callsign.clone();
++    tokio::spawn(async move {
++        while let Some(msg) = controller.next().await {
++            if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&msg.payload) {
++                if let Some(st) = gz_state_from_json(&v, &state_callsign) {
++                    if trace {
++                        println!("ANTOINE_GZ_STATE_RECEIVED callsign={state_callsign}");
++                        let _ = std::io::Write::flush(&mut std::io::stdout());
+@@ -1693,0 +1752 @@
++                    *shared.lock().await = Some(st);
+@@ -1696,2 +1755,3 @@
+-        });
+-    }
++        }
++    });
++}
