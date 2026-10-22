@@ -854,6 +854,31 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         "unsupported mission-clear type must not clear Antoine's mission"
     );
 
+    let malformed_clear_all = v2_frame(45, 22, 255, &[1, 1, 0, 99], 232);
+    gcs.send_to(&malformed_clear_all, qgc_bind).await?;
+    let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+        .await
+        .context("malformed mission-clear ACK timeout")??;
+    let (_, malformed_clear_response) =
+        mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+    let mavlink::dialects::common::MavMessage::MISSION_ACK(malformed_clear_ack) =
+        malformed_clear_response
+    else {
+        anyhow::bail!("expected MISSION_ACK for malformed mission-clear payload");
+    };
+    assert_eq!(
+        malformed_clear_ack.mavtype,
+        mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR
+    );
+    assert!(
+        timeout(Duration::from_millis(100), reply_rx.recv())
+            .await
+            .is_err(),
+        "malformed mission-clear payload must not reach Antoine"
+    );
+
     let mut unsupported_item_payload = vec![0; 38];
     unsupported_item_payload[30] = 16;
     unsupported_item_payload[32] = 1;

@@ -1155,6 +1155,7 @@ async fn qgc_to_antoine_nats(
         }
         if frame.message_id == 45 {
             if frame.payload.len() < 2
+                || frame.payload.len() > 3
                 || (frame.payload[0] != 0 && frame.payload[0] != config.system_id)
                 || (frame.payload[1] != 0 && frame.payload[1] != 1)
             {
