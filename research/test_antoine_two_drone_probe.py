@@ -131,6 +131,7 @@ class TwoDroneProbeTests(unittest.TestCase):
             report = json.loads((run_dir / "research-two-drone-smoke.json").read_text())
             self.assertTrue(report["natsStateSeparationAtLeast5m"])
             self.assertFalse(report["gazeboTruth"]["separationAtLeast5m"])
+            self.assertEqual(report["natsGazeboCorrelation"]["status"], "inconclusive")
             self.assertFalse(report["initialSeparationAtLeast5m"])
 
     def test_rejects_external_applier_log_before_subscribing(self) -> None:
@@ -266,6 +267,7 @@ class TwoDroneProbeTests(unittest.TestCase):
                 self.assertEqual(antoine_two_drone_probe.main(), 0)
             report = json.loads((run_dir / "research-two-drone-smoke.json").read_text())
             self.assertEqual(report["status"], "passed")
+            self.assertEqual(report["natsGazeboCorrelation"]["status"], "matched")
             self.assertEqual(report["gazeboTruth"]["separationM"], 8.0)
             self.assertEqual(report["gazeboTruth"]["sampleCount"], 2)
 

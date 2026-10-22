@@ -170,6 +170,48 @@ def capture_gazebo_truth(gz: str, run_dir: Path, partition: str) -> dict:
         "positionByCallsign": latest["positionByCallsign"],
         "separationM": round(separation, 3),
         "separationAtLeast5m": separation >= 5.0,
+        "samples": samples,
+    }
+
+
+def correlate_nats_with_gazebo(states: dict, gazebo_truth: dict) -> dict:
+    """Match each NATS sample to independent Gazebo truth at a nearby sim time."""
+    if gazebo_truth.get("status") != "observed" or not isinstance(
+        gazebo_truth.get("samples"), list
+    ):
+        return {"status": "inconclusive", "reason": "independent Gazebo pose samples unavailable"}
+    comparisons = {}
+    for callsign in POSE_MODELS:
+        state = states.get(callsign, {})
+        if state.get("received") is not True:
+            comparisons[callsign] = {"matched": False, "reason": "valid NATS state unavailable"}
+            continue
+        try:
+            state_time = state["simulationTimeNs"] / 1_000_000_000
+            state_position = state["positionEnuM"]
+            sample = min(
+                gazebo_truth["samples"],
+                key=lambda item: abs(item["simulationTimeSeconds"] - state_time),
+            )
+            time_delta = abs(sample["simulationTimeSeconds"] - state_time)
+            gazebo_position = sample["positionByCallsign"][callsign]
+            position_error = math.dist(state_position, gazebo_position)
+            if not math.isfinite(time_delta) or not math.isfinite(position_error):
+                raise ValueError("state/truth comparison is not finite")
+        except (KeyError, TypeError, ValueError):
+            comparisons[callsign] = {"matched": False, "reason": "state/truth sample malformed"}
+            continue
+        comparisons[callsign] = {
+            "matched": time_delta <= 2.0 and position_error <= 1.0,
+            "simulationTimeDeltaSeconds": round(time_delta, 6),
+            "positionErrorM": round(position_error, 6),
+            "maximumSimulationTimeDeltaSeconds": 2.0,
+            "maximumPositionErrorM": 1.0,
+        }
+    matched = all(item.get("matched") is True for item in comparisons.values())
+    return {
+        "status": "matched" if matched else "inconclusive",
+        "vehicles": comparisons,
     }
 
 
@@ -248,6 +290,7 @@ def main() -> int:
 
     positions = [states.get(name, {}).get("positionEnuM") for name in vehicles]
     gazebo_truth = capture_gazebo_truth(args.gz, run_dir, partition)
+    state_truth = correlate_nats_with_gazebo(states, gazebo_truth)
     actuator_ready = {
         "drone-1": "startup-neutral-zero-published drone-1" in applier_log_text,
         "drone-2": "startup-neutral-zero-published drone-2" in applier_log_text,
@@ -265,12 +308,14 @@ def main() -> int:
         "neutralActuatorStartupAttested": actuator_ready,
         "natsStateSeparationAtLeast5m": separated,
         "gazeboTruth": gazebo_truth,
+        "natsGazeboCorrelation": state_truth,
         "initialSeparationAtLeast5m": separated and gazebo_truth.get("separationAtLeast5m") is True,
         "status": "passed"
         if all(item.get("received") for item in states.values())
         and all(actuator_ready.values())
         and separated
         and gazebo_truth.get("status") == "observed"
+        and state_truth.get("status") == "matched"
         and gazebo_truth.get("separationAtLeast5m") is True
         else "inconclusive",
         "limits": "Correlates callsign-bound NATS state with bounded independent Gazebo world poses and neutral actuator startup; does not prove two Antoine controllers or coordinated flight.",
