@@ -170,9 +170,19 @@ PROBE_STATUS=$?
 set -e
 cleanup
 trap - EXIT INT TERM
+set +e
 uv run --no-project python "$PROJECT_ROOT/research/capture_antoine_provenance.py" \
   "${PROVENANCE_ARGS[@]}" --phase post --output "$RUN_DIR/research-provenance.json" >/dev/null
+PROVENANCE_CAPTURE_STATUS=$?
+set -e
+set +e
+uv run --project "$PROJECT_ROOT/research" python \
+  "$PROJECT_ROOT/research/finalize_antoine_two_drone_smoke.py" \
+  --run-dir "$RUN_DIR" --capture-exit-code "$PROVENANCE_CAPTURE_STATUS"
+FINALIZE_STATUS=$?
+set -e
 uv run --no-project python "$PROJECT_ROOT/research/build_evidence_manifest.py" "$RUN_DIR" >/dev/null
 printf 'two-drone smoke run: %s\n' "$RUN_DIR"
 cat "$RUN_DIR/research-two-drone-smoke.json"
-exit "$PROBE_STATUS"
+if [[ "$PROBE_STATUS" -ne 0 ]]; then exit "$PROBE_STATUS"; fi
+exit "$FINALIZE_STATUS"

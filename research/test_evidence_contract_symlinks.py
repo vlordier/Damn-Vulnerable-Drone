@@ -11,6 +11,19 @@ from dvd_research.evidence_contract import verify_manifest
 
 
 class EvidenceManifestSymlinkTests(unittest.TestCase):
+    def test_builder_includes_two_drone_smoke_and_gazebo_truth_evidence(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run-a"
+            run_dir.mkdir()
+            (run_dir / "research-two-drone-smoke.json").write_text('{"status":"passed"}\n')
+            (run_dir / "gazebo-pose-info.jsonl").write_text('{"pose":[]}\n')
+
+            manifest = build(run_dir)
+
+        names = {item["name"] for item in manifest["publicEvidence"]}
+        self.assertIn("research-two-drone-smoke.json", names)
+        self.assertIn("gazebo-pose-info.jsonl", names)
+
     def test_builder_omits_allowlisted_file_under_symlinked_directory(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run-a"
