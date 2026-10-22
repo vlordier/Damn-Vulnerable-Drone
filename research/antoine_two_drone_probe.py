@@ -6,8 +6,11 @@ from __future__ import annotations
 import argparse
 import json
 import subprocess
+import time
 from pathlib import Path
-from urllib.parse import urlsplit
+
+from dvd_research.run_files import read_run_text, write_run_json
+from dvd_research.run_nats import validate_run_nats_endpoint
 
 
 def main() -> int:
@@ -17,9 +20,12 @@ def main() -> int:
     parser.add_argument("--applier-log", required=True, type=Path)
     args = parser.parse_args()
 
-    endpoint = urlsplit(args.server)
-    if endpoint.scheme != "nats" or endpoint.hostname != "127.0.0.1" or endpoint.port is None:
-        raise SystemExit("refusing anything except the run-owned IPv4 loopback NATS broker")
+    try:
+        validate_run_nats_endpoint(args.server, args.run_dir, time.monotonic() + 20)
+        run_dir = args.run_dir.resolve(strict=True)
+        applier_log = args.applier_log.resolve(strict=True).relative_to(run_dir)
+    except (OSError, ValueError, TimeoutError) as error:
+        raise SystemExit(f"refusing unverified two-drone run inputs: {error}") from error
 
     vehicles = {"drone-1": "isr", "drone-2": "fpv-a"}
     states = {}
@@ -62,10 +68,12 @@ def main() -> int:
         }
 
     positions = [states.get(name, {}).get("positionEnuM") for name in vehicles]
-    applier_log = args.applier_log.read_text(errors="replace")
+    applier_log_text = read_run_text(run_dir, applier_log, errors="replace")
+    if applier_log_text is None:
+        raise SystemExit("run-owned actuator applier log is unavailable")
     actuator_ready = {
-        "drone-1": "startup-neutral-zero-published drone-1" in applier_log,
-        "drone-2": "startup-neutral-zero-published drone-2" in applier_log,
+        "drone-1": "startup-neutral-zero-published drone-1" in applier_log_text,
+        "drone-2": "startup-neutral-zero-published drone-2" in applier_log_text,
     }
     separated = False
     if all(isinstance(point, list) and len(point) == 3 for point in positions):
@@ -73,7 +81,7 @@ def main() -> int:
     report = {
         "contract": "damn-vulnerable-drone.antoine-two-drone-smoke",
         "version": "1.0.0",
-        "runId": args.run_dir.name,
+        "runId": run_dir.name,
         "scope": "two Gazebo X500 models, two mapped NATS state subjects, local loopback broker",
         "controllersStarted": False,
         "vehicles": states,
@@ -86,8 +94,7 @@ def main() -> int:
         else "inconclusive",
         "limits": "Proves two isolated simulated models, state streams, and neutral actuator startup only; does not prove two Antoine controllers or coordinated flight.",
     }
-    output = args.run_dir / "research-two-drone-smoke.json"
-    output.write_text(json.dumps(report, indent=2) + "\n")
+    output = write_run_json(run_dir, Path("research-two-drone-smoke.json"), report)
     print(output)
     return 0 if report["status"] == "passed" else 2
 
