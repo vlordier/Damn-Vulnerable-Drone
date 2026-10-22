@@ -9,7 +9,31 @@ import re
 from pathlib import Path
 
 from build_evidence_manifest import build, write_manifest
+from dvd_research.strict_json import loads as strict_json_loads
 from evidence_contracts import ordered_timestamps, read_json_object, run_identity_matches
+
+
+def read_actuator_audit(path: Path) -> tuple[list[dict], bool]:
+    """Read actuator JSONL while making any malformed or ambiguous row disqualifying."""
+    rows = []
+    valid = True
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return rows, False
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            row = strict_json_loads(line)
+        except ValueError:
+            valid = False
+            continue
+        if not isinstance(row, dict):
+            valid = False
+            continue
+        rows.append(row)
+    return rows, valid
 
 
 def read(path: Path):
@@ -45,16 +69,8 @@ def main() -> int:
     accepted_matches = list(accepted_re.finditer(controller_log))
     published = published_matches[0] if published_matches else None
     accepted = accepted_matches[0] if accepted_matches else None
-    audit_rows = []
     audit_path = run_dir / "applier-neutral" / "actuator-output.jsonl"
-    if audit_path.is_file():
-        for line in audit_path.read_text(encoding="utf-8", errors="replace").splitlines():
-            try:
-                row = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(row, dict):
-                audit_rows.append(row)
+    audit_rows, audit_jsonl_valid = read_actuator_audit(audit_path)
     published_ms = int(published.group(3)) if published else None
     accepted_ms = int(accepted.group(3)) if accepted else None
     neutral_rows = [
@@ -87,6 +103,7 @@ def main() -> int:
         "oneTimedRevokePublished": len(published_matches) == 1,
         "oneControllerAcceptanceObserved": len(accepted_matches) == 1,
         "neutralActuatorOutputAfterRevoke": neutral is not None,
+        "actuatorAuditJsonlValid": audit_jsonl_valid,
         "oneNeutralStopObserved": len(neutral_rows) == 1,
         "independentPoseTimelineAvailable": flight.get("poseTimelinePassed") is True,
         "actuatorNeutralizationPassed": flight.get("actuatorNeutralizationPassed") is True,
