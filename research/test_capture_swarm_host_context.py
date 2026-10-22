@@ -19,6 +19,8 @@ class ProcessInventoryTests(unittest.TestCase):
                 " 10 1 2.0 0.5 00:10 /usr/local/bin/nats-server\n"
                 " 11 1 40.0 1.0 00:05 /Applications/Gazebo.app/Contents/MacOS/gz sim -g\n"
                 " 12 1 10.0 0.2 00:02 /usr/bin/node\n"
+                " 13 1 30.0 0.4 00:01 /Users/vincent/.rustup/toolchains/stable/bin/rustc\n"
+                " 14 1 20.0 0.3 00:01 /opt/homebrew/bin/cmake\n"
                 "invalid line\n"
             ),
             stderr="",
@@ -30,7 +32,7 @@ class ProcessInventoryTests(unittest.TestCase):
         self.assertEqual(result["topCpuProcesses"][0]["pid"], 11)
         self.assertEqual(
             [item["name"] for item in result["simulationAndBuildProcesses"]],
-            ["gz", "nats-server"],
+            ["gz", "rustc", "cmake", "node", "nats-server"],
         )
         self.assertNotIn("command", result["topCpuProcesses"][0])
 

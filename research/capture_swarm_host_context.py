@@ -56,7 +56,21 @@ def process_inventory() -> dict[str, Any]:
         for item in processes
         if any(
             marker in item["name"].lower()
-            for marker in ("gz", "gazebo", "nats", "cargo", "antoine", "qgroundcontrol")
+            for marker in (
+                "gz",
+                "gazebo",
+                "nats",
+                "cargo",
+                "rustc",
+                "clang",
+                "cmake",
+                "ninja",
+                "make",
+                "python",
+                "node",
+                "antoine",
+                "qgroundcontrol",
+            )
         )
     ]
     return {
