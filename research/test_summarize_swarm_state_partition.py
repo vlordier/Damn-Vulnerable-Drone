@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from summarize_swarm_state_partition import summarize
+from summarize_swarm_state_partition import actuator_vector, summarize
 
 
 class StatePartitionSummaryTests(unittest.TestCase):
@@ -161,6 +161,24 @@ ANTOINE_GZ_STALE_HOLD_EXIT callsign=drone-2 stale_limit_ms=250 behavior=zero-vel
         self.assertEqual(
             report["partition"]["invalidReason"], "partition-marker-numeric-fields-invalid"
         )
+
+    def test_actuator_vector_rejects_partial_or_empty_fields(self) -> None:
+        self.assertIsNone(actuator_vector({"values": {"motors": [0.1, 0.2], "metadata": "bad"}}))
+        self.assertIsNone(actuator_vector({"values": {"motors": [], "throttle": 0.4}}))
+        self.assertIsNone(actuator_vector({"values": {"motors": [0.1, True]}}))
+
+    def test_partial_actuator_vector_makes_partition_inconclusive(self) -> None:
+        path = self.run_dir / "applier-neutral" / "actuator-output.jsonl"
+        rows = [json.loads(line) for line in path.read_text().splitlines()]
+        for row in rows:
+            if row["vehicleId"] == "drone-2" and row["recordedAtUnixMs"] == 10500:
+                row["values"]["unknownField"] = "malformed"
+        path.write_text("\n".join(json.dumps(row) for row in rows))
+
+        report = summarize(self.run_dir)
+
+        self.assertEqual(report["status"], "inconclusive")
+        self.assertFalse(report["actuatorWindows"]["drone-2"]["identitySequenceAndValuesValid"])
 
     def test_state_coalescing_counts_target_events_without_changing_fault_status(self) -> None:
         path = self.run_dir / "logs" / "antoine-controller-drone-2.log"

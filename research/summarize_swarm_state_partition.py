@@ -147,7 +147,9 @@ def actuator_vector(row: dict[str, Any] | None) -> list[float] | None:
         elif isinstance(value, (int, float)) and not isinstance(value, bool):
             candidates = [value]
         else:
-            continue
+            return None
+        if not candidates:
+            return None
         if any(
             not isinstance(item, (int, float))
             or isinstance(item, bool)
