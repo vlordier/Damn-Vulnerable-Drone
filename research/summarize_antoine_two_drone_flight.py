@@ -1567,6 +1567,7 @@ def load_host_context_samples(run_dir: Path) -> dict[str, Any]:
     except OSError:
         return {"status": "unavailable", "reason": "host-context-samples-missing"}
     host_id: str | None = None
+    logical_cpu_count: int | None = None
     previous_time = -1
     peak_cpu: dict[str, float] = {}
     max_load = [0.0, 0.0, 0.0]
@@ -1582,6 +1583,7 @@ def load_host_context_samples(run_dir: Path) -> dict[str, Any]:
             disk = context.get("disk") if isinstance(context, dict) else None
             processes = context.get("processes") if isinstance(context, dict) else None
             timestamp = context.get("capturedAtUnixNs") if isinstance(context, dict) else None
+            cpu_count = context.get("logicalCpuCount") if isinstance(context, dict) else None
             loads = load.get("values") if isinstance(load, dict) else None
             captured_at = context.get("capturedAtUtc") if isinstance(context, dict) else None
             if (
@@ -1590,23 +1592,30 @@ def load_host_context_samples(run_dir: Path) -> dict[str, Any]:
                 or context.get("version") != "1.0.0"
                 or context.get("runId") != run_dir.name
                 or context.get("phase") != "during"
-                or context.get("sampleSequence") != sequence
-                or not isinstance(timestamp, int)
+                or type(context.get("sampleSequence")) is not int
+                or context["sampleSequence"] != sequence
+                or type(timestamp) is not int
+                or timestamp < 0
                 or timestamp <= previous_time
                 or not isinstance(captured_at, str)
                 or not isinstance(context.get("hostId"), str)
                 or len(context["hostId"]) != 64
+                or any(char not in "0123456789abcdef" for char in context["hostId"])
                 or (host_id is not None and host_id != context["hostId"])
+                or type(cpu_count) is not int
+                or cpu_count < 1
+                or (logical_cpu_count is not None and logical_cpu_count != cpu_count)
                 or not isinstance(load, dict)
                 or load.get("status") != "captured"
                 or not isinstance(loads, list)
                 or len(loads) != 3
                 or any(
-                    not isinstance(value, (int, float)) or not math.isfinite(value)
+                    type(value) not in {int, float} or not math.isfinite(value) or value < 0
                     for value in loads
                 )
                 or not isinstance(disk, dict)
-                or not isinstance(disk.get("freeBytes"), int)
+                or type(disk.get("freeBytes")) is not int
+                or disk["freeBytes"] < 0
                 or not isinstance(processes, dict)
                 or processes.get("status") != "captured"
                 or not isinstance(processes.get("topCpuProcesses"), list)
@@ -1614,6 +1623,7 @@ def load_host_context_samples(run_dir: Path) -> dict[str, Any]:
             ):
                 return {"status": "invalid", "reason": "host-context-sample-fields-invalid"}
             host_id = context["hostId"]
+            logical_cpu_count = cpu_count
             previous_time = timestamp
             first_captured_at = captured_at if first_captured_at is None else first_captured_at
             last_captured_at = captured_at
@@ -1636,6 +1646,7 @@ def load_host_context_samples(run_dir: Path) -> dict[str, Any]:
     return {
         "status": "captured",
         "hostId": host_id,
+        "logicalCpuCount": logical_cpu_count,
         "sampleCount": sample_count,
         "firstCapturedAtUtc": first_captured_at,
         "lastCapturedAtUtc": last_captured_at,

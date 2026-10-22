@@ -243,9 +243,9 @@ def load_host_contexts(run_dir: Path) -> dict[str, Any]:
             or not isinstance(context.get("capturedAtUtc"), str)
             or not isinstance(context.get("platform"), str)
             or not isinstance(context.get("machine"), str)
-            or not isinstance(context.get("hostId"), str)
-            or len(context["hostId"]) != 64
-            or not isinstance(context.get("logicalCpuCount"), int)
+            or not is_sha256(context.get("hostId"))
+            or type(context.get("logicalCpuCount")) is not int
+            or context["logicalCpuCount"] < 1
             or not isinstance(context.get("loadAverage"), dict)
             or not isinstance(context.get("disk"), dict)
             or not isinstance(context.get("processes"), dict)
@@ -257,9 +257,11 @@ def load_host_contexts(run_dir: Path) -> dict[str, Any]:
             or not isinstance(loads, list)
             or len(loads) != 3
             or any(
-                not isinstance(value, (int, float)) or not math.isfinite(value) for value in loads
+                type(value) not in {int, float} or not math.isfinite(value) or value < 0
+                for value in loads
             )
-            or not isinstance(context["disk"].get("freeBytes"), int)
+            or type(context["disk"].get("freeBytes")) is not int
+            or context["disk"]["freeBytes"] < 0
             or context["processes"].get("status") != "captured"
             or not isinstance(context["processes"].get("topCpuProcesses"), list)
             or not isinstance(context["processes"].get("simulationAndBuildProcesses"), list)
@@ -287,6 +289,7 @@ def load_host_contexts(run_dir: Path) -> dict[str, Any]:
             (result["pre"]["hostId"], result["post"]["hostId"]),
             (result["pre"]["logicalCpuCount"], result["post"]["logicalCpuCount"]),
             (result["pre"]["hostId"], result["during"]["hostId"]),
+            (result["pre"]["logicalCpuCount"], result["during"]["logicalCpuCount"]),
         )
     ):
         raise ValueError(f"host identity changed during run: {run_dir.name}")

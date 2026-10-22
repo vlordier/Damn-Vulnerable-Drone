@@ -156,6 +156,7 @@ def build_run(
                         "capturedAtUtc": f"2026-10-22T00:00:0{sequence}+00:00",
                         "capturedAtUnixNs": 1_000_000_000 + sequence,
                         "hostId": "a" * 64,
+                        "logicalCpuCount": 10,
                         "loadAverage": {"status": "captured", "values": [1.0, 1.2, 1.4]},
                         "disk": {"freeBytes": 10_000_000 - sequence},
                         "processes": {
