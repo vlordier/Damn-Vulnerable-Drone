@@ -11,7 +11,20 @@ import subprocess
 import time
 from pathlib import Path
 
-from dvd_research.run_files import write_run_json
+from dvd_research.run_files import read_run_text, write_run_json
+
+
+def validate_camera_scope(run_dir: Path, env: dict[str, str]) -> str:
+    profile_text = read_run_text(run_dir, Path("research-profile.env"))
+    if profile_text is None:
+        raise ValueError("run-owned Gazebo profile is unavailable")
+    profile = dict(line.split("=", 1) for line in profile_text.splitlines() if "=" in line)
+    partition = profile.get("GZ_PARTITION", "")
+    if not partition or env.get("GZ_PARTITION") != partition:
+        raise ValueError("active Gazebo partition does not match the selected run")
+    if profile.get("GZ_IP") != "127.0.0.1" or env.get("GZ_IP") != "127.0.0.1":
+        raise ValueError("camera probe requires the run's loopback Gazebo discovery address")
+    return partition
 
 
 def main() -> int:
@@ -32,11 +45,12 @@ def main() -> int:
         raise SystemExit("camera startup timeout must be between 1 and 30 seconds")
 
     env = os.environ.copy()
-    partition = env.get("GZ_PARTITION")
-    # Antoine pins Gazebo Transport discovery to loopback in its own launcher
-    # process. This bounded same-host probe is a separate process, so preserve
-    # the same local discovery address when it runs against that partition.
-    env.setdefault("GZ_IP", "127.0.0.1")
+    # The probe is a separate process; require the launcher's recorded partition
+    # and loopback discovery address before treating any topic as run evidence.
+    try:
+        partition = validate_camera_scope(args.run_dir, env)
+    except (OSError, ValueError) as error:
+        raise SystemExit(f"refusing unverified camera probe scope: {error}") from error
 
     started = time.time()
     discovery_started = time.monotonic()
