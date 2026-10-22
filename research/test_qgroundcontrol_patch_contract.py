@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import re
+import subprocess
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
+
+from check_qgroundcontrol_patch import verify_applied_patch
 
 PATCH = Path(__file__).resolve().parent / "patches" / "qgroundcontrol-antoine.patch"
 
@@ -18,6 +22,47 @@ class QGroundControlPatchContractTests(unittest.TestCase):
         self.assertIn("relativeAltitude > 3.0", guard)
         self.assertNotIn("qAbs(north)", guard)
         self.assertNotIn("qAbs(east)", guard)
+
+    def test_patch_verifier_requires_the_entire_patch_to_be_applied(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary) / "qgc"
+            root.mkdir()
+            subprocess.run(["git", "init", "-q", str(root)], check=True)
+            source = root / "sample.cc"
+            source.write_text("int limit = 4;\n", encoding="utf-8")
+            subprocess.run(["git", "-C", str(root), "add", "sample.cc"], check=True)
+            subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(root),
+                    "-c",
+                    "user.name=Test",
+                    "-c",
+                    "user.email=test@example.invalid",
+                    "commit",
+                    "-qm",
+                    "baseline",
+                ],
+                check=True,
+            )
+            source.write_text("int limit = 3;\n", encoding="utf-8")
+            patch = Path(temporary) / "patch.diff"
+            patch.write_bytes(
+                subprocess.run(
+                    ["git", "-C", str(root), "diff", "--", "sample.cc"],
+                    check=True,
+                    capture_output=True,
+                ).stdout
+            )
+
+            verify_applied_patch(root, patch)
+            source.write_text("int limit = 4;\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "not fully applied"):
+                verify_applied_patch(root, patch)
+            source.write_text("int limit = 2;\n", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "not fully applied"):
+                verify_applied_patch(root, patch)
 
 
 if __name__ == "__main__":

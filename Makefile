@@ -352,6 +352,8 @@ qgc-gazebo-preflight: ## Check large interactive-profile prerequisites before st
 	  exit 1; \
 	fi; \
 	[[ -x "$$gz_binary" ]] || { echo "Missing source-built Gazebo executable: $$gz_binary" >&2; exit 1; }; \
+	$(UV) run --project research python research/check_qgroundcontrol_patch.py \
+	  --root "$(ANTOINE_QGC_DIR)" --patch "$(CURDIR)/$(QGC_ANTOINE_PATCH)"; \
 	echo 'Interactive QGC and Gazebo executables are present.'; \
 	QGC_GAZEBO_MIN_FREE_MIB="$(QGC_GAZEBO_MIN_FREE_MIB)" ./research/check-free-space.sh \
 	  "$(ANTOINE_GZ_CARGO_TARGET_DIR)" "$(ANTOINE_BRIDGE_TARGET_DIR)" \

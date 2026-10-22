@@ -243,6 +243,10 @@ the local app with a temporary QGC settings directory at
 directs it to the bridge on 14651. It refuses to start if another QGC owns 14550
 or the bridge is not listening. It does not edit the user's normal QGC
 preferences. `QGC_UDP_LISTEN_PORT` and `QGC_BRIDGE_PORT` can override the ports.
+Before the interactive profile starts, `qgc-gazebo-preflight` verifies that
+the complete canonical patch is already present in the configured QGC Git
+checkout. A missing or partially diverged patch fails preflight instead of
+being represented by the canonical patch hash in the run receipt.
 
 Run `make qgc-antoine-check` to send a harmless GCS heartbeat and targeted
 `REQUEST_DATA_STREAM` frame and verify both were written to the callsign's
