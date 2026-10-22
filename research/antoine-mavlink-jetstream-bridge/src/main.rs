@@ -671,8 +671,12 @@ fn control_command(frame: &FrameInfo, vehicle_system_id: u8) -> Result<Option<se
     }
     let empty_or_nan = |value: &f64| *value == 0.0 || value.is_nan();
     let value = match command {
-        400 if p(0) == 1.0 && p(1) == 0.0 => serde_json::json!({"type":"arm"}),
-        400 if p(0) == 0.0 && p(1) == 0.0 => serde_json::json!({"type":"disarm"}),
+        400 if p(0) == 1.0 && p(1) == 0.0 && params[2..].iter().all(|value| *value == 0.0) => {
+            serde_json::json!({"type":"arm"})
+        }
+        400 if p(0) == 0.0 && p(1) == 0.0 && params[2..].iter().all(|value| *value == 0.0) => {
+            serde_json::json!({"type":"disarm"})
+        }
         22 => {
             if params[..6].iter().any(|value| !empty_or_nan(value)) {
                 bail!("MAV_CMD_NAV_TAKEOFF supports altitude only; pitch, options, yaw, and coordinates must be zero or NaN sentinels");
@@ -2032,9 +2036,19 @@ mod tests {
             component_id: 190,
             message_id: 76,
             sequence: 1,
-            payload: command,
+            payload: command.clone(),
         };
         assert_eq!(control_command(&arm, 1).unwrap().unwrap()["type"], "arm");
+
+        command[8..12].copy_from_slice(&1.0_f32.to_le_bytes());
+        let arm_with_ignored_parameter = FrameInfo {
+            payload: command,
+            ..arm
+        };
+        assert!(control_command(&arm_with_ignored_parameter, 1)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported COMMAND_LONG"));
 
         let mut position = vec![0_u8; 53];
         position[50] = 1;
