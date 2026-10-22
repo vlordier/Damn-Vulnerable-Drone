@@ -714,9 +714,17 @@ fn control_command(frame: &FrameInfo, vehicle_system_id: u8) -> Result<Option<se
             };
             serde_json::json!({"type":"set_mode","payload":{"mode":mode}})
         }
-        300 => serde_json::json!({"type":"mission_start"}),
-        193 if p(0) == 0.0 => serde_json::json!({"type":"mission_start"}),
-        193 if p(0) == 1.0 => serde_json::json!({"type":"mission_pause"}),
+        300 if params.iter().all(|value| *value == 0.0) => {
+            serde_json::json!({"type":"mission_start"})
+        }
+        300 => bail!("MAV_CMD_MISSION_START does not support selected mission-item ranges"),
+        193 if p(0) == 0.0 && params[1..].iter().all(|value| *value == 0.0) => {
+            serde_json::json!({"type":"mission_start"})
+        }
+        193 if p(0) == 1.0 && params[1..].iter().all(|value| *value == 0.0) => {
+            serde_json::json!({"type":"mission_pause"})
+        }
+        193 => bail!("MAV_CMD_DO_PAUSE_CONTINUE accepts only its continue/pause parameter"),
         _ => bail!("unsupported COMMAND_LONG id={command}"),
     };
     Ok(Some(value))
@@ -2205,6 +2213,51 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("current-position landing only"));
+    }
+
+    #[test]
+    fn mission_commands_reject_ranges_and_extra_parameters_the_bridge_cannot_apply() {
+        let mut payload = vec![0_u8; 32];
+        payload[28..30].copy_from_slice(&300_u16.to_le_bytes());
+        payload[30] = 1;
+        payload[31] = 1;
+        let frame = |payload| FrameInfo {
+            system_id: 255,
+            component_id: 190,
+            message_id: 76,
+            sequence: 1,
+            payload,
+        };
+
+        assert_eq!(
+            control_command(&frame(payload.clone()), 1)
+                .unwrap()
+                .unwrap()["type"],
+            "mission_start"
+        );
+
+        payload[0..4].copy_from_slice(&2.0_f32.to_le_bytes());
+        assert!(control_command(&frame(payload.clone()), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("selected mission-item ranges"));
+
+        payload.fill(0);
+        payload[28..30].copy_from_slice(&193_u16.to_le_bytes());
+        payload[30] = 1;
+        payload[31] = 1;
+        payload[0..4].copy_from_slice(&1.0_f32.to_le_bytes());
+        assert_eq!(
+            control_command(&frame(payload.clone()), 1)
+                .unwrap()
+                .unwrap()["type"],
+            "mission_pause"
+        );
+        payload[4..8].copy_from_slice(&1.0_f32.to_le_bytes());
+        assert!(control_command(&frame(payload), 1)
+            .unwrap_err()
+            .to_string()
+            .contains("only its continue/pause parameter"));
     }
 
     #[test]
