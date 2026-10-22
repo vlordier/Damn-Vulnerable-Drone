@@ -22,7 +22,7 @@ DEFAULT_VEHICLES = [
 DEFAULT_SPACING_M = 8.0
 DEFAULT_ARRIVAL_HOLD_RADIUS_M = 0.15
 DEFAULT_TERMINAL_BRAKING_RADIUS_M = 0.15
-SWARM_REPORT_VERSION = "1.15.0"
+SWARM_REPORT_VERSION = "1.16.0"
 POSE_PAIR_TOLERANCE_SECONDS = 0.05
 MINIMUM_SEPARATION_METERS = 1.0
 MINIMUM_POSE_SAMPLES_PER_VEHICLE = 20
@@ -1509,6 +1509,9 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
         "baselineGates",
         "baselineFailedReasons",
         "baselineInconclusiveReasons",
+        "arrivalHoldRadiusM",
+        "terminalBrakingRadiusM",
+        "retainPredecessorGrant",
         "vehicleCount",
         "vehicles",
         "vehiclePairs",
@@ -1527,6 +1530,14 @@ def validate_swarm_report(report: dict[str, Any], run_id: str) -> None:
         or report["behaviorStatus"] not in {"passed", "failed", "inconclusive"}
         or report["probeStatus"] not in {"passed", "failed", "inconclusive", "not_requested"}
         or report["baselineStatus"] not in {"qualified_baseline", "failed", "inconclusive"}
+        or any(
+            not isinstance(report[key], (int, float))
+            or isinstance(report[key], bool)
+            or not math.isfinite(report[key])
+            or not 0.05 <= report[key] <= 2.0
+            for key in ("arrivalHoldRadiusM", "terminalBrakingRadiusM")
+        )
+        or type(report["retainPredecessorGrant"]) is not bool
     ):
         raise ValueError("generated swarm report has invalid contract identity or status")
     vehicles = report["vehicles"]
@@ -1663,6 +1674,7 @@ def main() -> int:
         run_dir,
         [
             "gazebo-pose.jsonl",
+            "research-profile.env",
             "applier-neutral/actuator-output.jsonl",
             "applier-neutral/actuator-lifecycle.jsonl",
             *[f"applier-neutral/{item['callsign']}.armed-state.json" for item in vehicles],

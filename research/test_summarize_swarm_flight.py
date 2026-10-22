@@ -866,6 +866,26 @@ class SummaryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "invalid vehicle evidence"):
             validate_swarm_report(result, run_dir.name)
 
+    def test_report_validation_rejects_malformed_experiment_controls(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "antoine-swarm-flight-test"
+            build_run(run_dir, "lanes")
+            result = run_summary(run_dir)
+
+        for field, value in (
+            ("arrivalHoldRadiusM", True),
+            ("terminalBrakingRadiusM", float("nan")),
+            ("arrivalHoldRadiusM", 2.01),
+            ("retainPredecessorGrant", "false"),
+        ):
+            malformed = json.loads(json.dumps(result))
+            malformed[field] = value
+            with (
+                self.subTest(field=field, value=value),
+                self.assertRaisesRegex(ValueError, "invalid contract identity or status"),
+            ):
+                validate_swarm_report(malformed, run_dir.name)
+
     def test_missing_gazebo_quaternion_makes_attitude_evidence_unavailable(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "antoine-swarm-flight-test"
