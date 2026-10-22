@@ -38,6 +38,7 @@ REQUIRED_ARTIFACTS = (
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 SWARM_CONFIG_CONTRACT = "damn-vulnerable-drone.antoine-swarm-config"
 SWARM_CONFIG_VERSION = "1.3.0"
+MAX_LOAD_PER_CPU = 0.75
 
 
 def is_sha256(value: Any) -> bool:
@@ -337,7 +338,30 @@ def summarize_host_load_comparison(
     variant_during = variant["during"]
     baseline_load = baseline_during["maxLoadAverage"]
     variant_load = variant_during["maxLoadAverage"]
+
+    def load_gate(context: dict[str, Any]) -> dict[str, Any]:
+        max_load = max(context["during"]["maxLoadAverage"][:2])
+        cpu_count = context["during"]["logicalCpuCount"]
+        limit = cpu_count * MAX_LOAD_PER_CPU
+        return {
+            "status": "quiet" if max_load <= limit else "busy",
+            "maximumLoadPerCpu": MAX_LOAD_PER_CPU,
+            "logicalCpuCount": cpu_count,
+            "maximumAllowedLoad": limit,
+            "measuredMaximumLoad": max_load,
+        }
+
+    baseline_gate = load_gate(baseline)
+    variant_gate = load_gate(variant)
     return {
+        "experimentLoadGate": {
+            "baseline": baseline_gate,
+            "variant": variant_gate,
+            "status": (
+                "quiet" if baseline_gate["status"] == variant_gate["status"] == "quiet" else "busy"
+            ),
+            "interpretation": "A busy run exceeds the same 0.75-load-per-CPU threshold used by the flight preflight.",
+        },
         "sampleCounts": {
             "baseline": baseline_during["sampleCount"],
             "variant": variant_during["sampleCount"],
@@ -452,7 +476,7 @@ def verify_pair(baseline_dir: Path, variant_dir: Path, factor: str) -> dict[str,
 
     return {
         "contract": "damn-vulnerable-drone.antoine-swarm-ab-pair",
-        "version": "1.1.0",
+        "version": "1.2.0",
         "status": "matched_inputs",
         "factor": factor,
         "configKey": key,

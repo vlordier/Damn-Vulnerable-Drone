@@ -454,6 +454,7 @@ class PairArtifactTests(unittest.TestCase):
     def test_summarizes_load_and_disk_deltas_without_claiming_causality(self) -> None:
         baseline = {
             "during": {
+                "logicalCpuCount": 10,
                 "sampleCount": 12,
                 "maxLoadAverage": [2.0, 3.0, 4.0],
                 "minDiskFreeBytes": 9_000,
@@ -463,6 +464,7 @@ class PairArtifactTests(unittest.TestCase):
         }
         variant = {
             "during": {
+                "logicalCpuCount": 10,
                 "sampleCount": 10,
                 "maxLoadAverage": [3.25, 2.5, 5.0],
                 "minDiskFreeBytes": 8_500,
@@ -476,7 +478,30 @@ class PairArtifactTests(unittest.TestCase):
         self.assertEqual(result["sampleCounts"], {"baseline": 12, "variant": 10})
         self.assertEqual(result["maxLoadAverage"]["variantMinusBaseline"], [1.25, -0.5, 1.0])
         self.assertEqual(result["minimumDiskFreeBytes"]["variantMinusBaseline"], -500)
+        self.assertEqual(result["experimentLoadGate"]["status"], "quiet")
         self.assertIn("does not qualify equivalent load", result["interpretation"])
+
+    def test_marks_pair_busy_when_either_run_exceeds_flight_load_gate(self) -> None:
+        def run(load: list[float]) -> dict:
+            return {
+                "during": {
+                    "logicalCpuCount": 4,
+                    "maxLoadAverage": load,
+                    "sampleCount": 2,
+                    "minDiskFreeBytes": 100,
+                    "peakCpuPercentByProcess": {},
+                    "simulationAndBuildProcessNames": [],
+                }
+            }
+
+        baseline = run([1.0, 2.0, 3.0])
+        variant = run([3.0, 3.1, 4.0])
+
+        result = summarize_host_load_comparison(baseline, variant)
+
+        self.assertEqual(result["experimentLoadGate"]["baseline"]["status"], "quiet")
+        self.assertEqual(result["experimentLoadGate"]["variant"]["status"], "busy")
+        self.assertEqual(result["experimentLoadGate"]["status"], "busy")
 
     def test_rejects_out_of_order_during_host_samples(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
