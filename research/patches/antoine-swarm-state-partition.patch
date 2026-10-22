@@ -1,7 +1,7 @@
 diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
 --- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
 +++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-@@ -1653,36 +1653,113 @@
+@@ -1653,36 +1653,114 @@
      }
 -    let shared: Arc<Mutex<Option<GzState>>> = Arc::new(Mutex::new(None));
 +    // Keep the source stream available to the independent local authority and
@@ -99,6 +99,7 @@ diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/
 +    }
 +    let shared: Arc<Mutex<Option<GzState>>> = Arc::new(Mutex::new(None));
 +    {
++        let shared = shared.clone();
 +        let state_callsign = callsign.clone();
 +        tokio::spawn(async move {
 +            if rate_trace {
