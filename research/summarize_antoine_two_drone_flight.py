@@ -1534,78 +1534,86 @@ def load_host_context(run_dir: Path, phase: str) -> dict[str, Any]:
 
 def load_host_context_samples(run_dir: Path) -> dict[str, Any]:
     path = run_dir / "research-host-context-during.jsonl"
-    samples: list[dict[str, Any]] = []
+    sample_count = 0
+    first_captured_at: str | None = None
+    last_captured_at: str | None = None
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        stream = path.open(encoding="utf-8")
     except OSError:
         return {"status": "unavailable", "reason": "host-context-samples-missing"}
-    if not lines:
-        return {"status": "invalid", "reason": "host-context-samples-empty"}
     host_id: str | None = None
     previous_time = -1
     peak_cpu: dict[str, float] = {}
     max_load = [0.0, 0.0, 0.0]
     min_disk: int | None = None
     relevant_names: set[str] = set()
-    for sequence, line in enumerate(lines):
-        try:
-            context = json.loads(line)
-        except json.JSONDecodeError:
-            return {"status": "invalid", "reason": "host-context-sample-json-invalid"}
-        load = context.get("loadAverage") if isinstance(context, dict) else None
-        disk = context.get("disk") if isinstance(context, dict) else None
-        processes = context.get("processes") if isinstance(context, dict) else None
-        timestamp = context.get("capturedAtUnixNs") if isinstance(context, dict) else None
-        loads = load.get("values") if isinstance(load, dict) else None
-        if (
-            not isinstance(context, dict)
-            or context.get("contract") != "damn-vulnerable-drone.swarm-host-context"
-            or context.get("version") != "1.0.0"
-            or context.get("runId") != run_dir.name
-            or context.get("phase") != "during"
-            or context.get("sampleSequence") != sequence
-            or not isinstance(timestamp, int)
-            or timestamp <= previous_time
-            or not isinstance(context.get("hostId"), str)
-            or len(context["hostId"]) != 64
-            or (host_id is not None and host_id != context["hostId"])
-            or not isinstance(load, dict)
-            or load.get("status") != "captured"
-            or not isinstance(loads, list)
-            or len(loads) != 3
-            or any(
-                not isinstance(value, (int, float)) or not math.isfinite(value) for value in loads
+    with stream:
+        for sequence, line in enumerate(stream):
+            try:
+                context = json.loads(line)
+            except json.JSONDecodeError:
+                return {"status": "invalid", "reason": "host-context-sample-json-invalid"}
+            load = context.get("loadAverage") if isinstance(context, dict) else None
+            disk = context.get("disk") if isinstance(context, dict) else None
+            processes = context.get("processes") if isinstance(context, dict) else None
+            timestamp = context.get("capturedAtUnixNs") if isinstance(context, dict) else None
+            loads = load.get("values") if isinstance(load, dict) else None
+            captured_at = context.get("capturedAtUtc") if isinstance(context, dict) else None
+            if (
+                not isinstance(context, dict)
+                or context.get("contract") != "damn-vulnerable-drone.swarm-host-context"
+                or context.get("version") != "1.0.0"
+                or context.get("runId") != run_dir.name
+                or context.get("phase") != "during"
+                or context.get("sampleSequence") != sequence
+                or not isinstance(timestamp, int)
+                or timestamp <= previous_time
+                or not isinstance(captured_at, str)
+                or not isinstance(context.get("hostId"), str)
+                or len(context["hostId"]) != 64
+                or (host_id is not None and host_id != context["hostId"])
+                or not isinstance(load, dict)
+                or load.get("status") != "captured"
+                or not isinstance(loads, list)
+                or len(loads) != 3
+                or any(
+                    not isinstance(value, (int, float)) or not math.isfinite(value)
+                    for value in loads
+                )
+                or not isinstance(disk, dict)
+                or not isinstance(disk.get("freeBytes"), int)
+                or not isinstance(processes, dict)
+                or processes.get("status") != "captured"
+                or not isinstance(processes.get("topCpuProcesses"), list)
+                or not isinstance(processes.get("simulationAndBuildProcesses"), list)
+            ):
+                return {"status": "invalid", "reason": "host-context-sample-fields-invalid"}
+            host_id = context["hostId"]
+            previous_time = timestamp
+            first_captured_at = captured_at if first_captured_at is None else first_captured_at
+            last_captured_at = captured_at
+            sample_count += 1
+            for index, value in enumerate(loads):
+                max_load[index] = max(max_load[index], value)
+            min_disk = disk["freeBytes"] if min_disk is None else min(min_disk, disk["freeBytes"])
+            for process in processes["topCpuProcesses"]:
+                if isinstance(process, dict) and isinstance(process.get("name"), str):
+                    cpu = process.get("cpuPercent")
+                    if isinstance(cpu, (int, float)) and math.isfinite(cpu):
+                        peak_cpu[process["name"]] = max(peak_cpu.get(process["name"], 0), cpu)
+            relevant_names.update(
+                process["name"]
+                for process in processes["simulationAndBuildProcesses"]
+                if isinstance(process, dict) and isinstance(process.get("name"), str)
             )
-            or not isinstance(disk, dict)
-            or not isinstance(disk.get("freeBytes"), int)
-            or not isinstance(processes, dict)
-            or processes.get("status") != "captured"
-            or not isinstance(processes.get("topCpuProcesses"), list)
-            or not isinstance(processes.get("simulationAndBuildProcesses"), list)
-        ):
-            return {"status": "invalid", "reason": "host-context-sample-fields-invalid"}
-        host_id = context["hostId"]
-        previous_time = timestamp
-        for index, value in enumerate(loads):
-            max_load[index] = max(max_load[index], value)
-        min_disk = disk["freeBytes"] if min_disk is None else min(min_disk, disk["freeBytes"])
-        for process in processes["topCpuProcesses"]:
-            if isinstance(process, dict) and isinstance(process.get("name"), str):
-                cpu = process.get("cpuPercent")
-                if isinstance(cpu, (int, float)) and math.isfinite(cpu):
-                    peak_cpu[process["name"]] = max(peak_cpu.get(process["name"], 0), cpu)
-        relevant_names.update(
-            process["name"]
-            for process in processes["simulationAndBuildProcesses"]
-            if isinstance(process, dict) and isinstance(process.get("name"), str)
-        )
-        samples.append(context)
+    if sample_count < 2:
+        return {"status": "invalid", "reason": "host-context-insufficient-samples"}
     return {
         "status": "captured",
         "hostId": host_id,
-        "sampleCount": len(samples),
-        "firstCapturedAtUtc": samples[0].get("capturedAtUtc"),
-        "lastCapturedAtUtc": samples[-1].get("capturedAtUtc"),
+        "sampleCount": sample_count,
+        "firstCapturedAtUtc": first_captured_at,
+        "lastCapturedAtUtc": last_captured_at,
         "maxLoadAverage": max_load,
         "minDiskFreeBytes": min_disk,
         "peakCpuPercentByProcess": dict(sorted(peak_cpu.items())),
