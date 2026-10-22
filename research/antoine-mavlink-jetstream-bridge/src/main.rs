@@ -182,6 +182,31 @@ fn validate_frame(raw: &[u8]) -> Result<FrameInfo> {
             payload: raw[payload_start..crc_offset].to_vec(),
         });
     }
+    let mission_crc_extra = match message_id {
+        43 => Some(132), // MISSION_REQUEST_LIST
+        44 => Some(221), // MISSION_COUNT
+        45 => Some(232), // MISSION_CLEAR_ALL
+        51 => Some(196), // MISSION_REQUEST_INT
+        73 => Some(38),  // MISSION_ITEM_INT
+        _ => None,
+    };
+    if let Some(crc_extra) = mission_crc_extra {
+        let crc_offset = raw.len() - 2;
+        let expected_crc = x25_checksum(&raw[1..crc_offset], crc_extra);
+        let actual_crc = u16::from_le_bytes([raw[crc_offset], raw[crc_offset + 1]]);
+        if raw[0] == 0xfd && actual_crc == expected_crc {
+            return Ok(FrameInfo {
+                system_id,
+                component_id,
+                message_id,
+                sequence,
+                payload: raw[payload_start..crc_offset].to_vec(),
+            });
+        }
+        if raw[0] == 0xfd {
+            bail!("mission MAVLink checksum mismatch");
+        }
+    }
     let mut reader = PeekReader::new(Cursor::new(raw));
     let (header, message) = match raw[0] {
         0xfe => mavlink::read_v1_msg::<MavMessage, _>(&mut reader)?,
@@ -1119,6 +1144,14 @@ async fn qgc_to_antoine_nats(
         );
         if frame.message_id == 44 {
             if frame.payload.len() < 4 {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    1,
+                );
+                gcs.send_to(&ack, source).await?;
                 continue;
             }
             let count = u16::from_le_bytes([frame.payload[0], frame.payload[1]]) as usize;
@@ -1269,8 +1302,18 @@ async fn qgc_to_antoine_nats(
         }
         if frame.message_id == 43 {
             tracing::debug!("mission list requested");
-            if frame.payload.len() < 2
-                || (frame.payload[0] != 0 && frame.payload[0] != config.system_id)
+            if frame.payload.len() < 2 {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    1,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
+            }
+            if (frame.payload[0] != 0 && frame.payload[0] != config.system_id)
                 || (frame.payload[1] != 0 && frame.payload[1] != 1)
             {
                 continue;
@@ -1419,10 +1462,18 @@ async fn qgc_to_antoine_nats(
             continue;
         }
         if frame.message_id == 51 {
-            if frame.payload.len() < 4
-                || frame.payload[2] != config.system_id
-                || frame.payload[3] != 1
-            {
+            if frame.payload.len() < 4 {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    1,
+                );
+                gcs.send_to(&ack, source).await?;
+                continue;
+            }
+            if frame.payload[2] != config.system_id || frame.payload[3] != 1 {
                 continue;
             }
             if frame.payload.len() > 5 {
@@ -1497,6 +1548,14 @@ async fn qgc_to_antoine_nats(
         }
         if frame.message_id == 73 {
             if frame.payload.len() < 34 {
+                let ack = mission_ack(
+                    frame.sequence.wrapping_add(1),
+                    config.system_id,
+                    frame.system_id,
+                    frame.component_id,
+                    1,
+                );
+                gcs.send_to(&ack, source).await?;
                 continue;
             }
             let seq = u16::from_le_bytes([frame.payload[28], frame.payload[29]]) as usize;

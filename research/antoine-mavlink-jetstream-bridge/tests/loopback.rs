@@ -891,6 +891,32 @@ async fn antoine_nats_mode_routes_arm_commands_and_telemetry_to_qgc() -> Result<
         "unsupported mission-list type must not query Antoine"
     );
 
+    for (message_id, sequence, payload, crc_extra) in [
+        (43, 18, vec![1], 132),
+        (44, 19, vec![1, 0], 221),
+        (51, 20, vec![0, 0], 196),
+        (73, 21, vec![0; 30], 38),
+    ] {
+        let malformed = v2_frame(message_id, sequence, 255, &payload, crc_extra);
+        gcs.send_to(&malformed, qgc_bind).await?;
+        let (length, _) = timeout(Duration::from_secs(2), gcs.recv_from(&mut buffer))
+            .await
+            .with_context(|| {
+                format!("truncated mission message {message_id} response timeout")
+            })??;
+        let (_, response) = mavlink::read_v2_msg::<mavlink::dialects::common::MavMessage, _>(
+            &mut mavlink::peek_reader::PeekReader::new(std::io::Cursor::new(&buffer[..length])),
+        )?;
+        let mavlink::dialects::common::MavMessage::MISSION_ACK(ack) = response else {
+            anyhow::bail!("expected MISSION_ACK for truncated mission message {message_id}");
+        };
+        assert_eq!(
+            ack.mavtype,
+            mavlink::dialects::common::MavMissionResult::MAV_MISSION_ERROR,
+            "truncated mission message {message_id} should fail explicitly"
+        );
+    }
+
     let unsupported_count_payload = [1, 0, 1, 1, 1];
     let unsupported_count = v2_frame(44, 13, 255, &unsupported_count_payload, 221);
     gcs.send_to(&unsupported_count, qgc_bind).await?;
