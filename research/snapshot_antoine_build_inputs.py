@@ -230,6 +230,8 @@ def patch_hunk_superseded_by_upstream(hunk: bytes, source_root: Path) -> bool:
             "fn mission_setpoint_matches_live_authorization(",
             "buffer.authorized_for(&grants, &admissions, &callsign, &world_frame_id, now_ms)",
             "state=pending-authorization",
+            "fn mission_setpoint_parser_requires_fresh_bound_fields_and_vehicle()",
+            "fn waypoint_handoff_keeps_old_pair_until_new_grant_and_setpoint_both_arrive()",
         )
     )
 

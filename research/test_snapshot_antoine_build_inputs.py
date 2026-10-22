@@ -48,6 +48,8 @@ class AntoineSourceSnapshotTests(unittest.TestCase):
                 "fn mission_setpoint_matches_live_authorization() {}\n"
                 "buffer.authorized_for(&grants, &admissions, &callsign, &world_frame_id, now_ms)\n"
                 "state=pending-authorization\n"
+                "fn mission_setpoint_parser_requires_fresh_bound_fields_and_vehicle() {}\n"
+                "fn waypoint_handoff_keeps_old_pair_until_new_grant_and_setpoint_both_arrive() {}\n"
             )
 
             self.assertTrue(snapshot.patch_hunk_superseded_by_upstream(hunk, root))
@@ -257,7 +259,9 @@ class AntoineSourceSnapshotTests(unittest.TestCase):
                 "fn authorized_for() {}\n"
                 "fn mission_setpoint_matches_live_authorization() {}\n"
                 "buffer.authorized_for(&grants, &admissions, &callsign, &world_frame_id, now_ms);\n"
-                "state=pending-authorization;\n",
+                "state=pending-authorization;\n"
+                "fn mission_setpoint_parser_requires_fresh_bound_fields_and_vehicle() {}\n"
+                "fn waypoint_handoff_keeps_old_pair_until_new_grant_and_setpoint_both_arrive() {}\n",
                 encoding="utf-8",
             )
             receiver_hunk = (
