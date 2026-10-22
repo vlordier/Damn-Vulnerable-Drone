@@ -68,7 +68,22 @@ class InteractiveProfilePinCandidateTests(unittest.TestCase):
 
     def test_candidate_rejects_missing_source_digests(self) -> None:
         del self.receipt["source"]["antoine"]["trackedDiffSha256"]
-        with self.assertRaisesRegex(ValueError, "source digests are incomplete"):
+        with self.assertRaisesRegex(ValueError, "source digests are missing or malformed"):
+            create_candidate(self.receipt, self.comparison)
+
+    def test_candidate_rejects_malformed_source_digest(self) -> None:
+        self.receipt["source"]["antoine"]["trackedDiffSha256"] = "not-a-digest"
+        with self.assertRaisesRegex(ValueError, "source digests are missing or malformed"):
+            create_candidate(self.receipt, self.comparison)
+
+    def test_candidate_rejects_boolean_dirty_file_count(self) -> None:
+        self.receipt["source"]["antoine"]["dirtyFileCount"] = True
+        with self.assertRaisesRegex(ValueError, "dirty-file count"):
+            create_candidate(self.receipt, self.comparison)
+
+    def test_candidate_rejects_malformed_artifact_digest(self) -> None:
+        self.receipt["artifacts"]["qgroundcontrolBinarySha256"] = "not-a-digest"
+        with self.assertRaisesRegex(ValueError, "malformed SHA-256"):
             create_candidate(self.receipt, self.comparison)
 
     def test_candidate_allows_unavailable_checkout_when_snapshot_is_pinned(self) -> None:

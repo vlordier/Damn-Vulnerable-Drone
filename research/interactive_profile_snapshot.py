@@ -10,6 +10,11 @@ SNAPSHOT_RECORD_FIELDS = frozenset({"path", "receiptSha256", "snapshotManifestSh
 _SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 
 
+def is_sha256(value: Any) -> bool:
+    """Return whether value is a lowercase, 64-character SHA-256 digest."""
+    return isinstance(value, str) and _SHA256.fullmatch(value) is not None
+
+
 def snapshot_record_error(value: Any) -> str | None:
     """Return why a snapshot pin record is malformed, or None when complete."""
     if not isinstance(value, dict) or set(value) != SNAPSHOT_RECORD_FIELDS:
@@ -29,7 +34,7 @@ def snapshot_record_error(value: Any) -> str | None:
 
     for field in ("receiptSha256", "snapshotManifestSha256"):
         digest = value.get(field)
-        if not isinstance(digest, str) or _SHA256.fullmatch(digest) is None:
+        if not is_sha256(digest):
             return f"{field} must be a lowercase SHA-256 digest"
 
     file_count = value.get("fileCount")

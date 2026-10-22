@@ -5,12 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from interactive_profile_snapshot import SNAPSHOT_RECORD_FIELDS, snapshot_record_error
+from interactive_profile_snapshot import SNAPSHOT_RECORD_FIELDS, is_sha256, snapshot_record_error
 
 PIN_CONTRACT = "damn-vulnerable-drone.interactive-profile-pins"
 PIN_VERSION = "1.0.0"
@@ -22,11 +21,6 @@ DIRTY_SOURCE_FIELDS = (
 SOURCE_SNAPSHOT_FOR = {"antoine": "antoine", "gazeboAssets": "gazebo"}
 HEADLESS_PROFILE = "headless-antoine-gazebo-mavlink"
 HEADLESS_OPTIONAL_ARTIFACTS = {"qgroundcontrolBinarySha256", "qgcSettingsSha256"}
-SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
-
-
-def is_sha256(value: Any) -> bool:
-    return isinstance(value, str) and SHA256_PATTERN.fullmatch(value) is not None
 
 
 def verify(receipt: Any, pins: Any) -> dict[str, Any]:

@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from create_interactive_profile_receipt import snapshot_record
-from interactive_profile_snapshot import snapshot_record_error
+from interactive_profile_snapshot import is_sha256, snapshot_record_error
 
 PIN_CONTRACT = "damn-vulnerable-drone.interactive-profile-pins"
 COMPARISON_CONTRACT = "damn-vulnerable-drone.antoine-provenance-comparison"
@@ -171,16 +171,18 @@ def create_candidate(receipt: Any, comparison: Any) -> dict[str, Any]:
             record.get("revision"), str
         ):
             raise ValueError(f"receipt source state is unavailable: {name}")
-        if any(
-            not isinstance(record.get(field), str) or not record[field]
-            for field in DIRTY_SOURCE_FIELDS
-        ):
-            raise ValueError(f"source digests are incomplete: {name}")
-        if not isinstance(record.get("dirtyFileCount"), int):
+        if any(not is_sha256(record.get(field)) for field in DIRTY_SOURCE_FIELDS):
+            raise ValueError(f"source digests are missing or malformed: {name}")
+        if type(record.get("dirtyFileCount")) is not int or record["dirtyFileCount"] < 0:
             raise ValueError(f"source dirty-file count is missing: {name}")
     for section_name, values in (("artifacts", pinned_artifacts), ("toolchain", toolchain)):
         if any(not isinstance(value, str) or not value for value in values.values()):
             raise ValueError(f"receipt {section_name} contains unavailable values")
+    if any(
+        not name.endswith("Sha256") or not is_sha256(value)
+        for name, value in pinned_artifacts.items()
+    ):
+        raise ValueError("receipt artifacts contain malformed SHA-256 values")
 
     return {
         "contract": PIN_CONTRACT,
