@@ -3,11 +3,12 @@ SHELL := /bin/bash
 
 UV ?= uv
 SHELLCHECK ?= shellcheck
+HADOLINT ?= hadolint
+NODE ?= node
 RESEARCH_PYTHON := $(UV) run --project research
 RESEARCH_FLIGHT := research/run-antoine-two-drone-flight.sh
 SWARM_RUNNER = RUSTUP_TOOLCHAIN="$(RUSTUP_TOOLCHAIN)" ANTOINE_GZ_CARGO_TARGET_DIR="$(ANTOINE_GZ_CARGO_TARGET_DIR)" ANTOINE_SWARM_MIN_FREE_MIB="$(ANTOINE_SWARM_MIN_FREE_MIB)" ANTOINE_SWARM_MAX_LOAD_PER_CPU="$(ANTOINE_SWARM_MAX_LOAD_PER_CPU)" ./$(RESEARCH_FLIGHT)
 SWARM_LIVE_SECONDS ?= 75
-LAB_SHELL_SCRIPTS := $(wildcard research/*.sh) scripts/run-antoine.sh scripts/run-qgc-antoine.sh
 ANTOINE_BRIDGE_DIR ?= $(CURDIR)/research/antoine-mavlink-jetstream-bridge
 ANTOINE_BRIDGE_TARGET_DIR ?= /tmp/dvd-antoine-bridge-target
 ANTOINE_QGC_DIR ?= $(HOME)/Work/antoine-qgroundcontrol
@@ -23,10 +24,12 @@ MAVLINK_CONSOLE_DIR := research/mavlink-nats-console
 MAVLINK_CONSOLE_TARGET_DIR ?= /tmp/dvd-mavlink-console-target
 MAVLINK_CONSOLE_ARGS ?= --nats-url nats://127.0.0.1:14224 --callsign qgc-live --listen 127.0.0.1:14570 --bridge 127.0.0.1:14651
 MAVLINK_AUDIT_STREAM ?= ANTOINE_MAVLINK
+RUST_LINT_TARGET_DIR ?= /tmp/dvd-rust-lint-target
+RUST_LINT_MANIFESTS := research/antoine-mavlink-jetstream-bridge/Cargo.toml research/mavlink-nats-console/Cargo.toml
 QGC_UDP_LISTEN_PORT ?= 14550
 QGC_BRIDGE_PORT ?= 14651
 
-.PHONY: help doctor antoine-gz-battery-patch antoine-gz-battery-test antoine-gz-rebuild-check console-start console-status console-stop baseline attack-waypoint attack-replay observe-nats probe-gps observe-camera early-revoke state-timing swarm-smoke swarm-baseline swarm-flight swarm-live swarm-vee swarm-rendezvous swarm-split swarm-bridge swarm-3 swarm-5 swarm-blackhole swarm-rate swarm-auth-isolation test-swarm test-research test-process-supervisor bridge-test bridge-build mavlink-console mavlink-console-start mavlink-console-stop mavlink-control mavlink-arm mavlink-disarm mavlink-check mavlink-flight-check mavlink-gazebo-headless-check mavlink-gazebo-headless-lifecycle-check mavlink-gazebo-flight-check mavlink-full-check qgc-antoine-patch qgc-antoine-build qgc-antoine-run qgc-antoine-check qgc-gazebo-preflight qgc-gazebo qgc-gazebo-status qgc-gazebo-stop qgc-gazebo-verify qgc-gazebo-pin-candidate qgc-gazebo-check lint validate
+.PHONY: help doctor antoine-gz-battery-patch antoine-gz-battery-test antoine-gz-rebuild-check console-start console-status console-stop baseline attack-waypoint attack-replay observe-nats probe-gps observe-camera early-revoke state-timing swarm-smoke swarm-baseline swarm-flight swarm-live swarm-vee swarm-rendezvous swarm-split swarm-bridge swarm-3 swarm-5 swarm-blackhole swarm-rate swarm-auth-isolation test-swarm test-research test-process-supervisor bridge-test bridge-build mavlink-console mavlink-console-start mavlink-console-stop mavlink-control mavlink-arm mavlink-disarm mavlink-check mavlink-flight-check mavlink-gazebo-headless-check mavlink-gazebo-headless-lifecycle-check mavlink-gazebo-flight-check mavlink-full-check qgc-antoine-patch qgc-antoine-build qgc-antoine-run qgc-antoine-check qgc-gazebo-preflight qgc-gazebo qgc-gazebo-status qgc-gazebo-stop qgc-gazebo-verify qgc-gazebo-pin-candidate qgc-gazebo-check lint lint-python lint-shell lint-data lint-docker lint-javascript lint-rust lint-native validate
 
 help: ## Show common commands
 	@printf '%s\n' \
@@ -81,7 +84,7 @@ help: ## Show common commands
 	  '  make qgc-gazebo-verify PROFILE_RECEIPT=... PROFILE_PINS=... Compare to reviewed runtime pins' \
 	  '  make qgc-gazebo-pin-candidate PROFILE_RECEIPT=... PROFILE_COMPARISON=... PROFILE_PIN_CANDIDATE=...' \
 	  '  make qgc-gazebo-check Verify GCS-style UDP frames reach the Gazebo audit' \
-	  '  make lint              Run Ruff, ShellCheck, and shell syntax checks' \
+	  '  make lint              Run repository-wide Python, shell, data, Docker, JS, Rust, and C++ checks' \
 	  '  make validate          Run lint and validate the scenario catalog'
 
 antoine-gz-battery-patch: ## Apply versioned Antoine Gazebo battery and world-binding fixes
@@ -436,11 +439,34 @@ mavlink-gazebo-flight-check: ## Exercise modes, takeoff, position, mission, RTL,
 	run_dir="$${ANTOINE_GZ_RUN_DIR:-$$(dirname "$$(dirname "$$pose_file")")}"; \
 	ANTOINE_GZ_POSE_FILE="$$pose_file" ANTOINE_GZ_RUN_DIR="$$run_dir" MAVLINK_NATS_URL="$${MAVLINK_NATS_URL:-nats://127.0.0.1:14226}" MAVLINK_CALLSIGN="$${MAVLINK_CALLSIGN:-drone-1}" QGC_BRIDGE_PORT="$(QGC_BRIDGE_PORT)" $(UV) run --project research --group mavlink-check research/mavlink-nats-console/gazebo_flight_check.py
 
-lint: ## Run focused Python and shell lint checks
+lint: lint-python lint-shell lint-data lint-docker lint-javascript lint-rust lint-native ## Run repository-wide language and data lint checks
+
+lint-python: ## Lint and format-check tracked Python areas
 	$(RESEARCH_PYTHON) --group lint ruff check research
 	$(RESEARCH_PYTHON) --group lint ruff format --check research
-	$(SHELLCHECK) --external-sources --shell=bash --enable=all --severity=warning $(LAB_SHELL_SCRIPTS)
-	@for script in $(LAB_SHELL_SCRIPTS); do bash -n "$$script"; done
+	@git ls-files -z '*.py' | grep -zvE '^(simulator/gzweb/get_local_models\.py|simulator/gzweb/webify_models(_v2)?\.py)$$' | xargs -0 -r $(UV) run --project research --group lint ruff check --select F,I --ignore F841
+
+lint-shell: ## Lint shell scripts and check their syntax
+	@git ls-files -z '*.sh' | xargs -0 -r $(SHELLCHECK) --external-sources --shell=bash --enable=all --severity=warning
+	@git ls-files -z '*.sh' | xargs -0 -r -n1 bash -n
+
+lint-data: ## Parse every tracked YAML and JSON file
+	$(RESEARCH_PYTHON) python research/lint_tracked_data.py
+
+lint-docker: ## Lint every tracked Dockerfile (errors fail; warnings remain visible)
+	@git ls-files -z '*Dockerfile*' | xargs -0 -r $(HADOLINT) --failure-threshold error
+
+lint-javascript: ## Syntax-check tracked first-party JavaScript
+	@git ls-files -z '*.js' | grep -zvE '(^|/)(include|static)/|\.min\.js$$' | xargs -0 -r -n1 $(NODE) --check
+
+lint-rust: ## Format and Clippy-check local Rust tools
+	@set -eu; for manifest in $(RUST_LINT_MANIFESTS); do \
+	  cargo fmt --manifest-path "$$manifest" --check; \
+	  CARGO_TARGET_DIR="$(RUST_LINT_TARGET_DIR)" CARGO_BUILD_JOBS=1 cargo clippy --locked --all-targets --manifest-path "$$manifest" -- -D warnings; \
+	done
+
+lint-native: ## Run warning-level static analysis on maintained C/C++ sources
+	cppcheck --enable=warning --error-exitcode=1 --quiet --suppress='*:simulator/gzweb/tools/nanoflann.hpp' research/dvd_research/process_supervisor.c simulator/gzweb/gzbridge simulator/gzweb/tools
 
 validate: lint ## Lint and validate scenario catalog and crosswalk structure
 	$(RESEARCH_PYTHON) python -c "from pathlib import Path; from dvd_research.scenario_catalog import load_scenario_catalog; scenarios = load_scenario_catalog(Path('research/scenario-catalog.json'), Path('.'), Path('simulator/mgmt/templates/pages/attacks/antoine')); print('Validated', len(scenarios), 'research scenarios')"
