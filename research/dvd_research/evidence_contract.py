@@ -15,6 +15,15 @@ SIGNATURE_FILENAME = "research-evidence-signature.json"
 DIGEST = re.compile(r"^[0-9a-f]{64}$")
 
 
+def contains_symlink_component(root: Path, relative_path: Path) -> bool:
+    current = root
+    for component in relative_path.parts:
+        current = current / component
+        if current.is_symlink():
+            return True
+    return False
+
+
 def verify_manifest(manifest_path: Path) -> tuple[bool, list[str]]:
     errors: list[str] = []
     if manifest_path.is_symlink() or manifest_path.parent.is_symlink():
@@ -59,7 +68,7 @@ def verify_manifest(manifest_path: Path) -> tuple[bool, list[str]]:
             continue
         path = manifest_path.parent / name
         try:
-            if path.is_symlink() or not path.is_file():
+            if contains_symlink_component(run_dir, Path(name)) or not path.is_file():
                 errors.append(f"evidence file is missing or escapes run directory: {name}")
                 continue
             try:

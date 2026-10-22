@@ -9,7 +9,11 @@ import json
 from pathlib import Path
 from typing import Any
 
-from dvd_research.evidence_contract import classify_measurements, sign_manifest_if_configured
+from dvd_research.evidence_contract import (
+    classify_measurements,
+    contains_symlink_component,
+    sign_manifest_if_configured,
+)
 from dvd_research.scenario_catalog import load_scenario_catalog
 
 PUBLIC_EVIDENCE = {
@@ -400,7 +404,7 @@ def build(run_dir: Path) -> dict[str, Any]:
     for name in sorted(evidence_paths):
         path = run_dir / name
         try:
-            safe_file = path.is_file() and not path.is_symlink()
+            safe_file = path.is_file() and not contains_symlink_component(run_dir, Path(name))
             if safe_file:
                 path.resolve(strict=True).relative_to(run_dir)
         except (OSError, ValueError):
