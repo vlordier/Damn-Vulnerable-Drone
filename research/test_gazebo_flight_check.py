@@ -37,6 +37,15 @@ class GazeboFailureReportTests(unittest.TestCase):
         self.assertIn("printf 'ANTOINE_GZ_CALLSIGN=%s\\n' \"${ANTOINE_GZ_CALLSIGN}\"", runner)
         self.assertIn('"ANTOINE_GZ_CALLSIGN",', provenance)
 
+    def test_runner_keeps_state_request_above_control_cadence_margin(self) -> None:
+        runner = (SCRIPT.parents[1] / "run-antoine-gazebo-mavlink.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'export ANTOINE_GZ_FLIGHT_CONTROL_HZ="${ANTOINE_GZ_FLIGHT_CONTROL_HZ:-25}"', runner
+        )
+        self.assertIn(
+            'export ANTOINE_GZ_FLIGHT_STATE_HZ="${ANTOINE_GZ_FLIGHT_STATE_HZ:-75}"', runner
+        )
+
     def test_launcher_exits_on_interrupt_and_runs_cleanup_once(self) -> None:
         runner = SCRIPT.parents[1] / "run-antoine-gazebo-mavlink.sh"
         content = runner.read_text(encoding="utf-8")
