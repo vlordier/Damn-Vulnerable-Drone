@@ -256,6 +256,9 @@ Before the interactive profile starts, `qgc-gazebo-preflight` verifies that
 the complete canonical patch is already present in the configured QGC Git
 checkout. A missing or partially diverged patch fails preflight instead of
 being represented by the canonical patch hash in the run receipt.
+If `ANTOINE_QGC_BINARY` selects a custom build path, it must resolve inside
+that same checkout; preflight, the run receipt, and the QGC launcher all use
+the selected executable path.
 
 Run `make qgc-antoine-check` to send a harmless GCS heartbeat and targeted
 `REQUEST_DATA_STREAM` frame and verify both were written to the callsign's

@@ -6,7 +6,7 @@ QGC_CONFIG="${QGC_CONFIG:-Debug}"
 QGC_UDP_LISTEN_PORT="${QGC_UDP_LISTEN_PORT:-14550}"
 QGC_BRIDGE_PORT="${QGC_BRIDGE_PORT:-14651}"
 QGC_SETTINGS_DIR="${QGC_SETTINGS_DIR:-/tmp/dvd-qgc-antoine-config}"
-QGC_APP="${ANTOINE_QGC_DIR}/build/${QGC_CONFIG}/QGroundControl.app/Contents/MacOS/QGroundControl"
+QGC_APP="${ANTOINE_QGC_BINARY:-${ANTOINE_QGC_DIR}/build/${QGC_CONFIG}/QGroundControl.app/Contents/MacOS/QGroundControl}"
 QGC_SETTINGS_FILE="${QGC_SETTINGS_DIR}/qgroundcontrol.com/QGroundControl Daily.ini"
 
 [[ -x "${QGC_APP}" ]] || {

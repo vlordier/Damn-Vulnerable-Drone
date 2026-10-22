@@ -185,7 +185,8 @@ if [[ "${OPEN_QGC}" == "1" ]]; then
   uv run --project "${PROJECT_ROOT}/research" python \
     "${PROJECT_ROOT}/research/check_qgroundcontrol_patch.py" \
     --root "${ANTOINE_QGC_DIR}" \
-    --patch "${PROJECT_ROOT}/research/patches/qgroundcontrol-antoine.patch"
+    --patch "${PROJECT_ROOT}/research/patches/qgroundcontrol-antoine.patch" \
+    --binary "${QGC_BINARY}"
 fi
 [[ -x "${HOME}/Work/gz-macOS/ws/install/bin/gz" ]] || {
   echo "Missing source-built Gazebo at ~/Work/gz-macOS/ws/install/bin/gz" >&2
@@ -428,6 +429,7 @@ done
 if [[ "${OPEN_QGC}" == "1" ]] && ! lsof -nP -iUDP:"${QGC_LISTEN_PORT}" 2>/dev/null | rg -q 'QGroundCo'; then
   echo "Opening the local QGroundControl build..."
   QGC_UDP_LISTEN_PORT="${QGC_LISTEN_PORT}" QGC_BRIDGE_PORT="${QGC_BIND_PORT}" \
+    ANTOINE_QGC_BINARY="${QGC_BINARY}" \
     ANTOINE_QGC_DIR="${ANTOINE_QGC_DIR:-${HOME}/Work/antoine-qgroundcontrol}" \
     QGC_CONFIG="${QGC_CONFIG:-Debug}" "${PROJECT_ROOT}/scripts/run-qgc-antoine.sh"
 fi

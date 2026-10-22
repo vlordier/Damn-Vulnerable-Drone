@@ -6,12 +6,25 @@ import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from check_qgroundcontrol_patch import verify_applied_patch
+from check_qgroundcontrol_patch import verify_applied_patch, verify_binary_in_checkout
 
 PATCH = Path(__file__).resolve().parent / "patches" / "qgroundcontrol-antoine.patch"
+ROOT = PATCH.parent.parent.parent
 
 
 class QGroundControlPatchContractTests(unittest.TestCase):
+    def test_profile_preflight_receipt_and_launcher_share_qgc_binary_override(self) -> None:
+        makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+        profile_runner = (ROOT / "research/run-antoine-gazebo-mavlink.sh").read_text(
+            encoding="utf-8"
+        )
+        qgc_launcher = (ROOT / "scripts/run-qgc-antoine.sh").read_text(encoding="utf-8")
+        self.assertIn('qgc_binary="$${ANTOINE_QGC_BINARY:-', makefile)
+        self.assertIn('ANTOINE_QGC_BINARY="${QGC_BINARY}"', profile_runner)
+        self.assertIn('QGC_APP="${ANTOINE_QGC_BINARY:-', qgc_launcher)
+        self.assertIn('--binary "$$qgc_binary"', makefile)
+        self.assertIn('--binary "${QGC_BINARY}"', profile_runner)
+
     def test_antoine_arm_ui_is_scoped_to_supported_vehicle_identity(self) -> None:
         patch = PATCH.read_text(encoding="utf-8")
         self.assertIn(
@@ -64,7 +77,12 @@ class QGroundControlPatchContractTests(unittest.TestCase):
                     capture_output=True,
                 ).stdout
             )
+            binary = root / "build" / "QGroundControl"
+            binary.parent.mkdir()
+            binary.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            binary.chmod(0o755)
 
+            verify_binary_in_checkout(root, binary)
             verify_applied_patch(root, patch)
             source.write_text("int limit = 4;\n", encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "not fully applied"):
@@ -72,6 +90,15 @@ class QGroundControlPatchContractTests(unittest.TestCase):
             source.write_text("int limit = 2;\n", encoding="utf-8")
             with self.assertRaisesRegex(RuntimeError, "not fully applied"):
                 verify_applied_patch(root, patch)
+
+    def test_qgc_binary_override_must_remain_inside_its_checkout(self) -> None:
+        with TemporaryDirectory() as temporary:
+            root = Path(temporary) / "qgc"
+            root.mkdir()
+            outside = Path(temporary) / "QGroundControl"
+            outside.write_text("not a QGC build", encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "outside its source checkout"):
+                verify_binary_in_checkout(root, outside)
 
 
 if __name__ == "__main__":

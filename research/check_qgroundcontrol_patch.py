@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import subprocess
 from pathlib import Path
 
@@ -23,16 +24,31 @@ def verify_applied_patch(root: Path, patch: Path) -> None:
         raise RuntimeError(message)
 
 
+def verify_binary_in_checkout(root: Path, binary: Path) -> None:
+    checkout = root.resolve(strict=True)
+    executable = binary.resolve(strict=True)
+    try:
+        executable.relative_to(checkout)
+    except ValueError as error:
+        raise RuntimeError(
+            f"QGroundControl executable {executable} is outside its source checkout {checkout}"
+        ) from error
+    if not executable.is_file() or not os.access(executable, os.X_OK):
+        raise RuntimeError(f"QGroundControl executable is not executable: {executable}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True, help="QGroundControl Git checkout")
     parser.add_argument("--patch", type=Path, required=True, help="canonical Antoine patch")
+    parser.add_argument("--binary", type=Path, required=True, help="executable to launch")
     args = parser.parse_args()
     try:
+        verify_binary_in_checkout(args.root, args.binary)
         verify_applied_patch(args.root, args.patch)
     except (OSError, RuntimeError) as error:
         parser.error(str(error))
-    print(f"Verified canonical Antoine patch in {args.root}")
+    print(f"Verified QGroundControl executable and canonical Antoine patch in {args.root}")
     return 0
 
 

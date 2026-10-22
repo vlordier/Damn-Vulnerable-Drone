@@ -338,7 +338,7 @@ qgc-antoine-check: ## Verify QGC-origin heartbeats and requests reach the bridge
 
 qgc-gazebo-preflight: ## Check large interactive-profile prerequisites before starting any build
 	@set -eu; \
-	qgc_binary="$(ANTOINE_QGC_DIR)/build/$(QGC_CONFIG)/QGroundControl.app/Contents/MacOS/QGroundControl"; \
+	qgc_binary="$${ANTOINE_QGC_BINARY:-$(ANTOINE_QGC_DIR)/build/$(QGC_CONFIG)/QGroundControl.app/Contents/MacOS/QGroundControl}"; \
 	gz_binary="$${GZ_BIN:-$(HOME)/Work/gz-macOS/ws/install/bin/gz}"; \
 	if [[ ! -x "$$qgc_binary" ]]; then \
 	  echo "Missing configured Antoine-patched QGroundControl executable: $$qgc_binary" >&2; \
@@ -353,7 +353,7 @@ qgc-gazebo-preflight: ## Check large interactive-profile prerequisites before st
 	fi; \
 	[[ -x "$$gz_binary" ]] || { echo "Missing source-built Gazebo executable: $$gz_binary" >&2; exit 1; }; \
 	$(UV) run --project research python research/check_qgroundcontrol_patch.py \
-	  --root "$(ANTOINE_QGC_DIR)" --patch "$(CURDIR)/$(QGC_ANTOINE_PATCH)"; \
+	  --root "$(ANTOINE_QGC_DIR)" --patch "$(CURDIR)/$(QGC_ANTOINE_PATCH)" --binary "$$qgc_binary"; \
 	echo 'Interactive QGC and Gazebo executables are present.'; \
 	QGC_GAZEBO_MIN_FREE_MIB="$(QGC_GAZEBO_MIN_FREE_MIB)" ./research/check-free-space.sh \
 	  "$(ANTOINE_GZ_CARGO_TARGET_DIR)" "$(ANTOINE_BRIDGE_TARGET_DIR)" \
