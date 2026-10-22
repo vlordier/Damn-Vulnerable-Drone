@@ -171,6 +171,38 @@ class AntoineSourceSnapshotTests(unittest.TestCase):
             self.assertEqual(receipt["sourcePatch"]["status"], "already-present")
             self.assertEqual(receipt["sourceManifestSha256"], receipt["snapshotManifestSha256"])
 
+    def test_newer_buffered_grant_gate_supersedes_old_receive_time_hunks(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs"
+            target.parent.mkdir(parents=True)
+            target.write_text(
+                "struct MissionSetpointBuffer { candidate: bool }\n"
+                "fn authorized_for() {}\n"
+                "fn mission_setpoint_matches_live_authorization() {}\n"
+                "buffer.authorized_for(&grants, &admissions, &callsign, &world_frame_id, now_ms);\n"
+                "state=pending-authorization;\n",
+                encoding="utf-8",
+            )
+            receiver_hunk = (
+                b"--- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs\n"
+                b"+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs\n"
+                b"@@ -1,2 +1,3 @@\n"
+                b" let setpoint_subject = String::new();\n"
+                b"+let grant = core_grant.for_command().await;\n"
+            )
+            declaration_move_hunk = (
+                b"--- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs\n"
+                b"+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs\n"
+                b"@@ -8 +8,0 @@\n"
+                b"-let core_grant = Arc::new(core_lease::CoreLease::new());\n"
+            )
+
+            self.assertTrue(snapshot.patch_hunk_superseded_by_upstream(receiver_hunk, root))
+            self.assertTrue(snapshot.patch_hunk_superseded_by_upstream(declaration_move_hunk, root))
+            target.write_text(target.read_text().replace("fn authorized_for() {}\n", ""))
+            self.assertFalse(snapshot.patch_hunk_superseded_by_upstream(receiver_hunk, root))
+
     def test_shifted_already_present_hunk_and_new_hunk_are_reconciled(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

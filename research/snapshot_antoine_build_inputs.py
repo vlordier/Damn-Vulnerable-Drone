@@ -195,6 +195,42 @@ def patch_changes_present(hunks: list[bytes], source_root: Path) -> bool:
     return True
 
 
+def patch_hunk_superseded_by_upstream(hunk: bytes, source_root: Path) -> bool:
+    """Accept the newer buffered grant gate that replaces receive-time checks."""
+    lines = hunk.decode("utf-8", errors="replace").splitlines()
+    target_line = next((line for line in lines if line.startswith("+++ b/")), None)
+    if target_line != "+++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs":
+        return False
+    additions = [line[1:] for line in lines if line.startswith("+") and not line.startswith("+++")]
+    removals = [line[1:] for line in lines if line.startswith("-") and not line.startswith("---")]
+    receiver_gate_hunk = any(
+        "core_grant.for_command().await" in line or "let core_grant = core_grant.clone();" in line
+        for line in additions
+    )
+    moved_grant_hunk = "let core_grant = Arc::new(core_lease::CoreLease::new());" in removals
+    if not receiver_gate_hunk and not moved_grant_hunk:
+        return False
+    source = source_root / target_line[6:]
+    try:
+        current = source.read_text(encoding="utf-8")
+    except OSError:
+        return False
+    # Newer Antoine revisions hold a candidate separately, then admit it only
+    # through current grant and Vigie validation in the flight-control loop.
+    # This subsumes the older patch's receive-time authorization and declaration
+    # move while preserving fail-closed behavior at the consumer.
+    return all(
+        marker in current
+        for marker in (
+            "struct MissionSetpointBuffer",
+            "fn authorized_for(",
+            "fn mission_setpoint_matches_live_authorization(",
+            "buffer.authorized_for(&grants, &admissions, &callsign, &world_frame_id, now_ms)",
+            "state=pending-authorization",
+        )
+    )
+
+
 def create_snapshot(
     source_root: Path,
     ew_wire_root: Path,
@@ -301,7 +337,12 @@ def create_snapshot(
                 for hunk in hunks
             ]
             semantic_states = [
-                (forward, reverse, patch_changes_present([hunk], staging / "antoine"))
+                (
+                    forward,
+                    reverse,
+                    patch_changes_present([hunk], staging / "antoine")
+                    or patch_hunk_superseded_by_upstream(hunk, staging / "antoine"),
+                )
                 for hunk, (forward, reverse) in zip(hunks, patch_states, strict=True)
             ]
             unmatched = [
