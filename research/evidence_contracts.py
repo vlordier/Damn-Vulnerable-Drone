@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 from typing import Any
+
+from dvd_research.strict_json import loads as strict_json_loads
 
 
 def run_identity_matches(run_dir: Path, *run_ids: Any) -> bool:
@@ -28,7 +29,7 @@ def ordered_timestamps(*values: Any) -> bool:
 def read_json_object(path: Path) -> dict[str, Any]:
     """Return an empty object on absent/malformed evidence so gates fail closed."""
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+        value = strict_json_loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
         return {}
     return value if isinstance(value, dict) else {}
