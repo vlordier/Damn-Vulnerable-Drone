@@ -460,6 +460,18 @@ class ConfigLoadingTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "unsupported swarm fault"):
                 load_swarm_config(run_dir)
 
+    def test_malformed_mavlink_flag_is_rejected_instead_of_skipping_its_evidence_gate(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            build_run(run_dir, "lanes")
+            config_path = run_dir / "research-swarm-config.json"
+            config = json.loads(config_path.read_text())
+            config["mavlinkSwarm"] = "true"
+            write_json(config_path, config)
+
+            with self.assertRaisesRegex(ValueError, "mavlinkSwarm must be a boolean"):
+                load_swarm_config(run_dir)
+
     def test_arrival_and_braking_radii_are_validated_and_preserved(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run"

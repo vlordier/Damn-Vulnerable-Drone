@@ -86,6 +86,9 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
     fault = config.get("fault", "none")
     if not isinstance(fault, str) or fault not in SUPPORTED_SWARM_FAULTS:
         raise ValueError(f"unsupported swarm fault: {fault!r}")
+    mavlink_swarm = config.get("mavlinkSwarm", False)
+    if not isinstance(mavlink_swarm, bool):
+        raise ValueError("swarm mavlinkSwarm must be a boolean")
     radii = {}
     for key, default in (
         ("arrivalHoldRadiusM", DEFAULT_ARRIVAL_HOLD_RADIUS_M),
@@ -107,7 +110,7 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
         "vehicles": normalized,
         "spacingM": float(spacing),
         "behavior": behavior,
-        "mavlinkSwarm": config.get("mavlinkSwarm") is True,
+        "mavlinkSwarm": mavlink_swarm,
         "fault": fault,
         **radii,
         "retainPredecessorGrant": retain_predecessor,
