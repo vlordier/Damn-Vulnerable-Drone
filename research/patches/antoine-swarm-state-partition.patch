@@ -1,7 +1,7 @@
 diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
 --- a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
 +++ b/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs
-@@ -1653,36 +1653,96 @@
+@@ -1653,36 +1653,109 @@
      }
 -    let shared: Arc<Mutex<Option<GzState>>> = Arc::new(Mutex::new(None));
 +    // Keep the source stream available to the independent local authority and
@@ -19,11 +19,12 @@ diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/
 -        let mut sub = client.subscribe(state_subject.clone()).await?;
 -        let shared = shared.clone();
 -        let state_callsign = callsign.clone();
+-        let fault = test_blackhole;
+-        let started_at = std::time::Instant::now();
 +        let relay_client = client.clone();
 +        let output_subject = controller_state_subject;
 +        let relay_callsign = callsign.clone();
-         let fault = test_blackhole;
--        let started_at = std::time::Instant::now();
++        let fault = test_blackhole;
 +        let relay_run_id = run_id.clone();
          tokio::spawn(async move {
 +            let started_at = std::time::Instant::now();
@@ -100,7 +101,20 @@ diff --git a/sitl/antoine-sitl/src/bin/antoine_sitl_nats.rs b/sitl/antoine-sitl/
 +    {
 +        let state_callsign = callsign.clone();
 +        tokio::spawn(async move {
-+            while let Some(msg) = controller.next().await {
++            while let Some(mut msg) = controller.next().await {
++                // State is replaceable. Skip buffered history after scheduling or
++                // broker delay so the control loop does not replay stale poses.
++                let mut coalesced = 0_u64;
++                while let Some(newer) = controller.next().now_or_never().flatten() {
++                    msg = newer;
++                    coalesced += 1;
++                }
++                if trace && coalesced > 0 {
++                    println!(
++                        "ANTOINE_GZ_STATE_COALESCED callsign={state_callsign} dropped_superseded={coalesced}"
++                    );
++                    let _ = std::io::Write::flush(&mut std::io::stdout());
++                }
                  if let Ok(v) = serde_json::from_slice::<serde_json::Value>(&msg.payload) {
                      if let Some(st) = gz_state_from_json(&v, &state_callsign) {
 -                        if let Some((after_ms, duration_ms)) = fault {
