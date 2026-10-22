@@ -84,6 +84,16 @@ def write_profile_run(run_dir: Path) -> None:
 
 
 class AntoineSnapshotRebuildTests(unittest.TestCase):
+    def test_duplicate_profile_identity_is_rejected_before_rebuild(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run-1"
+            run_dir.mkdir()
+            (run_dir / "interactive-profile-receipt.json").write_text(
+                '{"runId":"run-1","runId":"other-run"}'
+            )
+            with self.assertRaisesRegex(ValueError, "duplicate object key"):
+                rebuild.verify_profile_inputs(run_dir)
+
     def test_profile_receipt_and_snapshot_bytes_are_verified(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "profile-run"

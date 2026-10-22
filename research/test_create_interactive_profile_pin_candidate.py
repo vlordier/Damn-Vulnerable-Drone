@@ -84,6 +84,15 @@ class InteractiveProfilePinCandidateTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "run directory is a symlink"):
                 read_run_input(alias, alias / "receipt.json", "receipt")
 
+    def test_run_input_rejects_duplicate_identity_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            run_dir = Path(temporary) / "run-123"
+            run_dir.mkdir()
+            receipt_path = run_dir / "receipt.json"
+            receipt_path.write_text('{"runId":"other-run","runId":"run-123"}')
+            with self.assertRaisesRegex(ValueError, "invalid JSON"):
+                read_run_input(run_dir, receipt_path, "receipt")
+
     def test_run_input_rejects_symlinked_receipt_or_comparison(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from dvd_research.strict_json import loads as strict_json_loads
 from interactive_profile_snapshot import SNAPSHOT_RECORD_FIELDS, is_sha256, snapshot_record_error
 
 PIN_CONTRACT = "damn-vulnerable-drone.interactive-profile-pins"
@@ -309,8 +310,8 @@ def main() -> int:
     parser.add_argument("--pins", type=Path, required=True)
     args = parser.parse_args()
     try:
-        receipt = json.loads(args.receipt.read_text(encoding="utf-8"))
-        pins = json.loads(args.pins.read_text(encoding="utf-8"))
+        receipt = strict_json_loads(args.receipt.read_text(encoding="utf-8"))
+        pins = strict_json_loads(args.pins.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         parser.error(str(error))
     result = verify(receipt, pins)

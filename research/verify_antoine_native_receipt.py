@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 
 from build_antoine_source_snapshot import add_stable_rust_path_remaps
+from dvd_research.strict_json import loads as strict_json_loads
 
 
 def verify_native_receipt(root: Path, snapshot_root: Path, receipt_path: Path) -> dict[str, str]:
@@ -22,7 +23,7 @@ def verify_native_receipt(root: Path, snapshot_root: Path, receipt_path: Path) -
     receipt_path = receipt_path.absolute()
     if receipt_path.is_symlink() or not receipt_path.is_file():
         raise ValueError("Antoine native build receipt must be a regular file")
-    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    receipt = strict_json_loads(receipt_path.read_text(encoding="utf-8"))
     expected_flags_hash = (
         receipt.get("toolchain", {})
         .get("build_environment_sha256", {})

@@ -12,13 +12,14 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from dvd_research.strict_json import loads as strict_json_loads
 from record_antoine_run_build import BINARIES, sha256
 
 
 def read_object(path: Path) -> dict[str, Any]:
     if path.is_symlink() or not path.is_file():
         raise ValueError(f"required regular receipt is missing: {path}")
-    value = json.loads(path.read_text(encoding="utf-8"))
+    value = strict_json_loads(path.read_text(encoding="utf-8"))
     if not isinstance(value, dict):
         raise ValueError(f"receipt must contain a JSON object: {path}")
     return value

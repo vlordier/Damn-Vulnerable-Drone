@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from dvd_research.evidence_contract import contains_symlink_component
+from dvd_research.strict_json import loads as strict_json_loads
 from summarize_antoine_two_drone_flight import (
     load_host_context_samples,
     load_swarm_config,
@@ -49,7 +50,7 @@ def read_object(path: Path, description: str) -> dict[str, Any]:
     if path.is_symlink():
         raise ValueError(f"cannot read linked {description}: {path}")
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
+        value = strict_json_loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as error:
         raise ValueError(f"cannot read {description}: {path}") from error
     if not isinstance(value, dict):

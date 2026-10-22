@@ -11,6 +11,7 @@ from verify_swarm_ab_pair import (
     REQUIRED_ARTIFACTS,
     config_pair,
     load_host_contexts,
+    read_object,
     require_same_host,
     summarize_host_load_comparison,
     summarize_outcome,
@@ -69,6 +70,13 @@ def stable_provenance() -> dict:
 
 
 class PairConfigTests(unittest.TestCase):
+    def test_json_inputs_reject_duplicate_gate_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.json"
+            path.write_text('{"arrivalHoldRadiusM":0.15,"arrivalHoldRadiusM":0.75}')
+            with self.assertRaisesRegex(ValueError, "cannot read swarm config"):
+                read_object(path, "swarm config")
+
     def test_requires_the_versioned_swarm_config_contract(self) -> None:
         config = swarm_config()
         validate_config_identity(config, "baseline")

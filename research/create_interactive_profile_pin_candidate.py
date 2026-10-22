@@ -13,6 +13,7 @@ from typing import Any
 
 from create_interactive_profile_receipt import snapshot_record
 from dvd_research.run_files import read_run_text
+from dvd_research.strict_json import loads as strict_json_loads
 from interactive_profile_snapshot import is_sha256, snapshot_record_error
 
 PIN_CONTRACT = "damn-vulnerable-drone.interactive-profile-pins"
@@ -86,7 +87,7 @@ def validate_run_evidence(receipt: dict[str, Any], run_directory: Path) -> None:
         report_path = run_directory / "gazebo-mavlink-acceptance.json"
         if report_path.is_symlink() or not report_path.is_file():
             raise ValueError("headless pin candidate requires a regular acceptance report")
-        report = json.loads(report_path.read_text(encoding="utf-8"))
+        report = strict_json_loads(report_path.read_text(encoding="utf-8"))
         if not isinstance(report, dict):
             raise ValueError("headless acceptance report must be an object")
         final_state = report.get("finalMavlinkState")
@@ -123,7 +124,7 @@ def read_run_input(run_directory: Path, input_path: Path, description: str) -> A
     if content is None:
         raise ValueError(f"{description} is missing from the receipt run directory")
     try:
-        return json.loads(content)
+        return strict_json_loads(content)
     except json.JSONDecodeError as error:
         raise ValueError(f"{description} is invalid JSON") from error
 

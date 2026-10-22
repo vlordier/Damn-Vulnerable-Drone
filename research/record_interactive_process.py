@@ -11,6 +11,8 @@ import tempfile
 import time
 from pathlib import Path
 
+from dvd_research.strict_json import loads as strict_json_loads
+
 
 def record_process(
     receipt_path: Path,
@@ -44,7 +46,7 @@ def record_process(
     else:
         raise ValueError(f"cannot record process identity for {name}: {detail}")
 
-    receipt = json.loads(receipt_path.read_text())
+    receipt = strict_json_loads(receipt_path.read_text())
     if not isinstance(receipt, dict) or not isinstance(receipt.get("processes"), dict):
         raise ValueError("interactive profile receipt must contain a processes object")
     process_record = {"pid": pid, "identity": identity}

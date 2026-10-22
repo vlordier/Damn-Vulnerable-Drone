@@ -13,6 +13,7 @@ from typing import Any
 
 from build_antoine_source_snapshot import add_stable_rust_path_remaps
 from create_interactive_profile_receipt import snapshot_record
+from dvd_research.strict_json import loads as strict_json_loads
 from gazebo_version import gazebo_version
 from record_antoine_run_build import sha256
 from seal_antoine_source_snapshot import archive, seal
@@ -28,7 +29,7 @@ def verify_profile_inputs(run_dir: Path) -> dict[str, Any]:
     receipt_path = run_dir / "interactive-profile-receipt.json"
     if receipt_path.is_symlink() or not receipt_path.is_file():
         raise ValueError("profile run is missing its regular interactive profile receipt")
-    profile = json.loads(receipt_path.read_text(encoding="utf-8"))
+    profile = strict_json_loads(receipt_path.read_text(encoding="utf-8"))
     if (
         profile.get("contract") != "damn-vulnerable-drone.interactive-profile"
         or profile.get("runId") != run_dir.name
@@ -54,7 +55,7 @@ def verify_profile_inputs(run_dir: Path) -> dict[str, Any]:
     comparison_path = run_dir / "research-provenance-comparison.json"
     if any(path.is_symlink() or not path.is_file() for path in (acceptance_path, comparison_path)):
         raise ValueError("profile run is missing its acceptance or provenance comparison report")
-    acceptance = json.loads(acceptance_path.read_text(encoding="utf-8"))
+    acceptance = strict_json_loads(acceptance_path.read_text(encoding="utf-8"))
     final_state = acceptance.get("finalMavlinkState")
     if (
         acceptance.get("schema") != "dvd.gazebo-mavlink-flight-check.v1"
@@ -65,7 +66,7 @@ def verify_profile_inputs(run_dir: Path) -> dict[str, Any]:
         or acceptance.get("prearmReadyBeforeFlight") is not True
     ):
         raise ValueError("profile run lacks a passing headless acceptance with final disarm")
-    comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
+    comparison = strict_json_loads(comparison_path.read_text(encoding="utf-8"))
     if comparison.get("runId") != run_dir.name or comparison.get("stable") is not True:
         raise ValueError("profile run does not have stable matching pre/post provenance")
     toolchain = profile.get("toolchain")

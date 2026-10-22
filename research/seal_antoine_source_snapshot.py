@@ -10,11 +10,12 @@ import subprocess
 import tempfile
 from pathlib import Path
 
+from dvd_research.strict_json import loads as strict_json_loads
 from snapshot_antoine_build_inputs import sha256
 
 
 def verified_files(snapshot: Path) -> list[tuple[Path, Path]]:
-    receipt = json.loads((snapshot / "antoine-source-snapshot.json").read_text())
+    receipt = strict_json_loads((snapshot / "antoine-source-snapshot.json").read_text())
     files = []
     seen = set()
     for entry in receipt["files"]:

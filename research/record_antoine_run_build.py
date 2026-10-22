@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from dvd_research.strict_json import loads as strict_json_loads
+
 BINARIES = (
     "antoine_sitl_nats",
     "antoine_gz_local_authority",
@@ -36,7 +38,7 @@ def command_version(*command: str) -> str:
 def source_manifest(antoine_root: Path) -> list[dict[str, Any]]:
     snapshot_receipt = antoine_root.parent / "antoine-source-snapshot.json"
     if snapshot_receipt.is_file() and not snapshot_receipt.is_symlink():
-        snapshot = json.loads(snapshot_receipt.read_text())
+        snapshot = strict_json_loads(snapshot_receipt.read_text())
         files = []
         seen = set()
         for item in snapshot["files"]:
@@ -164,7 +166,7 @@ def build_receipt(
         "artifacts": artifacts,
     }
     if native_receipt is not None:
-        native = json.loads(native_receipt.read_text())
+        native = strict_json_loads(native_receipt.read_text())
         build = native["build"]
         support = build["support_artifacts"]
         expected = {
