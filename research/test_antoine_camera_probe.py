@@ -10,6 +10,16 @@ import antoine_camera_probe
 
 
 class AntoineCameraProbeTests(unittest.TestCase):
+    def test_camera_stream_rejects_duplicate_dimensions_and_non_finite_json(self) -> None:
+        duplicate = '{"width":1,"height":1,"data":[0],"width":99}'
+        non_finite = '{"width":1,"height":1,"data":[NaN]}'
+
+        for output in (duplicate, non_finite):
+            with self.subTest(output=output):
+                self.assertEqual(
+                    antoine_camera_probe.parse_camera_messages(output), (0, 0, 0, set(), set())
+                )
+
     def test_missing_gazebo_cli_writes_inconclusive_report_without_retrying(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run"

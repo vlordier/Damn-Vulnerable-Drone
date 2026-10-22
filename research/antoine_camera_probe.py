@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 
 from dvd_research.run_files import read_run_text, write_run_json
+from dvd_research.strict_json import raw_decode as strict_json_raw_decode
 
 
 def validate_camera_scope(run_dir: Path, env: dict[str, str]) -> str:
@@ -25,6 +26,45 @@ def validate_camera_scope(run_dir: Path, env: dict[str, str]) -> str:
     if profile.get("GZ_IP") != "127.0.0.1" or env.get("GZ_IP") != "127.0.0.1":
         raise ValueError("camera probe requires the run's loopback Gazebo discovery address")
     return partition
+
+
+def parse_camera_messages(output: str) -> tuple[int, int, int, set[tuple[int, int]], set[int]]:
+    """Count valid camera frames without accepting ambiguous JSON objects."""
+    message_count = 0
+    valid_frame_count = 0
+    malformed_image_count = 0
+    dimensions: set[tuple[int, int]] = set()
+    payload_bytes: set[int] = set()
+    cursor = 0
+    while cursor < len(output):
+        start = output.find("{", cursor)
+        if start < 0:
+            break
+        try:
+            item, end = strict_json_raw_decode(output, start)
+        except json.JSONDecodeError:
+            cursor = start + 1
+            continue
+        cursor = end
+        if not isinstance(item, dict):
+            continue
+        width = item.get("width")
+        height = item.get("height")
+        data = item.get("data")
+        valid_dimensions = type(width) is int and type(height) is int and width > 0 and height > 0
+        valid_data = (isinstance(data, str) and len(data) > 0) or (
+            isinstance(data, list)
+            and len(data) > 0
+            and all(type(value) is int and 0 <= value <= 255 for value in data)
+        )
+        if not valid_dimensions or not valid_data:
+            malformed_image_count += 1
+            continue
+        message_count += 1
+        valid_frame_count += 1
+        dimensions.add((width, height))
+        payload_bytes.add(len(data))
+    return message_count, valid_frame_count, malformed_image_count, dimensions, payload_bytes
 
 
 def main() -> int:
@@ -118,41 +158,13 @@ def main() -> int:
         timed_out = False
         start_error = None
 
-    message_count = 0
-    valid_frame_count = 0
-    malformed_image_count = 0
-    dimensions: set[tuple[int, int]] = set()
-    payload_bytes: set[int] = set()
-    decoder = json.JSONDecoder()
-    cursor = 0
-    while cursor < len(output):
-        start = output.find("{", cursor)
-        if start < 0:
-            break
-        try:
-            item, end = decoder.raw_decode(output, start)
-        except json.JSONDecodeError:
-            cursor = start + 1
-            continue
-        cursor = end
-        if not isinstance(item, dict):
-            continue
-        width = item.get("width")
-        height = item.get("height")
-        data = item.get("data")
-        valid_dimensions = type(width) is int and type(height) is int and width > 0 and height > 0
-        valid_data = (isinstance(data, str) and len(data) > 0) or (
-            isinstance(data, list)
-            and len(data) > 0
-            and all(type(value) is int and 0 <= value <= 255 for value in data)
-        )
-        if not valid_dimensions or not valid_data:
-            malformed_image_count += 1
-            continue
-        message_count += 1
-        valid_frame_count += 1
-        dimensions.add((width, height))
-        payload_bytes.add(len(data))
+    (
+        message_count,
+        valid_frame_count,
+        malformed_image_count,
+        dimensions,
+        payload_bytes,
+    ) = parse_camera_messages(output)
 
     report = {
         "contract": "damn-vulnerable-drone.antoine-camera-observation",
