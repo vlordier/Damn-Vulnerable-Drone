@@ -355,6 +355,7 @@ def summarize_outcome(report: dict[str, Any]) -> dict[str, Any]:
                 "allWaypointsReached": vehicle["allWaypointsReached"],
                 "waypoints": vehicle["waypoints"],
                 "controllerStateCadence": vehicle["controllerStateCadence"],
+                "controllerStateCoalescing": vehicle["controllerStateCoalescing"],
                 "missionProgressFailure": vehicle["missionProgressFailure"],
             }
             for callsign, vehicle in report["vehicles"].items()
@@ -412,7 +413,7 @@ def verify_pair(baseline_dir: Path, variant_dir: Path, factor: str) -> dict[str,
 
     return {
         "contract": "damn-vulnerable-drone.antoine-swarm-ab-pair",
-        "version": "1.0.0",
+        "version": "1.1.0",
         "status": "matched_inputs",
         "factor": factor,
         "configKey": key,

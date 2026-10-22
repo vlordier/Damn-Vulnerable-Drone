@@ -12,6 +12,7 @@ from verify_swarm_ab_pair import (
     load_host_contexts,
     require_same_host,
     summarize_host_load_comparison,
+    summarize_outcome,
     verify_artifacts,
     verify_profile_config,
     verify_profile_pair,
@@ -117,6 +118,41 @@ class PairProvenanceTests(unittest.TestCase):
         del baseline["executables"]["gazebo_binary"]
         with self.assertRaisesRegex(ValueError, "missing pinned executable"):
             verify_provenance(baseline, baseline)
+
+
+class PairOutcomeTests(unittest.TestCase):
+    def test_preserves_coalescing_diagnostics_without_qualifying_outcome(self) -> None:
+        diagnostic = {
+            "status": "measured",
+            "droppedSupersededMessages": 7,
+            "eventCount": 2,
+            "qualifiesFlightOutcome": False,
+        }
+        vehicle = {
+            "model": "isr",
+            "attitudeQuality": {"status": "measured"},
+            "allWaypointsReached": True,
+            "waypoints": [],
+            "controllerStateCadence": {"status": "measured"},
+            "controllerStateCoalescing": diagnostic,
+            "missionProgressFailure": None,
+        }
+        report = {
+            "runId": "run-a",
+            "status": "passed",
+            "behaviorStatus": "passed",
+            "baselineStatus": "qualified_baseline",
+            "baselineFailedReasons": [],
+            "baselineInconclusiveReasons": [],
+            "vehicles": {"drone-1": vehicle},
+        }
+
+        outcome = summarize_outcome(report)
+
+        self.assertEqual(outcome["vehicles"]["drone-1"]["controllerStateCoalescing"], diagnostic)
+        self.assertFalse(
+            outcome["vehicles"]["drone-1"]["controllerStateCoalescing"]["qualifiesFlightOutcome"]
+        )
 
 
 class PairProfileTests(unittest.TestCase):
