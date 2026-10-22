@@ -79,7 +79,10 @@ Supported controls:
   from home is limited to 3 m and down to -3..0 m; velocity, acceleration,
   yaw, and yaw-rate fields
   must be masked as ignored. GUIDED position targets expire after one second
-  without another setpoint.
+  without another setpoint. The bridge also checks QGC's `time_boot_ms` against
+  its local receive clock and drops queued targets inferred to be over one
+  second old or more than 250 ms ahead, so a delayed UDP backlog cannot refresh
+  the controller's setpoint lease.
 - Mission upload and download using `MISSION_COUNT`,
   `MISSION_REQUEST_INT`, and `MISSION_ITEM_INT`. Missions contain 1–5
   `MAV_CMD_NAV_WAYPOINT` items in `MAV_FRAME_LOCAL_NED`,

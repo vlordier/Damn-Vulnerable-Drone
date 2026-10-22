@@ -19,6 +19,8 @@ const DURABLE: &str = "antoine_mavlink_readonly_requests";
 const MAX_GAZEBO_TELEMETRY_AGE_MS: u64 = 1_000;
 const MAX_GAZEBO_TELEMETRY_FUTURE_MS: u64 = 250;
 const MISSION_UPLOAD_IDLE_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_SETPOINT_QUEUE_AGE: Duration = Duration::from_secs(1);
+const MAX_SETPOINT_CLOCK_FUTURE_SKEW: Duration = Duration::from_millis(250);
 
 #[derive(Debug, Clone)]
 struct Config {
@@ -68,6 +70,36 @@ struct PendingMissionUpload {
     component_id: u8,
     items: Vec<Option<[f64; 3]>>,
     last_activity: Instant,
+}
+
+#[derive(Clone, Copy)]
+struct QgcClockAnchor {
+    time_boot_ms: u32,
+    received_at: Instant,
+}
+
+fn position_setpoint_timestamp_is_fresh(
+    payload: &[u8],
+    anchor: &mut Option<QgcClockAnchor>,
+    now: Instant,
+) -> bool {
+    if payload.len() < 4 {
+        return false;
+    }
+    let time_boot_ms = u32::from_le_bytes(payload[..4].try_into().unwrap());
+    let Some(clock) = anchor else {
+        *anchor = Some(QgcClockAnchor {
+            time_boot_ms,
+            received_at: now,
+        });
+        return true;
+    };
+    let receiver_elapsed_ms = now.duration_since(clock.received_at).as_millis();
+    let sender_elapsed_ms = u128::from(time_boot_ms.wrapping_sub(clock.time_boot_ms));
+    if sender_elapsed_ms > receiver_elapsed_ms + MAX_SETPOINT_CLOCK_FUTURE_SKEW.as_millis() {
+        return false;
+    }
+    receiver_elapsed_ms.saturating_sub(sender_elapsed_ms) <= MAX_SETPOINT_QUEUE_AGE.as_millis()
 }
 
 impl PendingMissionUpload {
@@ -1141,6 +1173,7 @@ async fn qgc_to_antoine_nats(
     let mut buffer = vec![0_u8; 4096];
     let mut mission_upload: Option<PendingMissionUpload> = None;
     let mut uploaded_waypoints: Vec<[f64; 3]> = Vec::new();
+    let mut qgc_clock_anchor = None;
     loop {
         let (length, source) = gcs.recv_from(&mut buffer).await?;
         if !source.ip().is_loopback() {
@@ -1173,6 +1206,20 @@ async fn qgc_to_antoine_nats(
             &frame,
         )
         .await?;
+        if frame.message_id == 84
+            && !position_setpoint_timestamp_is_fresh(
+                &frame.payload,
+                &mut qgc_clock_anchor,
+                Instant::now(),
+            )
+        {
+            tracing::warn!(
+                source_system = frame.system_id,
+                sequence = frame.sequence,
+                "stale or future QGC position setpoint dropped"
+            );
+            continue;
+        }
         tracing::debug!(
             source_system = frame.system_id,
             source_component = frame.component_id,
@@ -2200,6 +2247,61 @@ mod tests {
         assert_eq!(control_result_mode_id(&result), None);
         result["armed"] = serde_json::json!("true");
         assert_eq!(result["armed"].as_bool(), None);
+    }
+
+    #[test]
+    fn queued_position_setpoints_are_rejected_by_sender_clock_age() {
+        let start = Instant::now();
+        let mut anchor = None;
+        let payload = |time_boot_ms: u32| time_boot_ms.to_le_bytes();
+
+        assert!(position_setpoint_timestamp_is_fresh(
+            &payload(1_000),
+            &mut anchor,
+            start
+        ));
+        assert!(position_setpoint_timestamp_is_fresh(
+            &payload(1_100),
+            &mut anchor,
+            start + Duration::from_millis(100)
+        ));
+        assert!(!position_setpoint_timestamp_is_fresh(
+            &payload(1_100),
+            &mut anchor,
+            start + Duration::from_millis(2_000)
+        ));
+        assert!(position_setpoint_timestamp_is_fresh(
+            &payload(2_000),
+            &mut anchor,
+            start + Duration::from_millis(2_000)
+        ));
+        assert!(!position_setpoint_timestamp_is_fresh(
+            &payload(5_000),
+            &mut anchor,
+            start + Duration::from_millis(2_100)
+        ));
+        assert!(!position_setpoint_timestamp_is_fresh(
+            &[0, 0, 0],
+            &mut anchor,
+            start
+        ));
+    }
+
+    #[test]
+    fn position_setpoint_clock_wraparound_remains_fresh() {
+        let start = Instant::now();
+        let mut anchor = None;
+        let timestamp = |time_boot_ms: u32| time_boot_ms.to_le_bytes();
+        assert!(position_setpoint_timestamp_is_fresh(
+            &timestamp(u32::MAX - 50),
+            &mut anchor,
+            start
+        ));
+        assert!(position_setpoint_timestamp_is_fresh(
+            &timestamp(49),
+            &mut anchor,
+            start + Duration::from_millis(100)
+        ));
     }
 
     #[test]
