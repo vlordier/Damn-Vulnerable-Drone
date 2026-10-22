@@ -451,6 +451,18 @@ if [[ "${OPEN_QGC}" == "1" ]] && ! lsof -nP -iUDP:"${QGC_LISTEN_PORT}" 2>/dev/nu
     QGC_CONFIG="${QGC_CONFIG:-Debug}" "${PROJECT_ROOT}/scripts/run-qgc-antoine.sh"
 fi
 
+echo "Waiting for fresh end-to-end Antoine/Gazebo MAVLink readiness..."
+READINESS_REPORT="${RUN_DIR}/logs/profile-readiness.json"
+if ! uv run --no-project python "${PROJECT_ROOT}/research/wait_interactive_profile_ready.py" \
+  "${PROFILE_RECEIPT}" \
+  --timeout-seconds "${ANTOINE_GZ_READINESS_TIMEOUT_SECONDS:-60}" \
+  >"${READINESS_REPORT}" 2>&1; then
+  cat "${READINESS_REPORT}" >&2
+  echo "Run-owned profile did not reach fresh end-to-end readiness." >&2
+  exit 1
+fi
+echo "End-to-end MAVLink readiness recorded (disarmed): ${READINESS_REPORT}"
+
 if [[ "${HEADLESS_ACCEPTANCE}" == "1" ]]; then
   echo "Running bounded headless MAVLink-to-NATS-to-Antoine/Gazebo acceptance..."
   ANTOINE_GZ_FLIGHT_RUN_ID="${RUN_ID}" \
