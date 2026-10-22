@@ -331,7 +331,7 @@ async fn run() -> Result<()> {
                                     let expected = action == "arm";
                                     let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
                                     loop {
-                                        let observed = control_state.borrow().clone();
+                                        let observed = *control_state.borrow();
                                         if let Some((actual, timestamp)) = observed {
                                             if actual == expected
                                                 && timestamp.elapsed() <= Duration::from_secs(3)
