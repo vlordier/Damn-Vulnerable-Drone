@@ -408,15 +408,22 @@ class ConfigLoadingTests(unittest.TestCase):
             config = json.loads(config_path.read_text())
             config["arrivalHoldRadiusM"] = 0.2
             config["terminalBrakingRadiusM"] = 0.8
+            config["retainPredecessorGrant"] = False
             write_json(config_path, config)
             loaded = load_swarm_config(run_dir)
             self.assertEqual(loaded["arrivalHoldRadiusM"], 0.2)
             self.assertEqual(loaded["terminalBrakingRadiusM"], 0.8)
+            self.assertFalse(loaded["retainPredecessorGrant"])
             for invalid in (True, float("nan"), 0.049, 2.001):
                 config["arrivalHoldRadiusM"] = invalid
                 write_json(config_path, config)
                 with self.subTest(invalid=invalid), self.assertRaises(ValueError):
                     load_swarm_config(run_dir)
+            config["arrivalHoldRadiusM"] = 0.2
+            config["retainPredecessorGrant"] = "false"
+            write_json(config_path, config)
+            with self.assertRaises(ValueError):
+                load_swarm_config(run_dir)
 
     def test_rejects_duplicate_models(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -1287,6 +1294,7 @@ class SummaryTests(unittest.TestCase):
             config = json.loads(config_path.read_text(encoding="utf-8"))
             config["arrivalHoldRadiusM"] = 0.2
             config["terminalBrakingRadiusM"] = 0.8
+            config["retainPredecessorGrant"] = False
             write_json(config_path, config)
             qualify_fixture_baseline(run_dir)
             result = run_summary(run_dir)
@@ -1297,6 +1305,7 @@ class SummaryTests(unittest.TestCase):
         self.assertEqual(result["exitCode"], 0)
         self.assertEqual(result["arrivalHoldRadiusM"], 0.2)
         self.assertEqual(result["terminalBrakingRadiusM"], 0.8)
+        self.assertFalse(result["retainPredecessorGrant"])
 
     def test_probe_pass_does_not_hide_inconclusive_baseline(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

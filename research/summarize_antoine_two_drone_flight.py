@@ -22,7 +22,7 @@ DEFAULT_VEHICLES = [
 DEFAULT_SPACING_M = 8.0
 DEFAULT_ARRIVAL_HOLD_RADIUS_M = 0.15
 DEFAULT_TERMINAL_BRAKING_RADIUS_M = 0.15
-SWARM_REPORT_VERSION = "1.14.0"
+SWARM_REPORT_VERSION = "1.15.0"
 POSE_PAIR_TOLERANCE_SECONDS = 0.05
 MINIMUM_SEPARATION_METERS = 1.0
 MINIMUM_POSE_SAMPLES_PER_VEHICLE = 20
@@ -46,6 +46,7 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
             "mavlinkSwarm": False,
             "arrivalHoldRadiusM": DEFAULT_ARRIVAL_HOLD_RADIUS_M,
             "terminalBrakingRadiusM": DEFAULT_TERMINAL_BRAKING_RADIUS_M,
+            "retainPredecessorGrant": True,
         }
     try:
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -86,6 +87,9 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
         ):
             raise ValueError(f"swarm {key} must be finite and between 0.05 and 2 metres")
         radii[key] = float(value)
+    retain_predecessor = config.get("retainPredecessorGrant", True)
+    if not isinstance(retain_predecessor, bool):
+        raise ValueError("swarm retainPredecessorGrant must be a boolean")
     return {
         "vehicles": normalized,
         "spacingM": float(spacing),
@@ -93,6 +97,7 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
         "mavlinkSwarm": config.get("mavlinkSwarm") is True,
         "fault": config.get("fault", "none"),
         **radii,
+        "retainPredecessorGrant": retain_predecessor,
     }
 
 
@@ -2195,6 +2200,7 @@ def main() -> int:
         "behavior": plan.get("behavior"),
         "arrivalHoldRadiusM": config["arrivalHoldRadiusM"],
         "terminalBrakingRadiusM": config["terminalBrakingRadiusM"],
+        "retainPredecessorGrant": config["retainPredecessorGrant"],
         "swarmPlanSource": plan.get("planSource", "run-artifact"),
         "scope": f"{len(vehicles)} X500 models with independent controllers and local test authorities on one run-owned loopback NATS broker",
         "status": aggregate_status,
