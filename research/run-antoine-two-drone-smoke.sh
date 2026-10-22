@@ -104,6 +104,11 @@ for _ in {1..80}; do
     ready=1
     break
   fi
+  if ! kill -0 "$NATS_PID" 2>/dev/null; then
+    echo "run-owned NATS broker exited before becoming ready; see $RUN_DIR/nats.log" >&2
+    tail -30 "$RUN_DIR/nats.log" >&2
+    exit 1
+  fi
   sleep 0.25
 done
 [[ "$ready" == 1 ]] || { echo "run-owned NATS broker did not become ready" >&2; exit 1; }
@@ -113,8 +118,14 @@ dvd_run_owned_child "$PROJECT_ROOT" "$SIM_ID" "$GZ_BIN" sim -s -r \
   >"$RUN_DIR/gazebo.log" 2>&1 &
 SIM_PID=$!
 ready=0
-for _ in {1..80}; do
-  if timeout 4 "$GZ_BIN" topic --list 2>/dev/null | grep -q '^/world/antoine_gz_flight_proof/pose/info$'; then ready=1; break; fi
+ready_deadline=$((SECONDS + 20))
+while ((SECONDS < ready_deadline)); do
+  if timeout 2 "$GZ_BIN" topic --list 2>/dev/null | grep -q '^/world/antoine_gz_flight_proof/pose/info$'; then ready=1; break; fi
+  if ! kill -0 "$SIM_PID" 2>/dev/null; then
+    echo "run-owned Gazebo exited before the two-drone world became ready; see $RUN_DIR/gazebo.log" >&2
+    tail -40 "$RUN_DIR/gazebo.log" >&2
+    exit 1
+  fi
   sleep 0.25
 done
 [[ "$ready" == 1 ]] || { echo "two-drone Gazebo world did not become ready" >&2; exit 1; }
