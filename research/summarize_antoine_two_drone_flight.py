@@ -34,6 +34,15 @@ MAXIMUM_CONTROL_TICKS_PER_STATE_SAMPLE = 1.1
 MINIMUM_CADENCE_TELEMETRY_SAMPLES = 20
 MAX_CROSS_VEHICLE_POSE_EFFECT_M = 1.0
 MAX_CROSS_VEHICLE_EFFECT_WINDOW_SECONDS = 2.0
+SUPPORTED_SWARM_FAULTS = {
+    "none",
+    "state-stream-timing",
+    "state-stream-partition",
+    "controller-state-blackhole",
+    "state-blackhole",
+    "command-rate",
+    "cross-vehicle-authorization",
+}
 TRAJECTORY_COLORS = ["#1677ff", "#e4572e", "#2a9d55", "#8e5bd9", "#d49a00"]
 
 
@@ -74,6 +83,9 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
     behavior = config.get("behavior", "lanes")
     if not isinstance(behavior, str):
         raise ValueError("swarm behavior must be a string")
+    fault = config.get("fault", "none")
+    if not isinstance(fault, str) or fault not in SUPPORTED_SWARM_FAULTS:
+        raise ValueError(f"unsupported swarm fault: {fault!r}")
     radii = {}
     for key, default in (
         ("arrivalHoldRadiusM", DEFAULT_ARRIVAL_HOLD_RADIUS_M),
@@ -96,7 +108,7 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
         "spacingM": float(spacing),
         "behavior": behavior,
         "mavlinkSwarm": config.get("mavlinkSwarm") is True,
-        "fault": config.get("fault", "none"),
+        "fault": fault,
         **radii,
         "retainPredecessorGrant": retain_predecessor,
     }
