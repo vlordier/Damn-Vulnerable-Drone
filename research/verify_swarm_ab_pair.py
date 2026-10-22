@@ -7,6 +7,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,11 @@ REQUIRED_ARTIFACTS = (
     "research-antoine-build-receipt.json",
     "research-antoine-process-launches.tsv",
 )
+SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+
+
+def is_sha256(value: Any) -> bool:
+    return isinstance(value, str) and SHA256_PATTERN.fullmatch(value) is not None
 
 
 def read_object(path: Path, description: str) -> dict[str, Any]:
@@ -96,8 +102,7 @@ def verify_provenance(baseline: dict[str, Any], variant: dict[str, Any]) -> None
             or item.get("available") is not True
             or not isinstance(item.get("revision"), str)
             or not item["revision"]
-            or not isinstance(item.get("sourceContentSha256"), str)
-            or len(item["sourceContentSha256"]) != 64
+            or not is_sha256(item.get("sourceContentSha256"))
         ):
             raise ValueError(f"provenance is missing source tree {name}")
     for name in (
@@ -115,8 +120,7 @@ def verify_provenance(baseline: dict[str, Any], variant: dict[str, Any]) -> None
         if (
             not isinstance(item, dict)
             or item.get("available") is not True
-            or not isinstance(item.get("sha256"), str)
-            or len(item["sha256"]) != 64
+            or not is_sha256(item.get("sha256"))
         ):
             raise ValueError(f"provenance is missing pinned executable or input {name}")
 

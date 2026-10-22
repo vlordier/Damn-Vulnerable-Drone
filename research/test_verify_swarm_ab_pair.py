@@ -119,6 +119,19 @@ class PairProvenanceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "missing pinned executable"):
             verify_provenance(baseline, baseline)
 
+    def test_rejects_non_hex_or_wrong_length_sha256_pins(self) -> None:
+        for digest in ("g" * 64, "a" * 63, "A" * 64):
+            with self.subTest(digest=digest[:4]):
+                provenance = stable_provenance()
+                provenance["sourceTrees"]["antoine"]["sourceContentSha256"] = digest
+                with self.assertRaisesRegex(ValueError, "missing source tree antoine"):
+                    verify_provenance(provenance, provenance)
+
+        provenance = stable_provenance()
+        provenance["executables"]["gazebo_binary"]["sha256"] = "g" * 64
+        with self.assertRaisesRegex(ValueError, "missing pinned executable or input gazebo_binary"):
+            verify_provenance(provenance, provenance)
+
 
 class PairOutcomeTests(unittest.TestCase):
     def test_preserves_coalescing_diagnostics_without_qualifying_outcome(self) -> None:
