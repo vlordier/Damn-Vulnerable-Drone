@@ -413,7 +413,8 @@ def build(run_dir: Path) -> dict[str, Any]:
                 and 1 <= camera.get("capturedMessages") <= 5
                 and camera.get("topicListed") is True
                 and camera.get("publisherPresentAtProbe") is True
-                and camera.get("subscriberExitCode") == 0
+                and type(camera.get("subscriberExitCode")) is int
+                and camera["subscriberExitCode"] == 0
                 and camera.get("subscriberTimedOut") is False
                 and camera.get("discoveryError") is None
                 and camera.get("subscriberStartError") is None

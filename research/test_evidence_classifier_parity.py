@@ -327,9 +327,10 @@ class EvidenceClassifierParityTests(unittest.TestCase):
             self.assertEqual(list(export_research_rows(root)), [])
 
     def test_camera_manifest_requires_run_profile_partition_match(self) -> None:
-        for report_partition, expected_classification in (
-            ("camera-run", "observation_only"),
-            ("other-run", "inconclusive"),
+        for report_partition, subscriber_exit, expected_classification in (
+            ("camera-run", 0, "observation_only"),
+            ("other-run", 0, "inconclusive"),
+            ("camera-run", False, "inconclusive"),
         ):
             with (
                 self.subTest(partition=report_partition),
@@ -344,7 +345,7 @@ class EvidenceClassifierParityTests(unittest.TestCase):
                     "capturedMessages": 5,
                     "topicListed": True,
                     "publisherPresentAtProbe": True,
-                    "subscriberExitCode": 0,
+                    "subscriberExitCode": subscriber_exit,
                     "subscriberTimedOut": False,
                     "discoveryError": None,
                     "subscriberStartError": None,
@@ -374,6 +375,12 @@ class EvidenceClassifierParityTests(unittest.TestCase):
                 write_manifest(run_dir, manifest)
 
                 self.assertEqual(manifest["measurementClassification"], expected_classification)
+                self.assertEqual(
+                    manifest["measurements"]["cameraObservationBoundsValid"],
+                    report_partition == "camera-run"
+                    and type(subscriber_exit) is int
+                    and subscriber_exit == 0,
+                )
                 self.assertEqual(
                     manifest["measurements"]["cameraRunScopeMatches"],
                     report_partition == "camera-run",
