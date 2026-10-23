@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import sys
@@ -48,6 +49,30 @@ def capture_messages(server: str, count: int) -> list[dict[str, Any]]:
     if len(messages) != count:
         raise ValueError(f"expected {count} live GPS envelopes; captured {len(messages)}")
     return messages
+
+
+def validate_gps_numeric_fields(payload: dict[str, Any]) -> tuple[int, int, int, int | float]:
+    """Require bounded integer freshness/sequence and a real latitude value."""
+    timestamp_ms = payload.get("timestamp_ms")
+    expires_at_ms = payload.get("expires_at_ms")
+    sequence = payload.get("sequence")
+    latitude = payload.get("lat_deg")
+    if (
+        type(timestamp_ms) is not int
+        or timestamp_ms < 0
+        or type(expires_at_ms) is not int
+        or expires_at_ms <= timestamp_ms
+    ):
+        raise ValueError("captured GPS sample has invalid freshness timestamps")
+    if type(sequence) is not int or sequence < 1:
+        raise ValueError("captured GPS sample has an invalid sequence")
+    if (
+        type(latitude) not in {int, float}
+        or not math.isfinite(latitude)
+        or not -90 <= latitude <= 90
+    ):
+        raise ValueError("captured GPS sample has an invalid latitude")
+    return timestamp_ms, expires_at_ms, sequence, latitude
 
 
 def stop_forwarder(run_dir: Path, server: str) -> int:
@@ -196,34 +221,26 @@ def main() -> int:
             raise ValueError(
                 "captured GPS source frame did not match the configured callsign mapping"
             )
-        timestamp_ms = payload.get("timestamp_ms")
-        expires_at_ms = payload.get("expires_at_ms")
-        if not isinstance(timestamp_ms, int) or not isinstance(expires_at_ms, int):
-            raise ValueError("captured GPS sample has no bounded freshness timestamps")
+        timestamp_ms, expires_at_ms, captured_sequence, original_latitude = (
+            validate_gps_numeric_fields(payload)
+        )
 
         stopped_pid = stop_forwarder(run_dir, args.server)
         baseline_count = count_accepted(run_dir)
         now_ms = int(time.time() * 1000)
-        original_latitude = payload.get("lat_deg")
         injected = payload
-        latest_sequence = payload.get("sequence")
+        latest_sequence = captured_sequence
         if args.case == "signature-mutation":
             age_ms = now_ms - timestamp_ms
             if age_ms < -250 or age_ms > 250 or now_ms >= expires_at_ms:
                 raise TimeoutError(
                     "captured signed GPS sample expired before the bounded tampering probe"
                 )
-            if not isinstance(original_latitude, (int, float)):
-                raise ValueError("captured GPS sample has no numeric latitude")
             injected = dict(payload)
             injected["lat_deg"] = original_latitude + 0.01
         elif args.case == "out-of-order-sequence":
-            latest_sequence = captured_messages[-1].get("sequence")
-            if (
-                type(latest_sequence) is not int
-                or type(payload.get("sequence")) is not int
-                or latest_sequence <= payload["sequence"]
-            ):
+            _, _, latest_sequence, _ = validate_gps_numeric_fields(captured_messages[-1])
+            if type(latest_sequence) is not int or latest_sequence <= captured_sequence:
                 raise ValueError("captured messages do not establish an increasing sequence order")
             injected = build_case(payload, "out-of-order-sequence", now_ms)
             if injected["sequence"] >= latest_sequence:
@@ -301,7 +318,7 @@ def main() -> int:
                 - injected.get("timestamp_ms", timestamp_ms),
                 "sampleExpiresAtUnixMs": injected.get("expires_at_ms", expires_at_ms),
                 "latDeltaDegrees": round(float(injected["lat_deg"] - original_latitude), 6)
-                if isinstance(original_latitude, (int, float))
+                if type(original_latitude) in {int, float}
                 else 0.0,
                 "signatureRetainedAfterMutation": args.case == "signature-mutation",
                 "forwarderPidStopped": stopped_pid,
