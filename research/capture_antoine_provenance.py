@@ -14,6 +14,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from dvd_research.strict_json import loads as strict_json_loads
 from gazebo_version import gazebo_version
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -53,6 +54,15 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: source.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def sensor_forwarder_receipt_path(stdout: str) -> Path | None:
+    """Extract the build-receipt path without accepting ambiguous JSON."""
+    receipt = strict_json_loads(stdout)
+    receipt_payload = receipt.get("receipt") if isinstance(receipt, dict) else None
+    artifact = receipt_payload.get("artifact") if isinstance(receipt_payload, dict) else None
+    path = artifact.get("path") if isinstance(artifact, dict) else None
+    return Path(path) if isinstance(path, str) else None
 
 
 def git_value(root: Path, *args: str) -> str | None:
@@ -563,17 +573,9 @@ def main() -> int:
                     command, capture_output=True, text=True, env=build_env, timeout=60
                 )
                 if receipt_result.returncode == 0:
-                    receipt = json.loads(receipt_result.stdout)
-                    receipt_payload = receipt.get("receipt") if isinstance(receipt, dict) else None
-                    artifact = (
-                        receipt_payload.get("artifact")
-                        if isinstance(receipt_payload, dict)
-                        else None
-                    )
-                    if isinstance(artifact, dict) and isinstance(artifact.get("path"), str):
-                        receipt_path = Path(artifact["path"]).with_name(
-                            "gz-nav-sensor-forwarder.build.json"
-                        )
+                    artifact_path = sensor_forwarder_receipt_path(receipt_result.stdout)
+                    if artifact_path is not None:
+                        receipt_path = artifact_path.with_name("gz-nav-sensor-forwarder.build.json")
                         input_paths.append(("sensor_forwarder_build_receipt", receipt_path))
             except (OSError, subprocess.SubprocessError, json.JSONDecodeError):
                 pass
@@ -707,7 +709,9 @@ def main() -> int:
     if args.phase == "post":
         pre_path = run_dir / "research-provenance-pre.json"
         if pre_path.is_file():
-            pre = json.loads(pre_path.read_text(encoding="utf-8"))
+            pre = strict_json_loads(pre_path.read_text(encoding="utf-8"))
+            if not isinstance(pre, dict):
+                raise ValueError("pre-run provenance must be a JSON object")
             pre_trees = {
                 item.get("name"): item
                 for item in pre.get("sourceTrees", [])

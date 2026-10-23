@@ -11,6 +11,7 @@ from capture_antoine_provenance import (
     battery_fix_present,
     changed_input_names,
     changed_source_tree_names,
+    sensor_forwarder_receipt_path,
     source_tree,
     source_tree_changed,
 )
@@ -33,6 +34,17 @@ class GazeboAssetProvenanceTests(unittest.TestCase):
 
     def git(self, *args: str) -> None:
         subprocess.run(["git", "-C", str(self.repo), *args], check=True, capture_output=True)
+
+    def test_sensor_forwarder_receipt_path_rejects_ambiguous_json(self) -> None:
+        with self.assertRaisesRegex(ValueError, "duplicate object key"):
+            sensor_forwarder_receipt_path(
+                '{"receipt":{"artifact":{"path":"first"}},"receipt":{"artifact":{"path":"second"}}}'
+            )
+
+    def test_sensor_forwarder_receipt_path_reads_verified_artifact_location(self) -> None:
+        path = sensor_forwarder_receipt_path('{"receipt":{"artifact":{"path":"build/forwarder"}}}')
+
+        self.assertEqual(path, Path("build/forwarder"))
 
     def capture(self) -> dict:
         return source_tree("gazebo_sim_assets", self.repo)
