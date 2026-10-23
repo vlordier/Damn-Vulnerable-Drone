@@ -63,6 +63,7 @@ env | LC_ALL=C sort | sed -n '/^FURIA_GZ_RENDERING/p; /^GZ_/p' >"$RUN_DIR/resear
 
 cleanup() {
   local status=$?
+  trap - EXIT INT TERM
   [[ -z "$PROBE_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$PROBE_PID" "$PROBE_IDENTITY" TERM || true
   [[ -z "$SIM_PID" ]] || dvd_signal_owned_child "$PROJECT_ROOT" "$SIM_PID" "$SIM_IDENTITY" TERM || true
   [[ -z "$PROBE_PID" ]] || wait "$PROBE_PID" 2>/dev/null || true
@@ -70,7 +71,9 @@ cleanup() {
   rm -f "$PROBE_IDENTITY" "$SIM_IDENTITY"
   return "$status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 dvd_run_owned_child "$PROJECT_ROOT" "$SIM_IDENTITY" "$GZ_BIN" sim -s -r --headless-rendering --render-engine-server=ogre2 \
   --render-engine-server-api-backend=metal \

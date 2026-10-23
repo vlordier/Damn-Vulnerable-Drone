@@ -10,6 +10,14 @@ import antoine_camera_probe
 
 
 class AntoineCameraProbeTests(unittest.TestCase):
+    def test_camera_runner_routes_signals_through_one_exit_cleanup(self) -> None:
+        runner = Path(__file__).with_name("run-antoine-camera-observation.sh").read_text()
+
+        self.assertIn("trap cleanup EXIT\n", runner)
+        self.assertIn("trap 'exit 130' INT\n", runner)
+        self.assertIn("trap 'exit 143' TERM\n", runner)
+        self.assertNotIn("trap cleanup EXIT INT TERM", runner)
+
     def test_partial_stdout_from_failed_subscriber_is_not_camera_evidence(self) -> None:
         topic = "/world/antoine_gz_flight_proof/model/isr/link/base_link/sensor/camera/image"
         discovery = type("Completed", (), {"returncode": 0, "stdout": f"{topic}\n", "stderr": ""})()
