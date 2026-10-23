@@ -9,12 +9,6 @@ RUN_ID="antoine-baseline-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$REPORT_ROOT/$RUN_ID"
 [[ ! -e "$RUN_DIR" ]] || { echo "Refusing to overwrite evidence: $RUN_DIR" >&2; exit 1; }
 
-if [[ -z "${ANTOINE_GZ_FLIGHT_NATS_PORT:-}" ]]; then
-  ANTOINE_GZ_FLIGHT_NATS_PORT="$(uv run --no-project python -c \
-    'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-fi
-export ANTOINE_GZ_FLIGHT_NATS_PORT
-
 set +e
 "$PROJECT_ROOT/scripts/run-antoine.sh" \
   --run-dir "$RUN_DIR" --flight-seconds 120 --settle-seconds 10 --keep \

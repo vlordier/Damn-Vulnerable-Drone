@@ -275,9 +275,9 @@ export ANTOINE_SWARM_AUTH_POSITIVE_DELTA_M="${POSITIVE_DELTA_M}"
 export ANTOINE_GZ_FLIGHT_AGENTS="${SWARM_AGENTS}"
 export ANTOINE_GZ_FLIGHT_SWARM_WAYPOINTS="${SECONDARY_WAYPOINTS}"
 export ANTOINE_GZ_FLIGHT_GROUND_START=0
-ANTOINE_GZ_FLIGHT_NATS_PORT="$(uv run --no-project python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-[[ "${ANTOINE_GZ_FLIGHT_NATS_PORT}" =~ ^[0-9]+$ ]] || { echo "Invalid run-local NATS port" >&2; exit 2; }
-export ANTOINE_GZ_FLIGHT_NATS_PORT
+# Antoine asks NATS to bind its own dynamic port; probes wait for the
+# run-scoped endpoint receipt before connecting.
+unset ANTOINE_GZ_FLIGHT_NATS_PORT
 # This runner does not start QGroundControl; an unrelated interactive QGC
 # build must not make this Antoine/Gazebo/NATS experiment appear unstable.
 export ANTOINE_PROVENANCE_EXTRA_ARGS="--exclude-qgroundcontrol"
@@ -370,6 +370,9 @@ for _ in {1..300}; do
   sleep 0.2
 done
 if [[ "${run_dir_ready}" -eq 1 ]]; then
+  NATS_URL="$(dvd_wait_run_nats_endpoint "${RUN_DIR}" "${FLIGHT_PID}")"
+  ANTOINE_GZ_FLIGHT_NATS_PORT="${NATS_URL##*:}"
+  export ANTOINE_GZ_FLIGHT_NATS_PORT
   printf 'swarm run evidence directory: %s\n' "${RUN_DIR}"
   cp "${HOST_CONTEXT_PRE}" "${RUN_DIR}/research-host-context-pre.json"
   dvd_run_owned_child "${PROJECT_ROOT}" "${HOST_CONTEXT_IDENTITY}" \

@@ -19,11 +19,6 @@ RUN_DIR="$REPORT_ROOT/$RUN_ID"
 for tool in nats uv; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Required command not found: $tool" >&2; exit 1; }
 done
-if [[ -z "${ANTOINE_GZ_FLIGHT_NATS_PORT:-}" ]]; then
-  ANTOINE_GZ_FLIGHT_NATS_PORT="$(uv run --no-project python -c \
-    'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-fi
-export ANTOINE_GZ_FLIGHT_NATS_PORT
 export ANTOINE_GZ_SENSOR_FORWARDING=1
 export ANTOINE_GZ_CAMERA_RENDERING=0
 export FURIA_GZ_NATS_BRIDGE_TARGET_DIR="${FURIA_GZ_NATS_BRIDGE_TARGET_DIR:-${AGR_SIM:-$HOME/Work/durandal-gz-swarm-sim}/target/gz-nats-bridge}"
@@ -53,8 +48,6 @@ if ! uv run --script "$SENSOR_BUILD_SCRIPT" verify >/dev/null; then
   echo "Sensor forwarder receipt verification failed; no probe was published." >&2
   exit 2
 fi
-SERVER="nats://127.0.0.1:$ANTOINE_GZ_FLIGHT_NATS_PORT"
-
 FLIGHT_PID=""
 PROBE_PID=""
 FLIGHT_IDENTITY="$REPORT_ROOT/.$RUN_ID-flight.identity"
@@ -74,6 +67,7 @@ dvd_run_owned_child "$PROJECT_ROOT" "$FLIGHT_IDENTITY" env DVD_LAUNCHER_MANAGED=
   --run-dir "$RUN_DIR" --flight-seconds 45 --settle-seconds 10 --keep \
   >"$REPORT_ROOT/$RUN_ID-launcher.log" 2>&1 &
 FLIGHT_PID=$!
+SERVER="$(dvd_wait_run_nats_endpoint "$RUN_DIR" "$FLIGHT_PID")"
 dvd_run_owned_child "$PROJECT_ROOT" "$PROBE_IDENTITY" uv run --project "$PROJECT_ROOT/research" python "$PROJECT_ROOT/research/antoine_gps_tamper.py" \
   --server "$SERVER" --run-dir "$RUN_DIR" --case "$CASE" \
   >"$REPORT_ROOT/$RUN_ID-tampering.log" 2>&1 &

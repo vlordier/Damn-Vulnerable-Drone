@@ -24,13 +24,6 @@ if [[ -e "$RUN_DIR" ]]; then
   exit 1
 fi
 
-if [[ -z "${ANTOINE_GZ_FLIGHT_NATS_PORT:-}" ]]; then
-  ANTOINE_GZ_FLIGHT_NATS_PORT="$(uv run --no-project python -c \
-    'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-fi
-export ANTOINE_GZ_FLIGHT_NATS_PORT
-SERVER="nats://127.0.0.1:$ANTOINE_GZ_FLIGHT_NATS_PORT"
-
 PROOF_PID=""
 ATTACK_PID=""
 PROOF_IDENTITY="$REPORT_ROOT/.$RUN_ID-proof.identity"
@@ -52,6 +45,7 @@ dvd_run_owned_child "$PROJECT_ROOT" "$PROOF_IDENTITY" env DVD_LAUNCHER_MANAGED=1
   --settle-seconds 10 \
   --keep >"$REPORT_ROOT/$RUN_ID-launcher.log" 2>&1 &
 PROOF_PID=$!
+SERVER="$(dvd_wait_run_nats_endpoint "$RUN_DIR" "$PROOF_PID")"
 
 if [[ "$SCENARIO" == "sequence-poisoning" ]]; then
   PROBE_SCRIPT="$PROJECT_ROOT/research/antoine_setpoint_sequence.py"

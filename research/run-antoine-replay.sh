@@ -14,13 +14,6 @@ for tool in nats uv; do
 done
 UV_CACHE_DIR="${UV_CACHE_DIR:-/private/tmp/dvd-antoine-uv-cache}" UV_OFFLINE=1
 export UV_CACHE_DIR UV_OFFLINE
-if [[ -z "${ANTOINE_GZ_FLIGHT_NATS_PORT:-}" ]]; then
-  ANTOINE_GZ_FLIGHT_NATS_PORT="$(uv run --no-project python -c \
-    'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"
-fi
-export ANTOINE_GZ_FLIGHT_NATS_PORT
-SERVER="nats://127.0.0.1:$ANTOINE_GZ_FLIGHT_NATS_PORT"
-
 FLIGHT_PID=""
 ATTACK_PID=""
 FLIGHT_IDENTITY="$REPORT_ROOT/.$RUN_ID-flight.identity"
@@ -40,6 +33,7 @@ dvd_run_owned_child "$PROJECT_ROOT" "$FLIGHT_IDENTITY" env DVD_LAUNCHER_MANAGED=
   --run-dir "$RUN_DIR" --flight-seconds 45 --settle-seconds 10 --keep \
   >"$REPORT_ROOT/$RUN_ID-launcher.log" 2>&1 &
 FLIGHT_PID=$!
+SERVER="$(dvd_wait_run_nats_endpoint "$RUN_DIR" "$FLIGHT_PID")"
 dvd_run_owned_child "$PROJECT_ROOT" "$ATTACK_IDENTITY" uv run --no-project python "$PROJECT_ROOT/research/antoine_setpoint_replay.py" \
   --server "$SERVER" --run-dir "$RUN_DIR" \
   >"$REPORT_ROOT/$RUN_ID-replay.log" 2>&1 &

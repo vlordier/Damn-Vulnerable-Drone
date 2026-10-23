@@ -43,6 +43,52 @@ dvd_signal_owned_child() {
   "$supervisor" stop "$identity_path"
 }
 
+dvd_wait_run_nats_endpoint() {
+  local run_dir="$1" launcher_pid="$2" endpoint_file="$1/research-nats-endpoint.json"
+  local deadline=$((SECONDS + ${3:-60})) endpoint
+  while ((SECONDS < deadline)); do
+    if [[ -s "$endpoint_file" ]]; then
+      endpoint="$(uv run --no-project python - "$endpoint_file" <<'PY'
+import json
+import re
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    value = json.load(source)
+if value.get("contract") != "antoine.run-nats-endpoint" or value.get("version") != "1.0.0":
+    raise SystemExit("unsupported NATS endpoint receipt")
+port = value.get("port")
+pid = value.get("pid")
+url = value.get("url")
+if value.get("host") != "127.0.0.1" or type(port) is not int or not 1 <= port <= 65535:
+    raise SystemExit("invalid local NATS endpoint receipt")
+if type(pid) is not int or pid < 1 or url != f"nats://127.0.0.1:{port}":
+    raise SystemExit("invalid NATS endpoint identity")
+print(f"{port} {pid} {url}")
+PY
+)" || return 1
+      local port pid url
+      read -r port pid url <<<"$endpoint"
+      if [[ -s "$run_dir/logs/nats.log" ]] &&
+        rg -Fq "Listening for client connections on 127.0.0.1:$port" "$run_dir/logs/nats.log" &&
+        kill -0 "$pid" 2>/dev/null &&
+        nats --no-context --server "$url" rtt >/dev/null 2>&1; then
+        printf '%s\n' "$url"
+        return 0
+      fi
+      echo "NATS endpoint receipt exists but its run-owned process is not ready." >&2
+      return 1
+    fi
+    if ! kill -0 "$launcher_pid" 2>/dev/null; then
+      echo "Flight launcher exited before publishing its NATS endpoint." >&2
+      return 1
+    fi
+    sleep 0.2
+  done
+  echo "Timed out waiting for the flight run's NATS endpoint receipt." >&2
+  return 1
+}
+
 dvd_install_exit_cleanup_traps() {
   local cleanup_function="${1:-}"
   [[ "$cleanup_function" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || {

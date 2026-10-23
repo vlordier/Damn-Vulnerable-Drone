@@ -330,17 +330,15 @@ if [[ "${ANTOINE_GZ_SENSOR_FORWARDING:-0}" == "1" ]]; then
 fi
 
 if [[ -z "${ANTOINE_GZ_FLIGHT_NATS_PORT:-}" ]]; then
-  if ! ANTOINE_GZ_FLIGHT_NATS_PORT="$(uv run --no-project python -c \
-    'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')"; then
-    echo "Could not reserve a free local NATS port." >&2
-    exit 1
-  fi
-  [[ "$ANTOINE_GZ_FLIGHT_NATS_PORT" =~ ^[0-9]+$ ]] || {
-    echo "Port selection returned an invalid NATS port." >&2
-    exit 1
-  }
+  # Let NATS bind port 0 itself; selecting then releasing a port here races
+  # other local launches before the broker starts.
+  ANTOINE_GZ_FLIGHT_NATS_PORT=-1
   export ANTOINE_GZ_FLIGHT_NATS_PORT
 fi
+[[ "$ANTOINE_GZ_FLIGHT_NATS_PORT" == "-1" || "$ANTOINE_GZ_FLIGHT_NATS_PORT" =~ ^[0-9]+$ ]] || {
+  echo "ANTOINE_GZ_FLIGHT_NATS_PORT must be -1 (dynamic) or a numeric port." >&2
+  exit 1
+}
 
 write_public_profile_env() {
   local key value
@@ -370,6 +368,7 @@ write_public_profile_env() {
     ANTOINE_GZ_TWO_DRONE \
     FURIA_GZ_SENSOR_SIGNING_KEY_ID; do
     if value="$(printenv "$key")"; then
+      [[ "$key" != "ANTOINE_GZ_FLIGHT_NATS_PORT" || "$value" != "-1" ]] || continue
       printf '%s=%s\n' "$key" "$value"
     fi
   done | LC_ALL=C sort
