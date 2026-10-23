@@ -68,7 +68,7 @@ cleanup() {
   rm -f "$PROBE_IDENTITY" "$FLIGHT_IDENTITY"
   return "$status"
 }
-trap cleanup EXIT INT TERM
+dvd_install_exit_cleanup_traps cleanup
 
 dvd_run_owned_child "$PROJECT_ROOT" "$FLIGHT_IDENTITY" env DVD_LAUNCHER_MANAGED=1 DVD_LAUNCHER_IDENTITY="$FLIGHT_IDENTITY" "$PROJECT_ROOT/scripts/run-antoine.sh" \
   --run-dir "$RUN_DIR" --flight-seconds 45 --settle-seconds 10 --keep \

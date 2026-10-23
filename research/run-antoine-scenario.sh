@@ -44,7 +44,7 @@ cleanup() {
   rm -f "$ATTACK_IDENTITY" "$PROOF_IDENTITY"
   return "$status"
 }
-trap cleanup EXIT INT TERM
+dvd_install_exit_cleanup_traps cleanup
 
 dvd_run_owned_child "$PROJECT_ROOT" "$PROOF_IDENTITY" env DVD_LAUNCHER_MANAGED=1 DVD_LAUNCHER_IDENTITY="$PROOF_IDENTITY" "$PROJECT_ROOT/scripts/run-antoine.sh" \
   --run-dir "$RUN_DIR" \

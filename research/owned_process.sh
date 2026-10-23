@@ -42,3 +42,18 @@ dvd_signal_owned_child() {
   supervisor="$(dvd_process_supervisor "$project_root")" || return
   "$supervisor" stop "$identity_path"
 }
+
+dvd_install_exit_cleanup_traps() {
+  local cleanup_function="${1:-}"
+  [[ "$cleanup_function" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || {
+    echo "cleanup handler must be a shell function name" >&2
+    return 2
+  }
+  declare -F "$cleanup_function" >/dev/null || {
+    echo "cleanup handler is not defined: $cleanup_function" >&2
+    return 2
+  }
+  trap "$cleanup_function" EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+}

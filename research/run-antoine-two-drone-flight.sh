@@ -323,7 +323,7 @@ cleanup() {
   fi
   return "${status}"
 }
-trap cleanup EXIT INT TERM
+dvd_install_exit_cleanup_traps cleanup
 
 BRIDGE_BIN=""
 if [[ "${SWARM_MAVLINK}" == "1" ]]; then
