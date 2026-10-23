@@ -166,6 +166,9 @@ def main() -> int:
         dimensions,
         payload_bytes,
     ) = parse_camera_messages(output)
+    capture_valid = (
+        return_code == 0 and not timed_out and start_error is None and valid_frame_count > 0
+    )
 
     report = {
         "contract": "damn-vulnerable-drone.antoine-camera-observation",
@@ -188,17 +191,18 @@ def main() -> int:
         "subscriberExitCode": return_code,
         "subscriberTimedOut": timed_out,
         "subscriberStartError": start_error,
+        "captureValid": capture_valid,
         "imagePayloadsStored": False,
         "interpretation": (
             "The local Gazebo Transport camera topic was readable by a same-host client without credentials. "
             "Only message metadata and payload sizes were retained; this establishes local topic exposure, "
             "not a remote camera disclosure or a video-stream attack."
-            if message_count
+            if capture_valid
             else (
                 "Gazebo listed the camera topic but reported no publisher; no image messages were captured. "
                 "No camera publisher was reported during the bounded probe."
-                if topic_listed and not publisher_present
-                else "No image messages were captured within the bounded window; camera availability is inconclusive."
+                if topic_listed and not publisher_present and not message_count
+                else "A valid camera capture was not established within the bounded probe; camera availability is inconclusive."
             )
         ),
     }
@@ -213,7 +217,7 @@ def main() -> int:
             }
         )
     )
-    return 0 if valid_frame_count else 2
+    return 0 if capture_valid else 2
 
 
 if __name__ == "__main__":
