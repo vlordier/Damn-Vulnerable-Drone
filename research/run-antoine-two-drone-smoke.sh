@@ -21,6 +21,11 @@ GZ_TOPIC_QUERY_TIMEOUT_SECONDS="${ANTOINE_GZ_TOPIC_QUERY_TIMEOUT_SECONDS:-5}"
 REPORT_ROOT="${ANTOINE_REPORT_DIR:-$PROJECT_ROOT/build_logs/research/antoine-scenarios}"
 RUN_ID="antoine-two-drone-smoke-$(date -u +%Y%m%dT%H%M%SZ)-$$"
 RUN_DIR="$REPORT_ROOT/$RUN_ID"
+
+for tool in nats nats-server timeout uv; do
+  command -v "$tool" >/dev/null 2>&1 || { echo "Required command not found: $tool" >&2; exit 1; }
+done
+
 SERVER_PORT="${ANTOINE_TWO_DRONE_NATS_PORT:-$(uv run --no-project python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')}"
 [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] && ((SERVER_PORT >= 1 && SERVER_PORT <= 65535)) || {
   echo "Invalid run-local NATS port: $SERVER_PORT" >&2
@@ -38,9 +43,6 @@ BRIDGE_ID="$REPORT_ROOT/.$RUN_ID-bridge.identity"
 APPLIER_ID="$REPORT_ROOT/.$RUN_ID-applier.identity"
 RUN_STAGE="initializing"
 
-for tool in nats nats-server timeout uv; do
-  command -v "$tool" >/dev/null 2>&1 || { echo "Required command not found: $tool" >&2; exit 1; }
-done
 [[ -x "$GZ_BIN" ]] || { echo "Gazebo executable not found: $GZ_BIN" >&2; exit 1; }
 for input in "$SIM_SOURCE/worlds/antoine-gz-flight-proof.sdf" "$SIM_SOURCE/models/x500/model.sdf" "$C2_SCRIPTS/c2-gz-sitl-bridge.py"; do
   [[ -f "$input" ]] || { echo "Missing required input: $input" >&2; exit 1; }

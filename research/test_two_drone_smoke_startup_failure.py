@@ -17,6 +17,45 @@ RUNNER = ROOT / "research" / "run-antoine-two-drone-smoke.sh"
 
 
 class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
+    def test_missing_uv_is_reported_before_port_selection_uses_it(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = Path(directory)
+            bin_dir = fixture / "bin"
+            bin_dir.mkdir()
+            (fixture / "gz" / "bin").mkdir(parents=True)
+            for utility in ("dirname", "date"):
+                target = shutil.which(utility)
+                self.assertIsNotNone(target)
+                (bin_dir / utility).symlink_to(target)
+            for tool in ("nats", "nats-server", "timeout"):
+                executable = bin_dir / tool
+                executable.write_text("#!/bin/sh\nexit 0\n")
+                executable.chmod(0o755)
+
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "PATH": str(bin_dir),
+                    "GZ_BIN": str(fixture / "gz" / "bin" / "gz"),
+                    "ANTOINE_REPORT_DIR": str(fixture / "runs"),
+                }
+            )
+            bash = shutil.which("bash")
+            self.assertIsNotNone(bash)
+            result = subprocess.run(
+                [bash, str(RUNNER)],
+                cwd=ROOT,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("Required command not found: uv", result.stderr)
+            self.assertNotIn("uv: command not found", result.stderr)
+            self.assertFalse((fixture / "runs").exists())
+
     def _run_startup_fixture(
         self,
         fixture: Path,
