@@ -26,12 +26,13 @@ for tool in nats nats-server timeout uv; do
   command -v "$tool" >/dev/null 2>&1 || { echo "Required command not found: $tool" >&2; exit 1; }
 done
 
-SERVER_PORT="${ANTOINE_TWO_DRONE_NATS_PORT:-$(uv run --no-project python -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')}"
-[[ "$SERVER_PORT" =~ ^[0-9]+$ ]] && ((SERVER_PORT >= 1 && SERVER_PORT <= 65535)) || {
-  echo "Invalid run-local NATS port: $SERVER_PORT" >&2
-  exit 2
-}
-SERVER="nats://127.0.0.1:$SERVER_PORT"
+SERVER_PORT="${ANTOINE_TWO_DRONE_NATS_PORT:-}"
+if [[ -n "$SERVER_PORT" ]]; then
+  [[ "$SERVER_PORT" =~ ^[0-9]+$ ]] && ((SERVER_PORT >= 1 && SERVER_PORT <= 65535)) || {
+    echo "Invalid run-local NATS port: $SERVER_PORT" >&2
+    exit 2
+  }
+fi
 PARTITION="antoine-two-drone-$$"
 NATS_PID=""
 SIM_PID=""
@@ -115,7 +116,6 @@ export DYLD_LIBRARY_PATH="$GZ_INSTALL/lib${DYLD_LIBRARY_PATH:+:$DYLD_LIBRARY_PAT
   printf 'GZ_SIM_RESOURCE_PATH=%s\n' "$GZ_SIM_RESOURCE_PATH"
   printf 'ANTOINE_GZ_STARTUP_TIMEOUT_SECONDS=%s\n' "$GZ_STARTUP_TIMEOUT_SECONDS"
   printf 'ANTOINE_GZ_TOPIC_QUERY_TIMEOUT_SECONDS=%s\n' "$GZ_TOPIC_QUERY_TIMEOUT_SECONDS"
-  printf 'ANTOINE_GZ_FLIGHT_NATS_PORT=%s\n' "$ANTOINE_GZ_FLIGHT_NATS_PORT"
 } >"$RUN_DIR/research-profile.env"
 PROVENANCE_ARGS=(
   "$RUN_DIR" --run-id "$RUN_ID" --source-sim "$SIM_SOURCE"
@@ -129,21 +129,34 @@ PROVENANCE_ARGS=(
   --require-input c2_gazebo_bridge --require-input c2_python_requirements
   --require-input nats_executable --require-input nats-server_executable --require-input uv_executable
 )
-RUN_STAGE="preflight-provenance"
-uv run --no-project python "$PROJECT_ROOT/research/capture_antoine_provenance.py" \
-  "${PROVENANCE_ARGS[@]}" --phase pre --output "$RUN_DIR/research-provenance-pre.json" >/dev/null
-
 RUN_STAGE="start-nats"
-dvd_run_owned_child "$PROJECT_ROOT" "$NATS_ID" nats-server -a 127.0.0.1 -p "$SERVER_PORT" \
-  -js -sd "$RUN_DIR/jetstream" >"$RUN_DIR/logs/nats.log" 2>&1 &
+NATS_PORT_ARGUMENT="${SERVER_PORT:--1}"
+NATS_PORTS_DIR="$RUN_DIR/logs"
+mkdir -p "$NATS_PORTS_DIR"
+dvd_run_owned_child "$PROJECT_ROOT" "$NATS_ID" nats-server -a 127.0.0.1 -p "$NATS_PORT_ARGUMENT" \
+  --ports_file_dir "$NATS_PORTS_DIR" -js -sd "$RUN_DIR/jetstream" \
+  >"$RUN_DIR/logs/nats.log" 2>&1 &
 NATS_PID=$!
 ready=0
 for _ in {1..80}; do
-  if grep -Fq "Listening for client connections on 127.0.0.1:$SERVER_PORT" "$RUN_DIR/logs/nats.log" \
-    && grep -Fq 'Server is ready' "$RUN_DIR/logs/nats.log" \
-    && nats --no-context --server "$SERVER" rtt >/dev/null 2>&1; then
-    ready=1
-    break
+  if [[ -z "$SERVER_PORT" ]]; then
+    port_files=("$NATS_PORTS_DIR"/nats-server_*.ports)
+    if [[ ${#port_files[@]} -eq 1 && -f "${port_files[0]}" ]]; then
+      assigned_port="$(sed -nE 's/^\{"nats":\["nats:\/\/127\.0\.0\.1:([0-9]+)"\]\}$/\1/p' "${port_files[0]}")"
+      if [[ "$assigned_port" =~ ^[0-9]+$ ]] && ((assigned_port >= 1 && assigned_port <= 65535)); then
+        SERVER_PORT="$assigned_port"
+        export ANTOINE_GZ_FLIGHT_NATS_PORT="$SERVER_PORT"
+      fi
+    fi
+  fi
+  if [[ -n "$SERVER_PORT" ]]; then
+    SERVER="nats://127.0.0.1:$SERVER_PORT"
+    if grep -Fq "Listening for client connections on 127.0.0.1:$SERVER_PORT" "$RUN_DIR/logs/nats.log" \
+      && grep -Fq 'Server is ready' "$RUN_DIR/logs/nats.log" \
+      && nats --no-context --server "$SERVER" rtt >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
   fi
   if ! kill -0 "$NATS_PID" 2>/dev/null; then
     echo "run-owned NATS broker exited before becoming ready; see $RUN_DIR/logs/nats.log" >&2
@@ -153,6 +166,11 @@ for _ in {1..80}; do
   sleep 0.25
 done
 [[ "$ready" == 1 ]] || { echo "run-owned NATS broker did not become ready" >&2; exit 1; }
+printf 'ANTOINE_GZ_FLIGHT_NATS_PORT=%s\n' "$SERVER_PORT" >>"$RUN_DIR/research-profile.env"
+
+RUN_STAGE="preflight-provenance"
+uv run --no-project python "$PROJECT_ROOT/research/capture_antoine_provenance.py" \
+  "${PROVENANCE_ARGS[@]}" --phase pre --output "$RUN_DIR/research-provenance-pre.json" >/dev/null
 
 RUN_STAGE="start-gazebo"
 dvd_run_owned_child "$PROJECT_ROOT" "$SIM_ID" "$GZ_BIN" sim -s -r \

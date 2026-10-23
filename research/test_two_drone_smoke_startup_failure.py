@@ -96,15 +96,18 @@ class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
         nats.write_text("#!/bin/sh\nexit 0\n")
         nats.chmod(0o755)
         nats_server = bin_dir / "nats-server"
-        if continue_to_gazebo:
-            nats_server.write_text(
-                "#!/bin/sh\n"
-                'echo "Listening for client connections on 127.0.0.1:14599"\n'
-                'echo "Server is ready"\n'
-                "sleep 30\n"
-            )
-        else:
-            nats_server.write_text("#!/bin/sh\nexit 0\n")
+        nats_server.write_text(
+            "#!/bin/sh\n"
+            'ports_dir=""\n'
+            'while [ "$#" -gt 0 ]; do\n'
+            '  if [ "$1" = "--ports_file_dir" ]; then shift; ports_dir="$1"; fi\n'
+            "  shift\n"
+            "done\n"
+            'echo "Listening for client connections on 127.0.0.1:14599"\n'
+            'echo "Server is ready"\n'
+            'printf \'{"nats":["nats://127.0.0.1:14599"]}\\n\' >"$ports_dir/nats-server_$$.ports"\n'
+            "sleep 30\n"
+        )
         nats_server.chmod(0o755)
 
         uv_wrapper = bin_dir / "uv"
@@ -185,6 +188,7 @@ class TwoDroneSmokeStartupFailureTests(unittest.TestCase):
             self.assertIn("expected_topic=/world/antoine_gz_flight_proof/pose/info", diagnostics)
             self.assertIn("/other/topic", diagnostics)
             profile = (run_dir / "research-profile.env").read_text(encoding="utf-8")
+            self.assertIn("ANTOINE_GZ_FLIGHT_NATS_PORT=14599\n", profile)
             self.assertIn("ANTOINE_GZ_TOPIC_QUERY_TIMEOUT_SECONDS=5\n", profile)
             self.assertIn(
                 "/other/topic",
