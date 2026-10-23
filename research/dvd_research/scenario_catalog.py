@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
-import json
 import os
 import re
 import shlex
 from pathlib import Path
 from typing import Any
+
+from dvd_research.strict_json import loads as strict_json_loads
 
 CATALOG_CONTRACT = "damn-vulnerable-drone.antoine-scenario-catalog"
 SCENARIO_STATUSES = {"active", "partial", "planned", "unavailable"}
@@ -58,8 +59,8 @@ def load_scenario_catalog(
 ) -> list[dict[str, Any]]:
     """Return validated catalog rows; raise ValueError on any catalog drift."""
     try:
-        catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
+        catalog = strict_json_loads(catalog_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as error:
         raise ValueError(f"cannot read scenario catalog: {catalog_path}") from error
     if not isinstance(catalog, dict) or catalog.get("contract") != CATALOG_CONTRACT:
         raise ValueError("unsupported Antoine scenario catalog")
