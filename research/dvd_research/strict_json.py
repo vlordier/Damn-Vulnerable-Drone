@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 from typing import Any
 
 
@@ -19,14 +20,30 @@ def _reject_constant(value: str) -> None:
     raise json.JSONDecodeError(f"non-standard JSON constant {value}", "", 0)
 
 
+def _finite_float(value: str) -> float:
+    parsed = float(value)
+    if not math.isfinite(parsed):
+        raise json.JSONDecodeError(f"number outside finite floating-point range {value}", value, 0)
+    return parsed
+
+
 def loads(data: str | bytes | bytearray) -> Any:
-    """Decode JSON while rejecting duplicate keys and NaN/Infinity tokens."""
-    return json.loads(data, object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+    """Decode JSON while rejecting duplicates and non-finite numbers."""
+    return json.loads(
+        data,
+        object_pairs_hook=_unique_object,
+        parse_constant=_reject_constant,
+        parse_float=_finite_float,
+    )
 
 
 def raw_decode(data: str, idx: int = 0) -> tuple[Any, int]:
     """Decode one JSON value from a larger stream with the same strict rules."""
-    decoder = json.JSONDecoder(object_pairs_hook=_unique_object, parse_constant=_reject_constant)
+    decoder = json.JSONDecoder(
+        object_pairs_hook=_unique_object,
+        parse_constant=_reject_constant,
+        parse_float=_finite_float,
+    )
     return decoder.raw_decode(data, idx)
 
 

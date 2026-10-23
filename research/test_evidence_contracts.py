@@ -18,7 +18,7 @@ class EvidenceContractTests(unittest.TestCase):
     def test_run_evidence_reader_rejects_non_finite_numbers(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "evidence.json"
-            path.write_text('{"measured":{"altitude":Infinity}}')
+            path.write_text('{"measured":{"altitude":1e999}}')
 
             self.assertEqual(read_json_object(path), {})
 

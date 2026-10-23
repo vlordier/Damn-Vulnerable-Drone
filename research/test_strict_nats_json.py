@@ -4,6 +4,7 @@ import json
 import unittest
 
 from dvd_research.strict_json import loads as strict_json_loads
+from dvd_research.strict_json import raw_decode
 
 
 class StrictNatsJsonTests(unittest.TestCase):
@@ -33,6 +34,20 @@ class StrictNatsJsonTests(unittest.TestCase):
                 self.assertRaisesRegex(json.JSONDecodeError, "non-standard JSON constant"),
             ):
                 strict_json_loads(payload)
+
+    def test_rejects_numeric_overflow_in_loads_and_stream_decoder(self) -> None:
+        for payload in ('{"value":1e999}', '{"value":-1e999}'):
+            with (
+                self.subTest(payload=payload),
+                self.assertRaisesRegex(json.JSONDecodeError, "outside finite floating-point range"),
+            ):
+                strict_json_loads(payload)
+
+            with (
+                self.subTest(raw_payload=payload),
+                self.assertRaisesRegex(json.JSONDecodeError, "outside finite floating-point range"),
+            ):
+                raw_decode(payload)
 
 
 if __name__ == "__main__":
