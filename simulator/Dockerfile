@@ -31,6 +31,7 @@ EXPOSE 8000 8080 9002
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 # ---------------------------------------------------------------------------
 # Base OS packages
@@ -46,7 +47,7 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
 # Gazebo Classic 11 from OSRF (Focal channel — multi-arch).
 # OSRF's focal/main has gazebo11 binaries for both amd64 and arm64.
 # ---------------------------------------------------------------------------
-RUN wget https://packages.osrfoundation.org/gazebo.gpg \
+RUN wget -q https://packages.osrfoundation.org/gazebo.gpg \
         -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
         | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null && \
@@ -63,8 +64,8 @@ RUN wget https://packages.osrfoundation.org/gazebo.gpg \
 # companion-computer's Humble nodes is handled by Cyclone DDS — the wire
 # protocol (RTPS) is stable across ROS 2 versions.
 # ---------------------------------------------------------------------------
-RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-        -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+RUN wget -q https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+        -O /usr/share/keyrings/ros-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu focal main" \
         > /etc/apt/sources.list.d/ros2.list && \
     apt-get update -y && apt-get install -y --no-install-recommends \
@@ -110,7 +111,7 @@ ENV DISPLAY=:100
 # ---------------------------------------------------------------------------
 # gzweb — UNCHANGED per migration constraint #1
 # ---------------------------------------------------------------------------
-RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.3/install.sh | bash \
+RUN wget -qO- https://raw.githubusercontent.com/nvm-sh/nvm/v0.35.3/install.sh | bash \
     && export NVM_DIR="$HOME/.nvm" \
     && [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh" \
     && nvm install 10 \

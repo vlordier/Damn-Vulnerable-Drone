@@ -7,6 +7,7 @@ FROM ubuntu:22.04
 
 # Avoid prompts during package installations
 ENV DEBIAN_FRONTEND=noninteractive
+SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
 EXPOSE 3000 5000 22
 
@@ -28,8 +29,8 @@ RUN apt-get update && apt-get install -y \
 # is the legacy ROS 1 channel). apt-key is deprecated on Jammy, so we use
 # a signed-by keyring file instead.
 # ---------------------------------------------------------------------------
-RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
-        -o /usr/share/keyrings/ros-archive-keyring.gpg && \
+RUN wget -q https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
+        -O /usr/share/keyrings/ros-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
         > /etc/apt/sources.list.d/ros2.list && \
     apt-get update -y && apt-get install -y --no-install-recommends \
@@ -93,9 +94,9 @@ WORKDIR /
 # ---------------------------------------------------------------------------
 RUN ARCH=$(uname -m) && \
     if [ "$ARCH" = "x86_64" ]; then \
-        wget https://github.com/mavlink-router/mavlink-router/releases/download/v4/mavlink-routerd-glibc-x86_64 -O /usr/bin/mavlink-routerd; \
+        wget -q https://github.com/mavlink-router/mavlink-router/releases/download/v4/mavlink-routerd-glibc-x86_64 -O /usr/bin/mavlink-routerd; \
     elif [ "$ARCH" = "aarch64" ]; then \
-        wget https://github.com/mavlink-router/mavlink-router/releases/download/v4/mavlink-routerd-glibc-aarch64 -O /usr/bin/mavlink-routerd; \
+        wget -q https://github.com/mavlink-router/mavlink-router/releases/download/v4/mavlink-routerd-glibc-aarch64 -O /usr/bin/mavlink-routerd; \
     else \
         echo "Unsupported architecture: $ARCH"; \
         exit 1; \
