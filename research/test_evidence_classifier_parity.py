@@ -312,6 +312,20 @@ class EvidenceClassifierParityTests(unittest.TestCase):
         self.assertFalse(manifest["measurements"]["gazeboAttitudeQualified"])
         self.assertEqual(manifest["measurementClassification"], "failed_swarm_flight")
 
+    def test_csv_export_skips_duplicate_key_manifests(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / "duplicate-manifest"
+            run_dir.mkdir()
+            (run_dir / "research-evidence-manifest.json").write_text(
+                '{"contract":"damn-vulnerable-drone.antoine-evidence-manifest",'
+                '"contract":"damn-vulnerable-drone.antoine-evidence-manifest",'
+                '"runId":"duplicate-manifest","publicEvidence":[{}]}',
+                encoding="utf-8",
+            )
+
+            self.assertEqual(list(export_research_rows(root)), [])
+
     def test_camera_manifest_requires_run_profile_partition_match(self) -> None:
         for report_partition, expected_classification in (
             ("camera-run", "observation_only"),

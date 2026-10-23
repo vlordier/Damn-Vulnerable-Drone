@@ -11,6 +11,7 @@ import sys
 from pathlib import Path
 
 from dvd_research.evidence_contract import classify_measurements, verify_manifest, verify_signature
+from dvd_research.strict_json import loads as strict_json_loads
 
 FIELDS = [
     "evidenceIntegrity",
@@ -93,8 +94,8 @@ def verify_evidence_manifest(manifest_path: Path, manifest: dict) -> bool:
 def rows(root: Path):
     for path in sorted(root.glob("*/research-evidence-manifest.json")):
         try:
-            manifest = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+            manifest = strict_json_loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
             continue
         if not isinstance(manifest, dict) or not verify_evidence_manifest(path, manifest):
             print(f"Skipping unverified evidence manifest: {path}", file=sys.stderr)
