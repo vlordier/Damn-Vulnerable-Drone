@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import json
 import subprocess
 from pathlib import Path
 
 import yaml
+
+from dvd_research.strict_json import loads as strict_json_loads
 
 
 def tracked_files(pattern: str) -> list[Path]:
@@ -26,8 +27,7 @@ def main() -> None:
         with path.open(encoding="utf-8") as source:
             list(yaml.safe_load_all(source))
     for path in json_files:
-        with path.open(encoding="utf-8") as source:
-            json.load(source)
+        strict_json_loads(path.read_text(encoding="utf-8"))
 
     print(f"Parsed {len(yaml_files)} tracked YAML and {len(json_files)} tracked JSON files")
 
