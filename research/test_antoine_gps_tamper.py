@@ -29,6 +29,7 @@ class GpsTamperEvidenceTests(unittest.TestCase):
             ("lat_deg", float("nan")),
             ("lat_deg", float("inf")),
             ("lat_deg", 91.0),
+            ("lat_deg", 10**1000),
         ):
             with self.subTest(field=field, value=value):
                 invalid = {**valid, field: value}

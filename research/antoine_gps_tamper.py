@@ -68,8 +68,8 @@ def validate_gps_numeric_fields(payload: dict[str, Any]) -> tuple[int, int, int,
         raise ValueError("captured GPS sample has an invalid sequence")
     if (
         type(latitude) not in {int, float}
-        or not math.isfinite(latitude)
         or not -90 <= latitude <= 90
+        or (type(latitude) is float and not math.isfinite(latitude))
     ):
         raise ValueError("captured GPS sample has an invalid latitude")
     return timestamp_ms, expires_at_ms, sequence, latitude
