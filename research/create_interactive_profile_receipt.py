@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from dvd_research.nats_identity import valid_callsign
+from dvd_research.strict_json import loads as strict_json_loads
 from gazebo_version import gazebo_version
 
 
@@ -117,22 +118,7 @@ def snapshot_record(run_dir: Path, snapshot_dir: Path, filename: str, contract: 
     if receipt_path.is_symlink() or not receipt_path.is_file():
         raise ValueError(f"source snapshot receipt is missing: {receipt_path}")
 
-    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        value: dict[str, Any] = {}
-        for key, item in pairs:
-            if key in value:
-                raise ValueError(f"source snapshot receipt contains duplicate JSON key: {key}")
-            value[key] = item
-        return value
-
-    def reject_constant(value: str) -> None:
-        raise ValueError(f"source snapshot receipt contains non-standard JSON number: {value}")
-
-    document = json.loads(
-        receipt_path.read_text(encoding="utf-8"),
-        object_pairs_hook=unique_object,
-        parse_constant=reject_constant,
-    )
+    document = strict_json_loads(receipt_path.read_text(encoding="utf-8"))
     if (
         not isinstance(document, dict)
         or document.get("version") != "1.1.0"

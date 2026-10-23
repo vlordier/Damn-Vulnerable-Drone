@@ -54,7 +54,7 @@ class InteractiveReceiptTests(unittest.TestCase):
                 '"status": "verified"', '"status": "invalid", "status": "verified"'
             )
             receipt.write_text(text, encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "duplicate JSON key"):
+            with self.assertRaisesRegex(ValueError, "duplicate object key"):
                 snapshot_record(run_dir, snapshot, "snapshot.json", contract)
 
     def test_snapshot_record_rejects_nonstandard_json_constants(self) -> None:
@@ -64,7 +64,17 @@ class InteractiveReceiptTests(unittest.TestCase):
             )
             text = receipt.read_text(encoding="utf-8").replace('"sizeBytes": 1', '"sizeBytes": NaN')
             receipt.write_text(text, encoding="utf-8")
-            with self.assertRaisesRegex(ValueError, "non-standard JSON number"):
+            with self.assertRaisesRegex(ValueError, "non-standard JSON constant"):
+                snapshot_record(run_dir, snapshot, "snapshot.json", contract)
+
+    def test_snapshot_record_rejects_overflowing_json_numbers(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir, snapshot, receipt, contract = self._snapshot_fixture(
+                Path(directory), "damn-vulnerable-drone.antoine-source-snapshot"
+            )
+            text = receipt.read_text(encoding="utf-8").replace("{", '{"extra":1e999,', 1)
+            receipt.write_text(text, encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "outside finite floating-point range"):
                 snapshot_record(run_dir, snapshot, "snapshot.json", contract)
 
     def test_snapshot_record_rejects_boolean_file_size(self) -> None:
