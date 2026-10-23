@@ -410,7 +410,8 @@ def build(run_dir: Path) -> dict[str, Any]:
             "cameraRunScopeMatches": camera_run_scope_matches,
             "cameraObservationBoundsValid": (
                 type(camera.get("capturedMessages")) is int
-                and 1 <= camera.get("capturedMessages") <= 5
+                and type(camera.get("capturedMessages")) is int
+                and 1 <= camera["capturedMessages"] <= 5
                 and camera.get("topicListed") is True
                 and camera.get("publisherPresentAtProbe") is True
                 and type(camera.get("subscriberExitCode")) is int

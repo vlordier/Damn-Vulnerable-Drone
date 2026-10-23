@@ -148,7 +148,9 @@ def rows(root: Path):
             publisher = measurements.get("cameraPublisherPresent")
             frames = measurements.get("cameraFramesCaptured")
             scope_matches = measurements.get("cameraRunScopeMatches")
-            if type(frames) is int and frames > 0 and scope_matches is False:
+            if frames is not None and type(frames) is not int:
+                row["cameraObservationStatus"] = "invalid_frame_count"
+            elif type(frames) is int and frames > 0 and scope_matches is False:
                 row["cameraObservationStatus"] = "frames_captured_scope_mismatch"
             elif type(frames) is int and frames > 0 and scope_matches is not True:
                 row["cameraObservationStatus"] = "frames_captured_scope_unverified"
@@ -160,7 +162,7 @@ def rows(root: Path):
                 row["cameraObservationStatus"] = "topic_listed_without_publisher"
             elif listed is True and publisher is True:
                 row["cameraObservationStatus"] = "publisher_present_without_frame"
-            elif frames == 0:
+            elif type(frames) is int and frames == 0:
                 row["cameraObservationStatus"] = "no_frame_observed_status_unknown"
             else:
                 row["cameraObservationStatus"] = "not_recorded"

@@ -327,10 +327,11 @@ class EvidenceClassifierParityTests(unittest.TestCase):
             self.assertEqual(list(export_research_rows(root)), [])
 
     def test_camera_manifest_requires_run_profile_partition_match(self) -> None:
-        for report_partition, subscriber_exit, expected_classification in (
-            ("camera-run", 0, "observation_only"),
-            ("other-run", 0, "inconclusive"),
-            ("camera-run", False, "inconclusive"),
+        for report_partition, subscriber_exit, captured_messages, expected_classification in (
+            ("camera-run", 0, 5, "observation_only"),
+            ("other-run", 0, 5, "inconclusive"),
+            ("camera-run", False, 5, "inconclusive"),
+            ("camera-run", 0, True, "inconclusive"),
         ):
             with (
                 self.subTest(partition=report_partition),
@@ -342,7 +343,7 @@ class EvidenceClassifierParityTests(unittest.TestCase):
                     "runId": run_dir.name,
                     "scenario": "gazebo-camera-readable-topic-antoine",
                     "partition": report_partition,
-                    "capturedMessages": 5,
+                    "capturedMessages": captured_messages,
                     "topicListed": True,
                     "publisherPresentAtProbe": True,
                     "subscriberExitCode": subscriber_exit,
@@ -379,7 +380,9 @@ class EvidenceClassifierParityTests(unittest.TestCase):
                     manifest["measurements"]["cameraObservationBoundsValid"],
                     report_partition == "camera-run"
                     and type(subscriber_exit) is int
-                    and subscriber_exit == 0,
+                    and subscriber_exit == 0
+                    and type(captured_messages) is int
+                    and 1 <= captured_messages <= 5,
                 )
                 self.assertEqual(
                     manifest["measurements"]["cameraRunScopeMatches"],
@@ -388,6 +391,9 @@ class EvidenceClassifierParityTests(unittest.TestCase):
                 csv_row = next(export_research_rows(run_dir.parent))
                 self.assertEqual(csv_row["cameraRunScopeMatches"], report_partition == "camera-run")
                 self.assertEqual(csv_row["runStatus"], expected_classification)
+                if type(captured_messages) is not int:
+                    self.assertEqual(csv_row["cameraObservationStatus"], "invalid_frame_count")
+                    continue
                 self.assertEqual(
                     csv_row["cameraObservationStatus"],
                     "frames_captured"
