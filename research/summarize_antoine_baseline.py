@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 from pathlib import Path
 
 from build_evidence_manifest import build, write_manifest
@@ -16,6 +17,10 @@ def build_baseline_result(run_dir: Path, proof: dict, launcher_exit: int) -> dic
     measured = proof.get("measured", {}) if isinstance(proof.get("measured"), dict) else {}
     grant = proof.get("localGrant") if isinstance(proof.get("localGrant"), dict) else {}
     run_id = grant.get("runId")
+    ground_dwell = measured.get("groundSettleDwellSecondsObserved")
+    ground_dwell_valid = type(ground_dwell) is int or (
+        type(ground_dwell) is float and math.isfinite(ground_dwell)
+    )
     gates = {
         "launcherExitZero": launcher_exit == 0,
         "runIdentityMatches": run_identity_matches(run_dir, run_id),
@@ -27,9 +32,7 @@ def build_baseline_result(run_dir: Path, proof: dict, launcher_exit: int) -> dic
         # motor neutralization is not a physical safety claim. This gate only
         # qualifies an authorized flight control with measured ground dwell.
         "groundSettlePassed": (
-            measured.get("settledAtGround") is True
-            and isinstance(measured.get("groundSettleDwellSecondsObserved"), (int, float))
-            and measured.get("groundSettleDwellSecondsObserved", 0) >= 1.0
+            measured.get("settledAtGround") is True and ground_dwell_valid and ground_dwell >= 1.0
         ),
     }
     return {

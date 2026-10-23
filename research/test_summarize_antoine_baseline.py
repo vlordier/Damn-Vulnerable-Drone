@@ -57,6 +57,17 @@ class AntoineBaselineEligibilityTests(unittest.TestCase):
         self.assertFalse(result["gates"]["groundSettlePassed"])
         self.assertFalse(result["baselineEligible"])
 
+    def test_ground_dwell_rejects_boolean_non_finite_and_unmeasured_values(self) -> None:
+        for dwell in (True, float("inf"), float("nan"), "1.0", 0.999):
+            with self.subTest(dwell=dwell):
+                proof = {**self.proof, "measured": dict(self.proof["measured"])}
+                proof["measured"]["groundSettleDwellSecondsObserved"] = dwell
+
+                result = build_baseline_result(self.run_dir, proof, 0)
+
+                self.assertFalse(result["gates"]["groundSettlePassed"])
+                self.assertFalse(result["baselineEligible"])
+
     def test_nonzero_launcher_exit_fails_even_with_measured_stop(self) -> None:
         result = build_baseline_result(self.run_dir, self.proof, 1)
 
