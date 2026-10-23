@@ -29,9 +29,12 @@ RUN groupadd ${USER_NAME} --gid ${USER_GID}\
 
 # Install prerequisites 
 # Install prerequisites and clear cache
-RUN apt-get update && apt-get install -y sudo socat net-tools lsb-release python3-pip tzdata git; git config --global url.https://github.com/.insteadOf git://github.com/
+RUN apt-get update && \
+    apt-get install -y sudo socat net-tools lsb-release python3-pip tzdata git && \
+    rm -rf /var/lib/apt/lists/* && \
+    git config --global url.https://github.com/.insteadOf git://github.com/
 
-RUN pip3 install MAVProxy pymavlink
+RUN pip3 install --no-cache-dir MAVProxy pymavlink
 
 # Clone ArduPilot from GitHub
 RUN git clone https://github.com/ArduPilot/ardupilot.git ardupilot
@@ -65,7 +68,7 @@ COPY ./flight-controller/drone.parm /ardupilot/drone.parm
 COPY ./flight-controller/init.sh /ardupilot/mgmt/init.sh
 
 USER root
-RUN apt-get update && apt-get install -y dos2unix
+RUN apt-get update && apt-get install -y dos2unix && rm -rf /var/lib/apt/lists/*
 RUN dos2unix /ardupilot/mgmt/init.sh && chmod +x /ardupilot/mgmt/init.sh
 
 USER ${USER_NAME}

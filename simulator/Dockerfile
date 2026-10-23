@@ -121,7 +121,7 @@ RUN git config --global advice.detachedHead false
 
 COPY simulator/gzweb /Simulator/gzweb
 WORKDIR /Simulator/gzweb
-RUN apt-get update && apt-get install -y dos2unix
+RUN apt-get update && apt-get install -y dos2unix && rm -rf /var/lib/apt/lists/*
 RUN find . -type f -exec dos2unix {} \; && chmod +x deploy.sh
 RUN npm install v8flags grunt-cli
 RUN npm install

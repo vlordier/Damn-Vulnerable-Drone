@@ -78,7 +78,7 @@ COPY companion-computer/conf/mavlink-router.conf /etc/mavlink-router/main.conf
 # numpy pinned to <2 for cv_bridge compatibility — see companion-computer/
 # Dockerfile for the full explanation.
 # ---------------------------------------------------------------------------
-RUN pip3 install "numpy<2" flask docker flask-cors Flask-SQLAlchemy flask-socketio opencv-python-headless Flask-Login flask-sock simple-websocket
+RUN pip3 install --no-cache-dir "numpy<2" flask docker flask-cors Flask-SQLAlchemy flask-socketio opencv-python-headless Flask-Login flask-sock simple-websocket
 COPY companion-computer/interface /interface
 COPY companion-computer/interface/config.json /interface/config.json
 RUN mkdir -p /var/log/mavlink-router
@@ -89,7 +89,7 @@ RUN mkdir -p /logs
 # ---------------------------------------------------------------------------
 # SSH (unchanged)
 # ---------------------------------------------------------------------------
-RUN apt-get update && apt-get install -y openssh-server
+RUN apt-get update && apt-get install -y openssh-server && rm -rf /var/lib/apt/lists/*
 RUN mkdir /var/run/sshd
 RUN useradd -m admin && echo "admin:cyberdrone" | chpasswd && adduser admin sudo
 RUN echo 'root:cyberdrone' | chpasswd
