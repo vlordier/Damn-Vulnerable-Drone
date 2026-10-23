@@ -91,12 +91,22 @@ def capture(server: str, name: str, subject: str) -> dict[str, Any]:
         except json.JSONDecodeError:
             malformed += 1
 
+    # NATS CLI output alone is not enough to prove a readable publication: a
+    # failed or timed-out subscriber may still have emitted partial stdout.
+    valid_capture = (
+        code == 0
+        and not timed_out
+        and start_error is None
+        and len(messages) == 1
+        and malformed == 0
+    )
     return {
         "name": name,
         "subject": subject,
         "clientAuthentication": "none",
         "requestedMaxMessages": 1,
         "capturedMessages": len(messages),
+        "captureValid": valid_capture,
         "subscriberAttempts": attempts,
         "messages": messages,
         "malformedOutputLines": malformed,
@@ -175,6 +185,7 @@ def main() -> int:
                 "clientAuthentication": "none",
                 "requestedMaxMessages": 1,
                 "capturedMessages": 0,
+                "captureValid": False,
                 "subscriberAttempts": 0,
                 "messages": [],
                 "malformedOutputLines": 0,
@@ -211,14 +222,14 @@ def main() -> int:
             "grant, state, and admission fields without NATS credentials. Subject access does not "
             "itself grant actuator authority; the local actuator applier still enforces signatures and "
             "grant binding. This is a same-host exposure measurement, not a remote disclosure finding."
-            if all(item["capturedMessages"] for item in results)
+            if all(item["captureValid"] for item in results)
             else "Capture incomplete: one or more selected subjects had no readable messages. "
             "Do not draw a disclosure conclusion from this run."
         ),
     }
     output = write_run_json(args.run_dir, Path("research-nats-observation.json"), report)
     print(output)
-    return 0 if all(item["capturedMessages"] for item in results) else 2
+    return 0 if all(item["captureValid"] for item in results) else 2
 
 
 if __name__ == "__main__":

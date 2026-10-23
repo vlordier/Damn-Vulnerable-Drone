@@ -10,6 +10,42 @@ import antoine_nats_observation
 
 
 class AntoineNatsObservationTests(unittest.TestCase):
+    def test_capture_requires_successful_subscriber_exit(self) -> None:
+        completed = type(
+            "Completed",
+            (),
+            {
+                "returncode": 1,
+                "stdout": '{"identity":"drone-1"}\n',
+                "stderr": "subscriber failed after partial output",
+            },
+        )()
+        with patch.object(antoine_nats_observation.subprocess, "run", return_value=completed):
+            result = antoine_nats_observation.capture(
+                "nats://127.0.0.1:4222", "telemetry", "furia.telemetry.drone-1"
+            )
+
+        self.assertEqual(result["capturedMessages"], 1)
+        self.assertFalse(result["captureValid"])
+
+    def test_capture_requires_exactly_one_well_formed_message(self) -> None:
+        completed = type(
+            "Completed",
+            (),
+            {
+                "returncode": 0,
+                "stdout": '{"identity":"drone-1"}\n{"identity":"drone-1"}\n',
+                "stderr": "",
+            },
+        )()
+        with patch.object(antoine_nats_observation.subprocess, "run", return_value=completed):
+            result = antoine_nats_observation.capture(
+                "nats://127.0.0.1:4222", "telemetry", "furia.telemetry.drone-1"
+            )
+
+        self.assertEqual(result["capturedMessages"], 2)
+        self.assertFalse(result["captureValid"])
+
     def test_capture_counts_duplicate_key_payload_as_malformed(self) -> None:
         completed = type(
             "Completed",
