@@ -114,8 +114,13 @@ def load_swarm_config(run_dir: Path) -> dict[str, Any]:
     if len({item["model"] for item in normalized}) != len(normalized):
         raise ValueError("duplicate swarm model")
     spacing = config.get("spacingM", DEFAULT_SPACING_M)
-    if not isinstance(spacing, (int, float)) or isinstance(spacing, bool):
-        raise ValueError("swarm spacing must be numeric")
+    if (
+        not isinstance(spacing, (int, float))
+        or isinstance(spacing, bool)
+        or not math.isfinite(spacing)
+        or not 2.0 <= spacing <= 20.0
+    ):
+        raise ValueError("swarm spacing must be finite and between 2 and 20 metres")
     behavior = config.get("behavior", "lanes")
     if not isinstance(behavior, str):
         raise ValueError("swarm behavior must be a string")

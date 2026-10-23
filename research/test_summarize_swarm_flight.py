@@ -528,6 +528,29 @@ def qualify_fixture_baseline(run_dir: Path) -> None:
 
 
 class ConfigLoadingTests(unittest.TestCase):
+    def test_spacing_must_be_finite_and_within_plan_builder_bounds(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            run_dir = Path(directory) / "run"
+            build_run(run_dir, "lanes")
+            config_path = run_dir / "research-swarm-config.json"
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+            for invalid in (True, 1.999, 20.001):
+                config["spacingM"] = invalid
+                write_json(config_path, config)
+                with (
+                    self.subTest(invalid=invalid),
+                    self.assertRaisesRegex(ValueError, "spacing must be finite"),
+                ):
+                    load_swarm_config(run_dir)
+
+            for invalid_json in (
+                json.dumps(config).replace('"spacingM": 20.001', '"spacingM": 1e999'),
+                json.dumps(config).replace('"spacingM": 20.001', '"spacingM": Infinity'),
+            ):
+                config_path.write_text(invalid_json, encoding="utf-8")
+                with self.assertRaisesRegex(ValueError, "invalid swarm run configuration"):
+                    load_swarm_config(run_dir)
+
     def test_duplicate_fault_field_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             run_dir = Path(directory) / "run"
