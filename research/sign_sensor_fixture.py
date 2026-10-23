@@ -11,6 +11,7 @@ from urllib.parse import urlsplit
 
 from dvd_research.run_nats import read_run_nats_log
 from dvd_research.sensor_fixture import build_case
+from dvd_research.strict_json import loads as strict_json_loads
 
 
 def verify_scope(server: str, run_dir: Path) -> None:
@@ -56,13 +57,13 @@ def main() -> int:
     args = parser.parse_args()
     try:
         verify_scope(args.server, args.run_dir)
-        source = json.load(sys.stdin)
+        source = strict_json_loads(sys.stdin.read())
         if not isinstance(source, dict):
             raise ValueError("fixture input must be one JSON object on stdin")
         signed = build_case(source, args.case, args.now_ms)
         print(json.dumps(signed, sort_keys=True, separators=(",", ":"), allow_nan=False))
         return 0
-    except (OSError, json.JSONDecodeError, ValueError) as error:
+    except (OSError, ValueError) as error:
         print(f"fixture refused: {error}", file=sys.stderr)
         return 2
 
