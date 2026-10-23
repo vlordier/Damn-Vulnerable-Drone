@@ -11,6 +11,11 @@ from build_evidence_manifest import build, write_manifest
 from evidence_contracts import read_json_object
 
 
+def exactly_two_publications(raw: dict) -> bool:
+    count = raw.get("publishedMessages")
+    return type(count) is int and count == 2
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("run_dir", type=Path)
@@ -24,7 +29,7 @@ def main() -> int:
     neutral_stop = neutral_stop if isinstance(neutral_stop, dict) else {}
     gates = {
         "runIdentityMatches": run_matches,
-        "exactlyTwoControlledPublications": raw.get("publishedMessages") == 2,
+        "exactlyTwoControlledPublications": exactly_two_publications(raw),
         "highWaterAccepted": raw.get("highWaterAccepted") is True,
         "grantMismatchStopObserved": raw.get("grantMismatchStopObserved") is True,
         "recoverySequenceIncreased": (
