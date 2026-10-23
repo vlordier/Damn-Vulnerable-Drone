@@ -7,6 +7,27 @@ from pathlib import Path
 
 
 class OwnedCleanupTrapTests(unittest.TestCase):
+    def test_cleanup_preserves_the_original_exit_status(self) -> None:
+        helper = Path(__file__).with_name("owned_process.sh")
+        with tempfile.TemporaryDirectory() as directory:
+            marker = Path(directory) / "cleanup.log"
+            script = r"""
+source "$1"
+export CLEANUP_MARKER="$2"
+cleanup() { printf 'cleanup\n' >> "$CLEANUP_MARKER"; return 9; }
+dvd_install_exit_cleanup_traps cleanup
+exit 7
+"""
+            result = subprocess.run(
+                ["bash", "-c", script, "bash", str(helper), str(marker)],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 7, result.stderr)
+            self.assertEqual(marker.read_text(), "cleanup\n")
+
     def test_term_exits_with_signal_status_and_runs_cleanup_once(self) -> None:
         helper = Path(__file__).with_name("owned_process.sh")
         with tempfile.TemporaryDirectory() as directory:

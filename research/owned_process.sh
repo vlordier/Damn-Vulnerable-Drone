@@ -89,6 +89,15 @@ PY
   return 1
 }
 
+dvd_run_exit_cleanup() {
+  local exit_status=$?
+  trap - EXIT
+  if [[ -n "${DVD_EXIT_CLEANUP_FUNCTION:-}" ]]; then
+    "${DVD_EXIT_CLEANUP_FUNCTION}" || true
+  fi
+  return "$exit_status"
+}
+
 dvd_install_exit_cleanup_traps() {
   local cleanup_function="${1:-}"
   [[ "$cleanup_function" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]] || {
@@ -99,7 +108,8 @@ dvd_install_exit_cleanup_traps() {
     echo "cleanup handler is not defined: $cleanup_function" >&2
     return 2
   }
-  trap "$cleanup_function" EXIT
+  DVD_EXIT_CLEANUP_FUNCTION="$cleanup_function"
+  trap dvd_run_exit_cleanup EXIT
   trap 'exit 130' INT
   trap 'exit 143' TERM
 }
