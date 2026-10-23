@@ -12,6 +12,11 @@ from dvd_research.strict_json import loads as strict_json_loads
 from evidence_contracts import exact_count, run_identity_matches
 
 
+def accepted_trace_delta_is(tamper: dict, expected: int) -> bool:
+    value = tamper.get("acceptedGpsTraceDelta")
+    return type(value) is int and value == expected
+
+
 def read(path: Path) -> dict:
     try:
         value = strict_json_loads(path.read_text(encoding="utf-8"))
@@ -70,9 +75,9 @@ def main() -> int:
             type(tamper.get("sampleAgeAtPublishMs")) is int
             and tamper["sampleAgeAtPublishMs"] <= -250
         )
-        gates["futureSignedSampleNotAcceptedAtIngress"] = (
-            tamper.get("validFixtureSignature") is True and tamper.get("acceptedGpsTraceDelta") == 0
-        )
+        gates["futureSignedSampleNotAcceptedAtIngress"] = tamper.get(
+            "validFixtureSignature"
+        ) is True and accepted_trace_delta_is(tamper, 0)
     elif case == "stale-sample":
         gates["sampleWasOldButEnvelopeStillLive"] = (
             type(tamper.get("sampleAgeAtPublishMs")) is int
@@ -81,27 +86,27 @@ def main() -> int:
             and type(tamper.get("publishedAtUnixMs")) is int
             and tamper["sampleExpiresAtUnixMs"] > tamper["publishedAtUnixMs"]
         )
-        gates["fixtureSignedSampleAcceptedAtIngress"] = (
-            tamper.get("validFixtureSignature") is True and tamper.get("acceptedGpsTraceDelta") == 1
-        )
+        gates["fixtureSignedSampleAcceptedAtIngress"] = tamper.get(
+            "validFixtureSignature"
+        ) is True and accepted_trace_delta_is(tamper, 1)
     elif case == "duplicate-sequence":
         gates["duplicateSequenceMatchesCapturedSample"] = type(
             tamper.get("capturedSequence")
         ) is int and tamper.get("injectedSequence") == tamper.get("capturedSequence")
-        gates["fixtureSignedSampleAcceptedAtIngress"] = (
-            tamper.get("validFixtureSignature") is True and tamper.get("acceptedGpsTraceDelta") == 1
-        )
+        gates["fixtureSignedSampleAcceptedAtIngress"] = tamper.get(
+            "validFixtureSignature"
+        ) is True and accepted_trace_delta_is(tamper, 1)
     elif case == "out-of-order-sequence":
         gates["injectedSequenceOlderThanLatestCaptured"] = (
             tamper.get("injectedSequenceOlderThanLatestCaptured") is True
         )
-        gates["fixtureSignedSampleAcceptedAtIngress"] = (
-            tamper.get("validFixtureSignature") is True and tamper.get("acceptedGpsTraceDelta") == 1
-        )
+        gates["fixtureSignedSampleAcceptedAtIngress"] = tamper.get(
+            "validFixtureSignature"
+        ) is True and accepted_trace_delta_is(tamper, 1)
     else:
-        gates["fixtureSignedSampleAcceptedAtIngress"] = (
-            tamper.get("validFixtureSignature") is True and tamper.get("acceptedGpsTraceDelta") == 1
-        )
+        gates["fixtureSignedSampleAcceptedAtIngress"] = tamper.get(
+            "validFixtureSignature"
+        ) is True and accepted_trace_delta_is(tamper, 1)
     gps_observation_qualified = all(gates.values()) and case != "signature-mutation"
     result = {
         "contract": "damn-vulnerable-drone.antoine-gps-tampering-summary",
