@@ -9,6 +9,8 @@ from typing import Any
 
 from nacl.signing import SigningKey
 
+from dvd_research.strict_json import loads as strict_json_loads
+
 DOMAIN = b"FURIA-GZ-SENSOR-SIGNATURE-V1\n"
 SUBJECT = "brenta.sensor.gps.drone-1"
 
@@ -34,8 +36,8 @@ def fixture_signer() -> tuple[SigningKey, str]:
     key_id = hashlib.sha256(public_key).digest()[:16].hex()
     configured = os.environ.get("FURIA_SENSOR_VERIFYING_KEYS_JSON", "")
     try:
-        registry = json.loads(configured)
-    except json.JSONDecodeError as error:
+        registry = strict_json_loads(configured)
+    except ValueError as error:
         raise ValueError("fixture requires the run-local verifying-key registry") from error
     if not isinstance(registry, dict) or registry.get(key_id) != public_key.hex():
         raise ValueError("fixture signer is not pinned by this run's verifying-key registry")
