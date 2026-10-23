@@ -1718,11 +1718,15 @@ class SummaryTests(unittest.TestCase):
                 }
             write_json(run_dir / "research-cross-vehicle-authorization.json", authorization)
             result = run_summary(run_dir)
+            authorization["publishedMessages"] = True
+            write_json(run_dir / "research-cross-vehicle-authorization.json", authorization)
+            boolean_count_result = run_summary(run_dir)
         self.assertEqual(result["probeStatus"], "passed")
         self.assertEqual(result["behaviorStatus"], "passed")
         self.assertEqual(result["baselineStatus"], "inconclusive")
         self.assertEqual(result["status"], "inconclusive")
         self.assertEqual(result["exitCode"], 2)
+        self.assertNotEqual(boolean_count_result["probeStatus"], "passed")
 
     def test_cross_vehicle_effect_windows_recompute_bounds_and_identity(self) -> None:
         vehicles = [{"callsign": callsign, "model": model} for callsign, model in CALLSIGNS]

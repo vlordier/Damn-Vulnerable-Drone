@@ -2432,7 +2432,8 @@ def main() -> int:
         and isinstance(authorization_observation, dict)
         and authorization_observation.get("runId") == run_dir.name
         and authorization_observation.get("status") == "passed"
-        and authorization_observation.get("publishedMessages") == 1
+        and type(authorization_observation.get("publishedMessages")) is int
+        and authorization_observation["publishedMessages"] == 1
         and authorization_observation.get("controllerDecision", {}).get("status")
         in {"rejected", "rejected-before-active-setpoint"}
         and authorization_effects_valid
