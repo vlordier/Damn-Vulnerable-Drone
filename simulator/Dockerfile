@@ -35,7 +35,7 @@ ENV PYTHONUNBUFFERED=1
 # ---------------------------------------------------------------------------
 # Base OS packages
 # ---------------------------------------------------------------------------
-RUN apt update -y && apt install -y --no-install-recommends \
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
         lsb-release wget curl gnupg2 ca-certificates \
         docker.io git npm net-tools nano cmake build-essential \
         rapidjson-dev libjansson-dev imagemagick libboost-dev libtinyxml-dev \
@@ -50,7 +50,7 @@ RUN wget https://packages.osrfoundation.org/gazebo.gpg \
         -O /usr/share/keyrings/pkgs-osrf-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/pkgs-osrf-archive-keyring.gpg] http://packages.osrfoundation.org/gazebo/ubuntu-stable $(lsb_release -cs) main" \
         | tee /etc/apt/sources.list.d/gazebo-stable.list > /dev/null && \
-    apt update -y && apt install -y --no-install-recommends \
+    apt-get update -y && apt-get install -y --no-install-recommends \
         gazebo11 libgazebo11-dev \
     && rm -rf /var/lib/apt/lists/*
 
@@ -67,7 +67,7 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         -o /usr/share/keyrings/ros-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu focal main" \
         > /etc/apt/sources.list.d/ros2.list && \
-    apt update -y && apt install -y --no-install-recommends \
+    apt-get update -y && apt-get install -y --no-install-recommends \
         ros-foxy-ros-base \
         ros-foxy-gazebo-ros-pkgs \
         ros-foxy-image-transport \

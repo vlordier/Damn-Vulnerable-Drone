@@ -27,7 +27,7 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         -o /usr/share/keyrings/ros-archive-keyring.gpg && \
     echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/ros-archive-keyring.gpg] http://packages.ros.org/ros2/ubuntu jammy main" \
         > /etc/apt/sources.list.d/ros2.list && \
-    apt update -y && apt install -y --no-install-recommends \
+    apt-get update -y && apt-get install -y --no-install-recommends \
         ros-humble-ros-base \
         ros-humble-cv-bridge \
         ros-humble-image-transport \
@@ -35,7 +35,7 @@ RUN curl -sSL https://raw.githubusercontent.com/ros/rosdistro/master/ros.key \
         ros-humble-rmw-cyclonedds-cpp \
     && rm -rf /var/lib/apt/lists/*
 
-RUN apt update -y && apt install -y \
+RUN apt-get update -y && apt-get install -y \
     gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-plugins-bad gstreamer1.0-plugins-ugly gstreamer1.0-tools gstreamer1.0-rtsp \
     python3-gi python3-gst-1.0 gir1.2-gst-rtsp-server-1.0 \
  && rm -rf /var/lib/apt/lists/*
@@ -100,7 +100,7 @@ COPY companion-computer/conf/sshd_config /etc/ssh/sshd_config
 
 RUN ssh-keygen -A
 
-RUN echo '#!/bin/bash\n/usr/sbin/sshd &\n/start-companion.sh' > /start.sh
+RUN printf '%s\n' '#!/bin/bash' '/usr/sbin/sshd &' '/start-companion.sh' > /start.sh
 RUN chmod +x /start.sh
 
 CMD ["/start.sh"]
