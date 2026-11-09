@@ -68,3 +68,19 @@ jobs:
       - name: Check JavaScript syntax
         run: |
           while IFS= read -r -d '' file; do node --check "$file"; done < <(git ls-files -z '*.js' | grep -zvE '(^|/)(include|static)/|\.min\.js$')
+
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - name: Run cargo clippy (MAVLink ↔ NATS bridge)
+        run: cargo clippy --locked --all-targets -- -D warnings
+        working-directory: research/antoine-mavlink-jetstream-bridge
+      - name: Run cargo clippy (MAVLink NATS console)
+        run: cargo clippy --locked --all-targets -- -D warnings
+        working-directory: research/mavlink-nats-console
+
