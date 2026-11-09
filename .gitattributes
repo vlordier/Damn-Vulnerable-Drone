@@ -1,0 +1,17 @@
+# Line endings
+* text=auto eol=lf
+
+# Shell scripts, Rust sources, Python sources
+*.sh text eol=lf
+*.rs text eol=lf
+*.py text eol=lf
+*.toml text eol=lf
+*.lock text eol=lf
+
+# ELF/binary firmware
+*.elf binary
+*.bin binary
+*.appimage binary
+
+# Git attributes themselves
+.gitattributes text eol=lf
